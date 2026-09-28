@@ -1245,17 +1245,23 @@ private final class AccessoryFreeWebView: WKWebView {
 
   override init(frame: CGRect, configuration: WKWebViewConfiguration) {
     super.init(frame: frame, configuration: configuration)
-    // Floating iPad keyboard controls must not reserve a full-width blank strip.
+    // Without following undocked keyboards, UIKit reports the floating iPad
+    // toolbar as a full-width docked area.
     keyboardLayoutGuide.usesBottomSafeArea = false
+    keyboardLayoutGuide.followsUndockedKeyboard = true
     keyboardViewport.isUserInteractionEnabled = false
     keyboardViewport.accessibilityElementsHidden = true
     keyboardViewport.translatesAutoresizingMaskIntoConstraints = false
     insertSubview(keyboardViewport, at: 0)
+    let probeBottom = keyboardViewport.bottomAnchor.constraint(
+      equalTo: keyboardLayoutGuide.topAnchor)
+    probeBottom.priority = .defaultHigh
     NSLayoutConstraint.activate([
       keyboardViewport.topAnchor.constraint(equalTo: topAnchor),
-      keyboardViewport.leadingAnchor.constraint(equalTo: leadingAnchor),
-      keyboardViewport.trailingAnchor.constraint(equalTo: trailingAnchor),
-      keyboardViewport.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
+      keyboardViewport.leadingAnchor.constraint(equalTo: keyboardLayoutGuide.leadingAnchor),
+      keyboardViewport.trailingAnchor.constraint(equalTo: keyboardLayoutGuide.trailingAnchor),
+      keyboardViewport.heightAnchor.constraint(greaterThanOrEqualToConstant: 0),
+      probeBottom,
     ])
     keyboardViewport.onLayout = { [weak self] in self?.emitKeyboardViewport() }
   }
@@ -1264,8 +1270,15 @@ private final class AccessoryFreeWebView: WKWebView {
     fatalError("init(coder:) has not been implemented")
   }
 
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    emitKeyboardViewport()
+  }
+
   func emitKeyboardViewport(force: Bool = false) {
-    let size = keyboardViewport.bounds.size
+    let size = CGSize(
+      width: bounds.width,
+      height: keyboardViewportHeight(in: bounds, keyboardFrame: keyboardLayoutGuide.layoutFrame))
     guard size.width > 0, size.height > 0, force || size != lastKeyboardViewportSize else { return }
     lastKeyboardViewportSize = size
     evaluateJavaScript(
@@ -1283,6 +1296,16 @@ private final class AccessoryFreeWebView: WKWebView {
   override var inputAccessoryView: UIView? {
     nil
   }
+}
+
+func keyboardViewportHeight(in bounds: CGRect, keyboardFrame: CGRect) -> CGFloat {
+  // Only a keyboard spanning the bottom edge reduces the app's usable height.
+  // Floating keyboards and hardware-keyboard controls overlay the app instead.
+  let docked =
+    keyboardFrame.minX <= bounds.minX + 1
+    && keyboardFrame.maxX >= bounds.maxX - 1
+    && keyboardFrame.maxY >= bounds.maxY - 1
+  return docked ? max(0, min(bounds.height, keyboardFrame.minY - bounds.minY)) : bounds.height
 }
 
 private final class KeyboardViewportProbe: UIView {
