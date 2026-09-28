@@ -225,6 +225,15 @@ struct OmnigentWebView: UIViewRepresentable {
         serverPickerWaiters.clear();
       });
       const insetCallbacks = new Set();
+      const keyboardViewportCallbacks = new Set();
+      let keyboardViewport = null;
+      defineEmit("__omnigentNativeEmitKeyboardViewport", (width, height) => {
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        keyboardViewport = { width, height };
+        for (const callback of keyboardViewportCallbacks) {
+          try { callback(); } catch {}
+        }
+      });
       // Cache the last footprint so a subscriber that registers AFTER native
       // first emitted (the React app mounts later than document-start) still
       // gets the current value immediately on subscribe.
@@ -329,6 +338,12 @@ struct OmnigentWebView: UIViewRepresentable {
           insetCallbacks.add(callback);
           if (lastInsets) { try { callback(lastInsets); } catch {} }
           return () => insetCallbacks.delete(callback);
+        },
+        getKeyboardViewport() { return keyboardViewport; },
+        onKeyboardViewportChanged(callback) {
+          if (typeof callback !== "function") return () => {};
+          keyboardViewportCallbacks.add(callback);
+          return () => keyboardViewportCallbacks.delete(callback);
         },
         getServerPicker() {
           // Always fetch fresh rather than caching: the picker re-reads on
@@ -912,6 +927,7 @@ struct OmnigentWebView: UIViewRepresentable {
       // SPA's client-side routing keeps the same document, so the injected
       // stylesheet persists across in-app navigation.
       if pinnedOrigin != nil, webView.url?.omnigentOrigin == pinnedOrigin {
+        (webView as? AccessoryFreeWebView)?.emitKeyboardViewport(force: true)
         webView.evaluateJavaScript(WorkspaceChromeScript.source)
         parent.loadSucceeded()
       }
@@ -1224,6 +1240,37 @@ struct OmnigentWebView: UIViewRepresentable {
 
 private final class AccessoryFreeWebView: WKWebView {
   var onWindowAvailable: ((UIWindow) -> Void)?
+  private let keyboardViewport = KeyboardViewportProbe()
+  private var lastKeyboardViewportSize: CGSize?
+
+  override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+    super.init(frame: frame, configuration: configuration)
+    // Floating iPad keyboard controls must not reserve a full-width blank strip.
+    keyboardLayoutGuide.usesBottomSafeArea = false
+    keyboardViewport.isUserInteractionEnabled = false
+    keyboardViewport.accessibilityElementsHidden = true
+    keyboardViewport.translatesAutoresizingMaskIntoConstraints = false
+    insertSubview(keyboardViewport, at: 0)
+    NSLayoutConstraint.activate([
+      keyboardViewport.topAnchor.constraint(equalTo: topAnchor),
+      keyboardViewport.leadingAnchor.constraint(equalTo: leadingAnchor),
+      keyboardViewport.trailingAnchor.constraint(equalTo: trailingAnchor),
+      keyboardViewport.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
+    ])
+    keyboardViewport.onLayout = { [weak self] in self?.emitKeyboardViewport() }
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  func emitKeyboardViewport(force: Bool = false) {
+    let size = keyboardViewport.bounds.size
+    guard size.width > 0, size.height > 0, force || size != lastKeyboardViewportSize else { return }
+    lastKeyboardViewportSize = size
+    evaluateJavaScript(
+      "window.__omnigentNativeEmitKeyboardViewport?.(\(size.width), \(size.height));")
+  }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
@@ -1235,6 +1282,15 @@ private final class AccessoryFreeWebView: WKWebView {
 
   override var inputAccessoryView: UIView? {
     nil
+  }
+}
+
+private final class KeyboardViewportProbe: UIView {
+  var onLayout: (() -> Void)?
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    onLayout?()
   }
 }
 

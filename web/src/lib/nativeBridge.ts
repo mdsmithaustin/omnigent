@@ -127,6 +127,9 @@ interface NativeShellApi {
    * hardcoding them. Absent on older shells. Returns an unsubscribe.
    */
   onNativeInsets?: (callback: (insets: NativeInsets) => void) => () => void;
+  /** Area above the docked iOS keyboard; floating keyboard controls do not shrink it. */
+  getKeyboardViewport?: () => { width: number; height: number } | null;
+  onKeyboardViewportChanged?: (callback: () => void) => () => void;
 }
 
 export type ThemeSource = "light" | "dark" | "system";
@@ -718,6 +721,35 @@ export function onNativeInsets(callback: (insets: NativeInsets) => void): () => 
     return native.onNativeInsets(callback);
   } catch (err) {
     console.warn("[nativeBridge] native onNativeInsets failed:", err);
+    return () => {};
+  }
+}
+
+/** UIKit's visible height, or null for older shells and pending orientation updates. */
+export function getIOSKeyboardViewportHeight(): number | null {
+  if (!isIOSShell()) return null;
+  try {
+    const viewport = nativeApi()?.getKeyboardViewport?.();
+    if (
+      !viewport ||
+      !Number.isFinite(viewport.width) ||
+      !Number.isFinite(viewport.height) ||
+      Math.abs(viewport.width - window.innerWidth) > 1 ||
+      viewport.height <= 0 ||
+      viewport.height > window.innerHeight + 1
+    ) {
+      return null;
+    }
+    return Math.min(viewport.height, window.innerHeight);
+  } catch {
+    return null;
+  }
+}
+
+export function onNativeKeyboardViewportChanged(callback: () => void): () => void {
+  try {
+    return nativeApi()?.onKeyboardViewportChanged?.(callback) ?? (() => {});
+  } catch {
     return () => {};
   }
 }
