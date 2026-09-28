@@ -7,7 +7,9 @@ import shlex
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import click
@@ -115,6 +117,7 @@ def test_launch_rejects_directory_links_before_copying_credentials(
         "agent/models.json",
         "executable",
         "terminal.json",
+        "owner.pid",
         "config.json",
         "omnigent_pi_native_extension.js",
     ],
@@ -147,7 +150,9 @@ def test_launch_rejects_destination_file_links(
     assert (paths.root / filename).is_symlink()
 
 
-@pytest.mark.parametrize("linked_path", ["ancestor", "root", "executable", "terminal.json"])
+@pytest.mark.parametrize(
+    "linked_path", ["ancestor", "root", "executable", "terminal.json", "owner.pid"]
+)
 def test_stop_rejects_links_before_executing_recorded_command(
     tmp_path: Path, linked_path: str
 ) -> None:
@@ -358,6 +363,260 @@ def _shutdown_paths(tmp_path: Path) -> PrimeRuntimePaths:
     (paths.root / "executable").write_text("/opt/prime-agent")
     (paths.session_dir / "saved.jsonl").write_text("saved transcript")
     return paths
+
+
+@pytest.mark.parametrize("compact", [False, True])
+def test_maintenance_recovers_dead_launch_owner_after_process_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compact: bool
+) -> None:
+    from omnigent.native.native_bridge_common import reap_orphaned_native_bridge_dirs
+
+    paths = PrimeRuntimePaths(bridge.bridge_roots()[int(compact)] / "runtime")
+    shutdown_marker = tmp_path / "shutdown"
+    executable = tmp_path / "prime-agent"
+    executable.write_text(
+        "#!/bin/sh\ntouch "
+        + shlex.quote(str(shutdown_marker))
+        + '\nprintf \'{"stopped": [], "failed": []}\\n\'\n'
+    )
+    executable.chmod(0o700)
+    source = (
+        "import sys; from pathlib import Path; "
+        "from omnigent.harnesses.prime_native import bridge,process; "
+        "bridge._DATA_ROOT=Path(sys.argv[1]); "
+        "bridge._COMPACT_ROOT=Path(sys.argv[2]); "
+        "paths=bridge.PrimeRuntimePaths(Path(sys.argv[3])); "
+        "process.build_prime_launch(paths,executable=sys.argv[4],"
+        "extension=paths.root/'extension.js',config=paths.root/'config.json',environ={}); "
+        "(paths.session_dir/'saved.jsonl').write_text('saved transcript'); "
+        "(paths.agent_dir/'settings.json').write_text('saved configuration')"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            source,
+            str(tmp_path),
+            str(tmp_path / "compact"),
+            str(paths.root),
+            str(executable),
+        ],
+        check=True,
+        timeout=10,
+    )
+    monkeypatch.setattr(
+        "omnigent.harness_plugins.native_agents", lambda: (SimpleNamespace(key="prime-native"),)
+    )
+    assert len(process._ACTIVE_RUNTIMES) == 0
+
+    assert reap_orphaned_native_bridge_dirs() == 1
+    assert shutdown_marker.exists()
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+    assert (paths.agent_dir / "settings.json").read_text() == "saved configuration"
+    assert reap_orphaned_native_bridge_dirs() == 0
+
+
+def _write_dead_owner(paths: PrimeRuntimePaths) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; "
+            "from omnigent.native.owner_claim import write_owner_claim; "
+            "write_owner_claim(Path(sys.argv[1]))",
+            str(paths.root),
+        ],
+        check=True,
+        timeout=10,
+    )
+
+
+def _recording_shutdown_paths(tmp_path: Path) -> tuple[PrimeRuntimePaths, Path]:
+    paths = _shutdown_paths(tmp_path)
+    marker = tmp_path / "shutdown"
+    executable = tmp_path / "prime-agent"
+    executable.write_text(
+        "#!/bin/sh\ntouch "
+        + shlex.quote(str(marker))
+        + '\nprintf \'{"stopped": [], "failed": []}\\n\'\n'
+    )
+    executable.chmod(0o700)
+    (paths.root / "executable").write_text(str(executable))
+    return paths, marker
+
+
+def test_maintenance_protects_live_launch_owner(tmp_path: Path) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    build_prime_launch(
+        paths,
+        executable=(paths.root / "executable").read_text(),
+        extension=Path("e"),
+        config=Path("c"),
+        environ={},
+    )
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert not marker.exists()
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize("same_identity", [False, True])
+def test_maintenance_checks_terminal_identity_after_owner_exits(
+    tmp_path: Path, same_identity: bool
+) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    _write_dead_owner(paths)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        (paths.root / "terminal.json").write_text(
+            json.dumps(
+                {
+                    "pid": child.pid,
+                    "created_at": process.psutil.Process(child.pid).create_time()
+                    if same_identity
+                    else 0,
+                }
+            )
+        )
+        assert bridge.prune_orphaned_bridge_dirs() == (0 if same_identity else 1)
+        assert marker.exists() is not same_identity
+        assert child.poll() is None
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("claim", [None, "invalid", "99999999\n", "99999999\npid_ns=foreign\n"])
+def test_maintenance_retains_unqualified_runtime(tmp_path: Path, claim: str | None) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    if claim is not None:
+        (paths.root / "owner.pid").write_text(claim)
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert not marker.exists()
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize("filename", ["owner.pid", "terminal.json", "executable"])
+@pytest.mark.parametrize("hard_link", [False, True])
+def test_maintenance_rejects_linked_ownership_files(
+    tmp_path: Path, filename: str, hard_link: bool
+) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    _write_dead_owner(paths)
+    destination = paths.root / filename
+    outside = tmp_path / "outside"
+    outside.write_text(destination.read_text() if destination.exists() else "{}")
+    destination.unlink(missing_ok=True)
+    if hard_link:
+        os.link(outside, destination)
+    else:
+        destination.symlink_to(outside)
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert not marker.exists()
+    assert outside.exists()
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize("record", ["not JSON", "{}", "null"])
+def test_maintenance_retains_invalid_terminal_record(tmp_path: Path, record: str) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    _write_dead_owner(paths)
+    (paths.root / "terminal.json").write_text(record)
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert not marker.exists()
+    assert (paths.root / "owner.pid").exists()
+
+
+def test_maintenance_retains_owner_on_shutdown_failure_for_retry(tmp_path: Path) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    _write_dead_owner(paths)
+    owner = (paths.root / "owner.pid").read_text()
+    executable = Path((paths.root / "executable").read_text())
+    successful_script = executable.read_text()
+    executable.write_text('#!/bin/sh\nprintf \'{"stopped": [], "failed": ["busy"]}\\n\'\n')
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert (paths.root / "owner.pid").read_text() == owner
+    assert not marker.exists()
+    executable.write_text(successful_script)
+    assert bridge.prune_orphaned_bridge_dirs() == 1
+    assert marker.exists()
+    assert not (paths.root / "owner.pid").exists()
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+
+
+def test_terminal_wrapper_owns_runtime_until_terminal_exits(tmp_path: Path) -> None:
+    from omnigent.native.owner_claim import read_owner_claim
+
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    launch = build_prime_launch(
+        paths,
+        executable=(paths.root / "executable").read_text(),
+        extension=Path("e"),
+        config=Path("c"),
+        environ={"OMNIGENT_DATA_DIR": str(tmp_path)},
+    )
+    wrapper = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "omnigent.harnesses.prime_native.process",
+            str(paths.root),
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+        ],
+        env={**os.environ, **launch.env},
+    )
+    try:
+        for _ in range(100):
+            if (paths.root / "terminal.json").is_file():
+                break
+            time.sleep(0.02)
+        claim = read_owner_claim(paths.root)
+        assert claim is not None and claim.pid == wrapper.pid
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert not marker.exists()
+        wrapper.terminate()
+        wrapper.wait(timeout=10)
+        assert marker.exists()
+        assert not (paths.root / "owner.pid").exists()
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+    finally:
+        if wrapper.poll() is None:
+            wrapper.terminate()
+            wrapper.wait(timeout=10)
+
+
+def test_maintenance_skips_runtime_during_preparation(tmp_path: Path) -> None:
+    paths, marker = _recording_shutdown_paths(tmp_path)
+    _write_dead_owner(paths)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from pathlib import Path; "
+            "from omnigent.native.native_bridge_common import bridge_dir_preparation_lock; "
+            "lock=bridge_dir_preparation_lock(Path(sys.argv[1])); lock.__enter__(); "
+            "print('LOCKED',flush=True); input(); lock.__exit__(None,None,None)",
+            str(paths.root),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline() == "LOCKED\n"
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert not marker.exists()
+        holder.communicate("\n", timeout=10)
+        assert holder.returncode == 0
+        assert bridge.prune_orphaned_bridge_dirs() == 1
+        assert marker.exists()
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+            holder.wait(timeout=5)
 
 
 def test_stop_accepts_valid_empty_exit_one_and_preserves_history(

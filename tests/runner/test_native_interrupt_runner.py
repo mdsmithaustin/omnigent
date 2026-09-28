@@ -11,6 +11,7 @@ no-handler fall-through contract (antigravity/opencode), and the 503 mapping.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -360,16 +361,32 @@ async def test_prime_stop_dispatches_registered_runtime_owner(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("worker still running"),
+        subprocess.TimeoutExpired(["prime-agent", "shutdown"], 30),
+        subprocess.CalledProcessError(1, ["prime-agent", "shutdown"]),
+    ],
+)
 async def test_prime_stop_failure_is_not_reported_as_success(
     monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
 ) -> None:
+    import json
+
     from omnigent.harnesses.prime_native import process
 
     def fail(_session_id: str) -> None:
-        raise RuntimeError("worker still running")
+        raise error
 
     monkeypatch.setattr(process, "stop_session", fail)
     runner, captured = _make_runner()
     response = await runner.stop("prime-native", "conv_prime")
     assert response is not None and response.status_code == 503
+    assert json.loads(bytes(response.body)) == {
+        "error": "native_stop_failed",
+        "detail": "safe:prime-native stop",
+    }
     assert captured["published"] == []
+    assert captured["wakes"] == []
