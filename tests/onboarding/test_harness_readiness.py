@@ -89,6 +89,7 @@ def _isolate_cli_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     import omnigent._platform as platform
 
     monkeypatch.delenv("OMNIGENT_CODEX_PATH", raising=False)
+    monkeypatch.delenv("OMNIGENT_PRIME_PATH", raising=False)
     monkeypatch.setattr(platform, "_cli_fallback_dirs", lambda: ())
 
 
@@ -109,7 +110,9 @@ def _all_clis_installed(monkeypatch: pytest.MonkeyPatch) -> None:
             # OpenCode's declared range is [1.17.7, 1.18.0); Cursor uses calendar
             # versions and needs a build after 2026-06-01; everything else is
             # fine with a generous semver placeholder.
-            if argv[0].endswith("opencode"):
+            if argv[0].endswith("prime-agent"):
+                version = "0.9.6\n"
+            elif argv[0].endswith("opencode"):
                 version = "1.17.7\n"
             elif argv[0].endswith("cursor-agent") or argv[0].endswith("hermes"):
                 version = "2026.07.01\n"
@@ -366,6 +369,7 @@ def test_configured_harness_map_covers_all_spellings(
         "claude",
         "pi",
         "pi-native",
+        "prime-native",
         "native-pi",
         "cursor",
         # Native Cursor (``omni cursor``) — gates on the cursor-agent CLI.

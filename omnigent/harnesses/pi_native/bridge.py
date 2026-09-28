@@ -323,6 +323,7 @@ def write_extension_files(
     conversation_url: str,
     auth_headers: dict[str, str] | None = None,
     tools: list[_JsonObject] | None = None,
+    agent_label: str | None = None,
 ) -> tuple[Path, Path]:
     """
     Write the Pi extension and config used by a native Pi terminal.
@@ -352,6 +353,8 @@ def write_extension_files(
         "authHeaders": auth_headers or {},
         "tools": tools or [],
     }
+    if agent_label is not None:
+        payload["agentLabel"] = agent_label
     _atomic_json(config_path(bridge_dir), payload)
     _atomic_text(extension_path(bridge_dir), _extension_source())
     return extension_path(bridge_dir), config_path(bridge_dir)

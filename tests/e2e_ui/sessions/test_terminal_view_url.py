@@ -6,18 +6,30 @@ import json
 import re
 
 import httpx
+import pytest
 from playwright.sync_api import Page, Route, expect
 
 
+@pytest.mark.parametrize(
+    ("terminal_id", "terminal_name", "wrapper"),
+    [
+        ("terminal_tui_main", "tui", ""),
+        ("terminal_prime-native_main", "prime-native", "prime-native-ui"),
+    ],
+    ids=["tui", "prime-native"],
+)
 def test_transcript_views_survive_cold_reload(
     page: Page,
     seeded_session: tuple[str, str],
+    terminal_id: str,
+    terminal_name: str,
+    wrapper: str,
 ) -> None:
     """Selecting Terminal or Chat writes and restores the explicit URL view."""
     base_url, session_id = seeded_session
     response = httpx.patch(
         f"{base_url}/v1/sessions/{session_id}",
-        json={"labels": {"omnigent.ui": "terminal"}},
+        json={"labels": {"omnigent.ui": "terminal", "omnigent.wrapper": wrapper}},
         timeout=10.0,
     )
     response.raise_for_status()
@@ -33,19 +45,19 @@ def test_transcript_views_survive_cold_reload(
                     "object": "list",
                     "data": [
                         {
-                            "id": "terminal_tui_main",
+                            "id": terminal_id,
                             "type": "terminal",
                             "session_id": session_id,
-                            "name": "tui:main",
+                            "name": f"{terminal_name}:main",
                             "metadata": {
-                                "terminal_name": "tui",
+                                "terminal_name": terminal_name,
                                 "session_key": "main",
                                 "running": True,
                             },
                         }
                     ],
-                    "first_id": "terminal_tui_main",
-                    "last_id": "terminal_tui_main",
+                    "first_id": terminal_id,
+                    "last_id": terminal_id,
                     "has_more": False,
                 }
             ),
@@ -61,6 +73,9 @@ def test_transcript_views_survive_cold_reload(
 
     expect(page).to_have_url(re.compile(r"[?&]view=terminal(?:&|$)"))
     expect(terminal_button).to_have_attribute("aria-pressed", "true")
+    expect(
+        page.get_by_test_id("main-terminal-view").get_by_test_id("terminal-view")
+    ).to_be_visible()
     # Control-mode terminals use native browser selection without a modifier hint.
     expect(page.get_by_test_id("terminal-selection-hint")).to_have_count(0)
 
@@ -70,6 +85,9 @@ def test_transcript_views_survive_cold_reload(
 
     terminal_button = page.get_by_test_id("view-mode-terminal")
     expect(terminal_button).to_have_attribute("aria-pressed", "true", timeout=60_000)
+    expect(
+        page.get_by_test_id("main-terminal-view").get_by_test_id("terminal-view")
+    ).to_be_visible()
     expect(page).to_have_url(re.compile(r"[?&]view=terminal(?:&|$)"))
 
     chat_button = page.get_by_test_id("view-mode-chat")

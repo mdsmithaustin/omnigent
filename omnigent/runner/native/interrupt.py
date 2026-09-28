@@ -32,6 +32,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -147,6 +148,14 @@ class _UniformStop:
 # enqueue_interrupt + OSError and no timeout; the rest inject_interrupt +
 # RuntimeError + timeout_s.
 _UNIFORM_INTERRUPT: dict[str, _UniformInterrupt] = {
+    "prime-native": _UniformInterrupt(
+        "omnigent.harnesses.prime_native.bridge",
+        "enqueue_interrupt",
+        "prime_native_interrupt_failed",
+        "prime-native interrupt",
+        (OSError,),
+        False,
+    ),
     "pi": _UniformInterrupt(
         "omnigent.harnesses.pi_native.bridge",
         "enqueue_interrupt",
@@ -303,7 +312,13 @@ def native_cancel_capability(wrapper_label: str | None) -> str:
     agent = native_agent_for_cancel(wrapper_label)
     if agent is None:
         return "inprocess"
-    if agent.key == "claude" or agent.key in _UNIFORM_STOP:
+    from omnigent.native.native_dispatch import resolve_hook_for_key
+
+    if (
+        agent.key == "claude"
+        or agent.key in _UNIFORM_STOP
+        or resolve_hook_for_key(agent.key, "stop_handler") is not None
+    ):
         return "stop"
     return "best_effort"
 
@@ -367,6 +382,26 @@ class NativeInterruptRunner:
         key = agent.key
         if key == "claude":
             return await self._claude_stop(conv_id)
+        from omnigent.native.native_dispatch import resolve_hook_for_key
+
+        stop_handler = resolve_hook_for_key(key, "stop_handler")
+        if stop_handler is not None:
+            try:
+                await asyncio.to_thread(stop_handler, conv_id)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "native_stop_failed",
+                        "detail": self._client_safe_error_detail(
+                            exc, context=f"{harness_name} stop"
+                        ),
+                    },
+                )
+            await self._teardown_session_terminals(conv_id)
+            self._publish_event(conv_id, {"type": "session.status", "status": "idle"})
+            self._wake_parent_after_native_interrupt(conv_id)
+            return Response(status_code=204)
         if key in ("codex", "pi"):
             return await self.interrupt(harness_name, conv_id)
         spec = _UNIFORM_STOP.get(key)

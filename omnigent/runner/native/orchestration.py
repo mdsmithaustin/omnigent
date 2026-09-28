@@ -9036,10 +9036,15 @@ async def _delete_native_bridge_dirs(
     from omnigent.harnesses.pi_native.bridge import (
         bridge_dir_for_session_id as pi_bridge_dir,
     )
+    from omnigent.harnesses.prime_native.bridge import runtime_paths
+    from omnigent.harnesses.prime_native.process import stop_prime_runtime
     from omnigent.harnesses.qwen_native.bridge import (
         bridge_dir_for_session_id as qwen_bridge_dir,
     )
     from omnigent.inner.native_attachments import attachment_cache_dir
+
+    prime_paths = runtime_paths(session_id)
+    await asyncio.to_thread(stop_prime_runtime, prime_paths)
 
     labels: dict[str, str] = {}
     if server_client is not None:
@@ -9063,6 +9068,7 @@ async def _delete_native_bridge_dirs(
         opencode_bridge_dir(labels.get(OPENCODE_NATIVE_BRIDGE_ID_LABEL_KEY) or session_id),
         opencode_bridge_dir(session_id),
         pi_bridge_dir(session_id),
+        prime_paths.root,
         qwen_bridge_dir(session_id),
     }
     # A cache can survive a missing bridge directory, including after a reboot.

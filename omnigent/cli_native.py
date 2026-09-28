@@ -88,6 +88,34 @@ def register_native_commands(cli: click.Group) -> None:
     _smart_routing_decision = _late_bound(lambda: _cli._smart_routing_decision)
 
     @cli.command(
+        "prime-native", context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
+    )
+    @click.option(
+        "--server", default=None, help="Omnigent server URL; empty starts a local server."
+    )
+    @click.option(
+        "-r", "--resume", is_flag=False, flag_value=_RESUME_PICKER_SENTINEL, default=None
+    )
+    @click.argument("prime_args", nargs=-1, type=click.UNPROCESSED)
+    def prime_native(server: str | None, resume: str | None, prime_args: tuple[str, ...]) -> None:
+        """Launch Prime Native with Omnigent."""
+        from omnigent.harness_startup_config import resolve_harness_command
+        from omnigent.harnesses.prime_native.main import run_prime_native
+
+        cfg = _load_effective_config()
+        command = resolve_harness_command("prime-native", default="", explicit=None, cfg=cfg)
+        if command:
+            os.environ["OMNIGENT_PRIME_PATH"] = command
+        choice = _split_resume_value(resume)
+        run_prime_native(
+            server=_ensure_backend(server if server is not None else cfg.get("server")),
+            session_id=choice.conversation_id,
+            resume_picker=choice.picker,
+            extra_args=_resolve_harness_startup_args(cfg, "prime-native", prime_args),
+            auto_open_conversation=_resolve_auto_open_conversation_from_config(cfg),
+        )
+
+    @cli.command(
         context_settings={
             "ignore_unknown_options": True,
             "allow_extra_args": True,

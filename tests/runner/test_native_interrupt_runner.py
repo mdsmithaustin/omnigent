@@ -11,6 +11,7 @@ no-handler fall-through contract (antigravity/opencode), and the 503 mapping.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -80,6 +81,7 @@ def _make_runner(**overrides: Any) -> tuple[NativeInterruptRunner, dict[str, Any
 def test_native_cancel_capability_follows_stop_registry() -> None:
     """Parent cancel capability must track ``_UNIFORM_STOP`` plus Claude."""
     from omnigent.native.native_coding_agents import NATIVE_CODING_AGENTS
+    from omnigent.native.native_dispatch import resolve_hook_for_key
     from omnigent.runner.native.interrupt import (
         _UNIFORM_STOP,
         native_cancel_capability,
@@ -87,7 +89,11 @@ def test_native_cancel_capability_follows_stop_registry() -> None:
 
     for agent in NATIVE_CODING_AGENTS:
         capability = native_cancel_capability(agent.wrapper_label)
-        if agent.key == "claude" or agent.key in _UNIFORM_STOP:
+        if (
+            agent.key == "claude"
+            or agent.key in _UNIFORM_STOP
+            or resolve_hook_for_key(agent.key, "stop_handler") is not None
+        ):
             assert capability == "stop", agent.key
         else:
             assert capability == "best_effort", agent.key
@@ -337,3 +343,50 @@ async def test_claude_interrupt_resolves_bridge_id_and_injects(
     assert isinstance(resp, Response) and resp.status_code == 204
     assert injected == [("dir/bid-conv_cl", 1.0)]
     assert captured["wakes"] == [("conv_cl", "cancelled", "[System: sub-agent interrupted]")]
+
+
+@pytest.mark.asyncio
+async def test_prime_stop_dispatches_registered_runtime_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.harnesses.prime_native import process
+
+    stopped = []
+    monkeypatch.setattr(process, "stop_session", stopped.append)
+    runner, captured = _make_runner()
+    response = await runner.stop("prime-native", "conv_prime")
+    assert response is not None and response.status_code == 204
+    assert stopped == ["conv_prime"]
+    assert captured["published"] == [("conv_prime", {"type": "session.status", "status": "idle"})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("worker still running"),
+        subprocess.TimeoutExpired(["prime-agent", "shutdown"], 30),
+        subprocess.CalledProcessError(1, ["prime-agent", "shutdown"]),
+    ],
+)
+async def test_prime_stop_failure_is_not_reported_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    import json
+
+    from omnigent.harnesses.prime_native import process
+
+    def fail(_session_id: str) -> None:
+        raise error
+
+    monkeypatch.setattr(process, "stop_session", fail)
+    runner, captured = _make_runner()
+    response = await runner.stop("prime-native", "conv_prime")
+    assert response is not None and response.status_code == 503
+    assert json.loads(bytes(response.body)) == {
+        "error": "native_stop_failed",
+        "detail": "safe:prime-native stop",
+    }
+    assert captured["published"] == []
+    assert captured["wakes"] == []

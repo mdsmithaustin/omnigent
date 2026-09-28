@@ -581,6 +581,8 @@ See the [policy guide](https://github.com/omnigent-ai/omnigent/blob/main/docs/PO
 
 ## Write your own agent
 
+For Prime Agent's terminal integration, see [Prime Native](docs/PRIME_NATIVE.md).
+
 An agent is a short YAML file: your prompt, your tools — local Python
 functions, MCP servers, and sub-agents a supervisor can delegate to. You don't
 have to write it by hand: agents can build agents, so describe the agent you
@@ -593,7 +595,7 @@ prompt: You are a helpful data analyst.
 executor:
   harness: claude-sdk          # or: claude-native, codex, codex-native, cursor,
                                # cursor-native, hermes, hermes-native, opencode,
-                               # pi, pi-native, openai-agents
+                               # pi, pi-native, prime-native, openai-agents
 
 tools:
   # A local Python function (schema auto-generated from the signature)
