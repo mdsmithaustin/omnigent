@@ -32,6 +32,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -387,7 +388,7 @@ class NativeInterruptRunner:
         if stop_handler is not None:
             try:
                 await asyncio.to_thread(stop_handler, conv_id)
-            except (RuntimeError, OSError) as exc:
+            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 return JSONResponse(
                     status_code=503,
                     content={

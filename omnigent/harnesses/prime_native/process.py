@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import signal
@@ -21,11 +22,14 @@ from omnigent.harnesses.pi_native.bridge import _atomic_text
 from omnigent.harnesses.prime_native.bridge import (
     PRIME_NATIVE_CONFIG_ENV_VAR,
     PrimeRuntimePaths,
+    bridge_roots,
     runtime_paths,
 )
+from omnigent.native import native_bridge_common, owner_claim
 
 QUALIFIED_VERSION = "0.9.6"
 _ACTIVE_RUNTIMES: set[PrimeRuntimePaths] = set()
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -92,10 +96,6 @@ def build_prime_launch(
     source_dir = Path(
         source_env.get("PRIME_AGENT_CODING_AGENT_DIR") or Path.home() / ".prime" / "agent"
     ).expanduser()
-    for name in ("auth.json", "settings.json", "models.json"):
-        source, target = source_dir / name, paths.agent_dir / name
-        if source.is_file() and not target.exists():
-            _atomic_text(target, source.read_text(encoding="utf-8"))
     args = ["--extension", str(extension), "--session-dir", str(paths.session_dir), *extra_args]
     if external_session_id:
         args.extend(["--resume", external_session_id])
@@ -113,8 +113,15 @@ def build_prime_launch(
     env = {**paths.env, PRIME_NATIVE_CONFIG_ENV_VAR: str(config)}
     if source_env.get("OMNIGENT_DATA_DIR"):
         env["OMNIGENT_DATA_DIR"] = source_env["OMNIGENT_DATA_DIR"]
-    _atomic_text(paths.root / "executable", executable)
-    _ACTIVE_RUNTIMES.add(paths)
+    with native_bridge_common.bridge_dir_preparation_lock(paths.root):
+        paths.validate_existing()
+        for name in ("auth.json", "settings.json", "models.json"):
+            source, target = source_dir / name, paths.agent_dir / name
+            if source.is_file() and not target.exists():
+                _atomic_text(target, source.read_text(encoding="utf-8"))
+        _atomic_text(paths.root / "executable", executable)
+        owner_claim.write_owner_claim(paths.root)
+        _ACTIVE_RUNTIMES.add(paths)
     return PrimeLaunch(executable, tuple(args), env)
 
 
@@ -145,17 +152,29 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
     return list(processes.values())
 
 
-def _stop_terminal(paths: PrimeRuntimePaths) -> None:
+def _terminal_process(paths: PrimeRuntimePaths) -> psutil.Process | None:
     try:
         record = json.loads((paths.root / "terminal.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError):
-        return
+    except FileNotFoundError:
+        return None
+    except ValueError as exc:
+        raise RuntimeError("Prime terminal ownership record is invalid.") from exc
     if not isinstance(record, dict) or not isinstance(record.get("pid"), int):
         raise RuntimeError("Prime terminal ownership record is invalid.")
     try:
         terminal = psutil.Process(record["pid"])
         if terminal.create_time() != record.get("created_at"):
-            return
+            return None
+        return terminal
+    except psutil.NoSuchProcess:
+        return None
+
+
+def _stop_terminal(paths: PrimeRuntimePaths) -> None:
+    terminal = _terminal_process(paths)
+    if terminal is None:
+        return
+    try:
         terminal.terminate()
         try:
             terminal.wait(timeout=5)
@@ -167,13 +186,12 @@ def _stop_terminal(paths: PrimeRuntimePaths) -> None:
 
 
 def stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
-    from omnigent.native.native_bridge_common import bridge_dir_preparation_lock
-
     if not paths.validate_existing():
         _ACTIVE_RUNTIMES.discard(paths)
         return
     _stop_terminal(paths)
-    with bridge_dir_preparation_lock(paths.root):
+    with native_bridge_common.bridge_dir_preparation_lock(paths.root):
+        paths.validate_existing()
         _stop_prime_runtime(paths)
     _ACTIVE_RUNTIMES.discard(paths)
 
@@ -208,6 +226,47 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
         if time.monotonic() >= deadline:
             raise RuntimeError("Prime shutdown left a scoped process or socket; runtime retained.")
         time.sleep(0.1)
+    (paths.root / owner_claim.OWNER_PID_FILENAME).unlink(missing_ok=True)
+    (paths.root / "terminal.json").unlink(missing_ok=True)
+
+
+def stop_orphaned_runtimes() -> int:
+    from omnigent.harnesses.claude_native.bridge import ensure_secure_dir
+    from omnigent.inner.terminal import _process_alive as owner_process_alive
+
+    stopped = 0
+    for root in bridge_roots():
+        try:
+            root.lstat()
+        except FileNotFoundError:
+            continue
+        ensure_secure_dir(root)
+        for entry in root.iterdir():
+            if entry.name == ".locks":
+                continue
+            paths = PrimeRuntimePaths(entry)
+            try:
+                if not paths.validate_existing():
+                    continue
+                with native_bridge_common._try_bridge_dir_cleanup_lock(entry) as acquired:
+                    if not acquired or not paths.validate_existing():
+                        continue
+                    claim = owner_claim.read_owner_claim(entry)
+                    if claim is None or not owner_claim.owner_is_gone(
+                        claim, process_alive=owner_process_alive
+                    ):
+                        continue
+                    terminal = _terminal_process(paths)
+                    if terminal is not None and _process_alive(terminal):
+                        continue
+                    if not (paths.root / "executable").is_file():
+                        continue
+                    _stop_prime_runtime(paths)
+                    _ACTIVE_RUNTIMES.discard(paths)
+                    stopped += 1
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                _logger.exception("Error stopping orphaned Prime runtime %s", entry)
+    return stopped
 
 
 def _process_alive(process: psutil.Process) -> bool:
@@ -235,12 +294,15 @@ def stop_all_runtimes() -> None:
 def main() -> int:
     paths = PrimeRuntimePaths(Path(sys.argv[1]))
     paths.prepare()
-    child = subprocess.Popen(sys.argv[2:])
-    terminal = psutil.Process(child.pid)
-    record: dict[str, object] = {"pid": child.pid, "created_at": terminal.create_time()}
     from omnigent.harnesses.pi_native.bridge import _atomic_json
 
-    _atomic_json(paths.root / "terminal.json", record)
+    with native_bridge_common.bridge_dir_preparation_lock(paths.root):
+        paths.validate_existing()
+        owner_claim.write_owner_claim(paths.root)
+        child = subprocess.Popen(sys.argv[2:])
+        terminal = psutil.Process(child.pid)
+        record: dict[str, object] = {"pid": child.pid, "created_at": terminal.create_time()}
+        _atomic_json(paths.root / "terminal.json", record)
 
     def forward_signal(signum: int, _frame: object) -> None:
         with contextlib.suppress(ProcessLookupError):

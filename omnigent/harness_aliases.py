@@ -58,16 +58,16 @@ def is_native_harness(harness: str | None) -> bool:
 
 
 def native_terminal_name(harness: str | None) -> str | None:
-    """Return the tmux terminal short-name a native harness runs its CLI in.
+    """Return the terminal resource name registered for a native harness.
 
-    Native CLI panes are keyed ``(conversation_id, <short-name>, "main")`` in the
-    terminal registry, where the short name is the canonical native harness id
-    with the ``-native`` suffix dropped — e.g. ``"claude-native"`` -> ``"claude"``,
-    ``"native-codex"`` -> ``"codex"``, ``"opencode-native"`` -> ``"opencode"``.
+    Native CLI panes are keyed ``(conversation_id, terminal_name, "main")``.
+    Native agent metadata owns the terminal name, such as ``"claude"`` for
+    ``"claude-native"`` and ``"prime-native"`` for ``"prime-native"``. Native
+    harnesses without matching metadata retain the historical affix-derived name.
 
     :param harness: A harness id (canonical or reversed alias), e.g.
         ``"cursor-native"``; ``None`` or a non-native harness returns ``None``.
-    :returns: The terminal short-name, e.g. ``"cursor"``, or ``None`` when
+    :returns: The terminal resource name, e.g. ``"cursor"``, or ``None`` when
         *harness* is not a native CLI harness.
     """
     if harness is None or not is_native_harness(harness):

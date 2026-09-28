@@ -56,6 +56,11 @@ sessions. When that socket path would exceed the Unix limit, Omnigent uses a
 private digest directory under `/tmp/ogp-<uid>/`. Stop retains saved
 sessions; deleting the conversation removes its adapter state after shutdown.
 
+Startup and host maintenance stop orphaned Prime runtimes whose recorded owner
+is dead in the same process namespace and boot. A live terminal protects its
+runtime even after its runner exits. Recovery retains saved sessions and private
+configuration for resume. Unknown or legacy ownership records remain untouched.
+
 Prime is a fork of Pi that now develops independently, as described in
 [Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/README.md).
 The adapters share

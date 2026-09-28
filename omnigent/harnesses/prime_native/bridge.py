@@ -101,6 +101,7 @@ class PrimeRuntimePaths:
             *(self.agent_dir / name for name in ("auth.json", "settings.json", "models.json")),
             self.root / "executable",
             self.root / "terminal.json",
+            self.root / "owner.pid",
             config_path(self.root),
             extension_path(self.root),
             lock_dir / f"{root.name}.lock",
@@ -143,3 +144,10 @@ def executor_bridge_dir() -> Path:
     if not raw:
         raise RuntimeError(f"{PRIME_NATIVE_BRIDGE_DIR_ENV_VAR} is required for prime-native")
     return Path(raw)
+
+
+def prune_orphaned_bridge_dirs() -> int:
+    """Count stopped orphan runtimes, retaining their saved sessions and configuration."""
+    from omnigent.harnesses.prime_native.process import stop_orphaned_runtimes
+
+    return stop_orphaned_runtimes()
