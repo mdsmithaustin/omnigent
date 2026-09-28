@@ -2488,9 +2488,12 @@ def _persist_external_model_options(
     :raises OmnigentError: If the session is not pi-native, or ``data.models``
         is missing or malformed.
     """
-    if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _PI_NATIVE_WRAPPER_LABEL_VALUE:
+    if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) not in {
+        _PI_NATIVE_WRAPPER_LABEL_VALUE,
+        "prime-native-ui",
+    }:
         raise OmnigentError(
-            "external_model_options is only accepted for pi-native sessions",
+            "external_model_options requires a Pi or Prime Native session",
             code=ErrorCode.INVALID_INPUT,
         )
     raw_models = body.data.get("models")

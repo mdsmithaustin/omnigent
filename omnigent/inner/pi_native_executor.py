@@ -25,7 +25,7 @@ from omnigent.inner.executor import (
 from omnigent.inner.native_attachments import attachment_reference_line
 
 
-class PiNativeExecutor(Executor):
+class ExtensionNativeExecutor(Executor):
     """
     Harness-side executor for ``omnigent pi`` web UI turns.
 
@@ -44,9 +44,9 @@ class PiNativeExecutor(Executor):
     the Claude Code native hook uses.
     """
 
-    def __init__(self, bridge_dir: Path | None = None) -> None:
-        self._bridge_dir = bridge_dir or _bridge_dir_from_env()
-        self._request_session_id = _request_session_id_from_env()
+    def __init__(self, bridge_dir: Path, *, agent_label: str = "Pi") -> None:
+        self._bridge_dir = bridge_dir
+        self._agent_label = agent_label
 
     def supports_streaming(self) -> bool:
         """:returns: ``False`` because output is emitted by the Pi extension."""
@@ -95,7 +95,9 @@ class PiNativeExecutor(Executor):
         del tools, system_prompt, config
         text = _latest_user_text(messages, self._bridge_dir)
         if not text:
-            yield ExecutorError(message="Pi native turn had no user text to send")
+            yield ExecutorError(
+                message=f"{self._agent_label} native turn had no user text to send"
+            )
             return
         self._refresh_auth_headers()
         enqueue_user_message(self._bridge_dir, text)
@@ -139,6 +141,12 @@ class PiNativeExecutor(Executor):
                 )
         except Exception:  # noqa: BLE001 — best-effort refresh; never block a turn
             pass
+
+
+class PiNativeExecutor(ExtensionNativeExecutor):
+    def __init__(self, bridge_dir: Path | None = None) -> None:
+        super().__init__(bridge_dir or _bridge_dir_from_env())
+        self._request_session_id = _request_session_id_from_env()
 
 
 def _bridge_dir_from_env() -> Path:

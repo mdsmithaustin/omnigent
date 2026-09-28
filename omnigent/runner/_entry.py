@@ -1571,6 +1571,12 @@ def create_app(
             await teardown_all_codex_native_app_servers()
         with contextlib.suppress(Exception):
             await teardown_all_opencode_native_servers()
+        from omnigent.harnesses.prime_native.process import stop_all_runtimes
+
+        try:
+            await asyncio.to_thread(stop_all_runtimes)
+        except (OSError, RuntimeError):
+            _logger.exception("Prime Native runtime shutdown failed")
         await pm.shutdown()
         await _terminal_registry.shutdown()
         if mcp_manager is not None:

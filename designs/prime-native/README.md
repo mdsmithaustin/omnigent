@@ -1,7 +1,12 @@
-# Start implementing Prime-native
+# Prime integration design
 
-This branch prepares a first-class Prime Agent integration for Omnigent and Agent Profile Kit.
-It contains design input only. Runtime implementation and live qualification have not started.
+These documents describe a Prime Agent integration for Omnigent and Agent Profile Kit.
+The [Omnigent adapter](../../docs/PRIME_NATIVE.md) implements the `prime-native`
+terminal and message integration. Prime-side bridge and Kit work remain planned.
+The full contract below requires separate qualification.
+
+The following handoff records the original design-only branch and the broader
+planned sequence. Use the adapter guide above for the implemented command.
 
 ## Open the implementation branch
 

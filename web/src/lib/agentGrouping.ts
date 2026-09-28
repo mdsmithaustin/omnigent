@@ -16,6 +16,7 @@ export const BUILTIN_AGENTS = new Set([
   "codex-native-ui", // Codex
   "opencode-native-ui", // OpenCode
   "pi-native-ui", // Pi
+  "prime-native-ui",
   "cursor-native-ui", // Cursor
   "kiro-native-ui", // Kiro
   "antigravity-native-ui", // Antigravity
@@ -66,6 +67,7 @@ export const AGENT_DISPLAY_ORDER = [
   "OpenCode",
   "Cursor",
   "Pi",
+  "Prime Native",
   "Kiro",
   "Antigravity",
   "Qwen Code",

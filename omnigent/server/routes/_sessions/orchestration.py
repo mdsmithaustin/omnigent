@@ -10866,7 +10866,7 @@ async def _fetch_model_options(
         the runner-owned options are not yet available.
     """
     wrapper = conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
-    if wrapper == _PI_NATIVE_WRAPPER_LABEL_VALUE:
+    if wrapper in {_PI_NATIVE_WRAPPER_LABEL_VALUE, "prime-native-ui"}:
         # pi-native's catalog is PUSHED by its extension (its live
         # ``ctx.modelRegistry``), not fetched: that reflects the models pi
         # actually loaded regardless of auth path (Omnigent provider OR pi's

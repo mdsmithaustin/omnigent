@@ -165,8 +165,9 @@ def reap_orphaned_native_bridge_dirs() -> int:
     Iterates the registered native coding agents and invokes each one's
     module-level ``prune_orphaned_bridge_dirs`` (if it defines one), so
     adding a new native harness needs no edit here — it participates simply
-    by exposing that function. The bridge module name is derived from the
-    agent key (``omnigent.harnesses.<key>_native.bridge``). Each harness's prune is
+    by exposing that function. The registered bridge hook identifies the module;
+    agents without that hook use ``omnigent.harnesses.<key>_native.bridge``.
+    Each harness's prune is
     isolated: an import failure, a missing pruner, or a raising pruner
     never aborts the sweep of the others.
 
@@ -178,11 +179,19 @@ def reap_orphaned_native_bridge_dirs() -> int:
     """
     # Imported lazily to avoid an import cycle: the per-harness bridge
     # modules import this module for the marker/prune helpers.
-    from omnigent.harness_plugins import native_agents
+    from omnigent.harness_plugins import native_agents, native_provider_for_key
 
     pruned = 0
     for agent in native_agents():
         module_name = f"omnigent.harnesses.{agent.key}_native.bridge"
+        provider = native_provider_for_key(agent.key)
+        if provider is not None and provider.bridge_dir is not None:
+            import_path = provider.bridge_dir
+            module_name = (
+                import_path.partition(":")[0]
+                if ":" in import_path
+                else import_path.rpartition(".")[0]
+            )
         try:
             module = importlib.import_module(module_name)
         except ImportError:

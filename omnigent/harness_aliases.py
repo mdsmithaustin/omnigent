@@ -6,7 +6,7 @@ Omnigent continues to use canonical harness identifiers internally.
 
 from __future__ import annotations
 
-from omnigent.harness_plugins import harness_aliases, native_harnesses
+from omnigent.harness_plugins import harness_aliases, native_agents, native_harnesses
 
 HARNESS_ALIASES: dict[str, str] = harness_aliases()
 
@@ -73,6 +73,9 @@ def native_terminal_name(harness: str | None) -> str | None:
     if harness is None or not is_native_harness(harness):
         return None
     canonical = canonicalize_harness(harness) or harness
+    for agent in native_agents():
+        if agent.harness == canonical:
+            return agent.terminal_name
     # Canonical native ids are ``<name>-native``; some accepted aliases keep the
     # reversed ``native-<name>`` spelling (not all are folded by
     # ``canonicalize_harness``), so strip either affix.

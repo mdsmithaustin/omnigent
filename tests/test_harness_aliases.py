@@ -114,6 +114,7 @@ def test_kiro_native_is_valid_omnigent_harness_but_plain_kiro_is_not() -> None:
         ("qwen-native", "qwen"),
         ("kimi-native", "kimi"),
         ("pi-native", "pi"),
+        ("prime-native", "prime-native"),
         ("antigravity-native", "antigravity"),
         ("native-antigravity", "antigravity"),
         ("agy-native", "antigravity"),

@@ -125,6 +125,7 @@ def parse_inference_config(config: dict[str, object]) -> dict[str, HarnessInfere
             "opencode-native",
             "pi",
             "pi-native",
+            "prime-native",
             "acp",
         } and not (key.startswith("acp:") and key.removeprefix("acp:").strip()):
             raise ValueError(f"Harness {name!r} does not support inference bindings")

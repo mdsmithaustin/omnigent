@@ -747,6 +747,18 @@ describe("inventoryTerminals", () => {
     expect(inventoryTerminals([piPane, bash], true)).toEqual([bash]);
   });
 
+  it("opens the Prime agent pane without adding it to the shell inventory", () => {
+    const primePane = {
+      id: "terminal_prime-native_main",
+      name: "prime-native",
+      session: "main",
+      running: true,
+    };
+    expect(findAgentTerminal([bash, primePane])).toEqual(primePane);
+    expect(inventoryTerminals([primePane, bash], true)).toEqual([bash]);
+    expect(isAgentTerminalKey("terminal:terminal_prime-native_main")).toBe(true);
+  });
+
   it("drops the cursor vendor pane for native Cursor sessions", () => {
     // Regression: terminal_cursor_main was missing from AGENT_TERMINAL_IDS,
     // same failure mode as the pi pane above — leaked into Shells and hid
