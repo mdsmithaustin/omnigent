@@ -160,7 +160,7 @@ def prune_orphaned_dirs(
 
 def reap_orphaned_native_bridge_dirs() -> int:
     """
-    Sweep orphaned bridge dirs across every native harness during maintenance.
+    Recover orphaned bridge runtimes across native harnesses during maintenance.
 
     Iterates the registered native coding agents and invokes each one's
     module-level ``prune_orphaned_bridge_dirs`` (if it defines one), so
@@ -172,10 +172,10 @@ def reap_orphaned_native_bridge_dirs() -> int:
     never aborts the sweep of the others.
 
     Mirrors ``inner/terminal.py:reap_orphaned_terminals``; host maintenance and
-    standalone runners call this to reclaim dirs leaked by a prior runner that
-    died without running the explicit delete path.
+    standalone runners call this to clean up state leaked by a prior runner.
+    Harnesses can retain saved state after stopping their orphaned processes.
 
-    :returns: The total number of orphaned bridge dirs removed.
+    :returns: The number of orphaned bridge runtimes recovered.
     """
     # Imported lazily to avoid an import cycle: the per-harness bridge
     # modules import this module for the marker/prune helpers.

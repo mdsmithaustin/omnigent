@@ -1470,11 +1470,11 @@ def create_app(
         try:
             from omnigent.native.native_bridge_common import reap_orphaned_native_bridge_dirs
 
-            _reaped_bridge_dirs = reap_orphaned_native_bridge_dirs()
-            if _reaped_bridge_dirs:
+            _recovered_bridge_runtimes = reap_orphaned_native_bridge_dirs()
+            if _recovered_bridge_runtimes:
                 _logger.info(
-                    "Reaped %d orphaned native bridge dir(s) from prior runs",
-                    _reaped_bridge_dirs,
+                    "Recovered %d orphaned native bridge runtimes from prior runs",
+                    _recovered_bridge_runtimes,
                 )
         except Exception:  # noqa: BLE001 — housekeeping must never block startup
             _logger.debug("native bridge-dir orphan sweep failed", exc_info=True)
