@@ -79,6 +79,7 @@ const {
   usesDatabricksBrowserAuth,
   isDatabricksLoginUrl,
   createDatabricksAuth,
+  isTransientRenewalError,
   SESSION_REJECTED,
 } = require("./databricks-auth");
 const { decideWindowOpen, stripCrossOriginOpenerHeaders, WEB_SCHEMES } = require("./popupPolicy");
@@ -635,6 +636,34 @@ function usesBrowserAuth(url) {
   return usesDatabricksBrowserAuth(url, databricksAuthMode);
 }
 
+// Chromium net errors that mean the host could not be reached at all.
+const UNREACHABLE_NET_ERRORS = new Set([
+  -7, // TIMED_OUT
+  -21, // NETWORK_CHANGED
+  -100, // CONNECTION_CLOSED
+  -101, // CONNECTION_RESET
+  -102, // CONNECTION_REFUSED
+  -104, // CONNECTION_FAILED
+  -105, // NAME_NOT_RESOLVED
+  -106, // INTERNET_DISCONNECTED
+  -109, // ADDRESS_UNREACHABLE
+  -118, // CONNECTION_TIMED_OUT
+  -137, // NAME_RESOLUTION_FAILED
+]);
+
+/**
+ * On Databricks-managed devices, internal workspaces are usually reachable only
+ * over the corporate VPN, so an unreachable Databricks server gets a VPN hint.
+ *
+ * @param {string | null | undefined} serverUrl
+ * @returns {string} The hint sentence, or "" when it doesn't apply.
+ */
+function vpnHint(serverUrl) {
+  return databricksInternalFeaturesEnabled() && isDatabricksManagedServerUrl(serverUrl)
+    ? "Check that you're connected to the VPN, then click Connect."
+    : "";
+}
+
 function showDatabricksAuthRequired(win, serverUrl, error) {
   if (win.isDestroyed()) return;
   console.warn("[omnigent] databricks auth: connection requires sign-in", {
@@ -647,12 +676,14 @@ function showDatabricksAuthRequired(win, serverUrl, error) {
   if (error.errorCode === SESSION_REJECTED)
     databricksBrowserSignInRequired.add(originOf(serverUrl));
   const expired = error.errorCode === "NO_REFRESH_TOKEN" || error.errorCode === "invalid_grant";
-  const params = new URLSearchParams({
-    error: expired
-      ? "Session expired. Connect to sign in again."
-      : "Couldn't sign in to Databricks. Please try again.",
-    url: serverUrl,
-  });
+  let message = "Couldn't sign in to Databricks. Please try again.";
+  if (expired) message = "Session expired. Connect to sign in again.";
+  else if (isTransientRenewalError(error)) {
+    message = `Couldn't reach Databricks. ${
+      vpnHint(serverUrl) || "Check your network connection, then click Connect."
+    }`;
+  }
+  const params = new URLSearchParams({ error: message, url: serverUrl });
   if (windows.get(win)?.ephemeral) params.set("ephemeral", "1");
   databricksAuth?.rejectConnection(win);
   pinWindow(win, null);
@@ -1518,7 +1549,12 @@ function registerNavigationFallbacks(win) {
       const failedOrigin = originOf(validatedURL ?? "");
       if (failedOrigin !== windows.get(win)?.origin) return;
       const params = new URLSearchParams({
-        error: `${errorDescription || "load failed"} (${errorCode})`,
+        error: [
+          `${errorDescription || "load failed"} (${errorCode})`,
+          UNREACHABLE_NET_ERRORS.has(errorCode) ? vpnHint(validatedURL) : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
         // The failure often happens on a deep SPA route (e.g. /chat/…);
         // prefill the setup form with just the server origin — that's what
         // the user connects to — not the full path that happened to fail.

@@ -169,12 +169,6 @@ describe("Databricks session preparation", () => {
         });
       },
     ],
-    [
-      "a network failure",
-      () => {
-        throw new TypeError("fetch failed");
-      },
-    ],
   ]) {
     it(`falls back to browser sign-in on connect with ${label}`, async () => {
       const h = harness({ stored });
@@ -188,14 +182,38 @@ describe("Databricks session preparation", () => {
     let requests = 0;
     const h = harness({
       respond(req) {
-        if (++requests === 1) req.emit("error", new Error("net::ERR_NAME_NOT_RESOLVED"));
-        else req.emit("redirect", 302, "GET", `${ORIGIN}/omnigent`, {});
+        req.emit(
+          "redirect",
+          302,
+          "GET",
+          `${ORIGIN}${++requests === 1 ? "/login" : "/omnigent"}`,
+          {},
+        );
       },
     });
     assert.equal(await h.ensureDatabricksSession(h.ses, ORIGIN), ORIGIN);
     assert.equal(h.calls.stored, 1);
     assert.equal(h.calls.browser, 1);
     assert.equal(h.requests.length, 2);
+  });
+  it("reports an unreachable workspace on connect instead of opening the browser", async () => {
+    let requests = 0;
+    const lookup = harness({
+      stored: () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+    await assert.rejects(lookup.ensureDatabricksSession(lookup.ses, ORIGIN), /fetch failed/);
+    assert.equal(lookup.calls.browser, 0);
+    const mint = harness({
+      respond(req) {
+        requests++;
+        req.emit("error", new Error("net::ERR_NAME_NOT_RESOLVED"));
+      },
+    });
+    await assert.rejects(mint.ensureDatabricksSession(mint.ses, ORIGIN), /ERR_NAME_NOT_RESOLVED/);
+    assert.equal(mint.calls.browser, 0);
+    assert.equal(requests, 1);
   });
   it("sends an account URL through browser sign-in since tokens are stored per workspace", async () => {
     const account = "https://accounts.cloud.databricks.com";

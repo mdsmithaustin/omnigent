@@ -41,6 +41,7 @@ function loadNavigationHarness({
   ensureSession = async (_ses, origin) => origin,
   expandWorkspace = async (url) => url,
   realBrowserRegistry = false,
+  internalFeatures = false,
 } = {}) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "omnigent-navigation-test-"));
   if (savedServerUrl) {
@@ -190,7 +191,9 @@ function loadNavigationHarness({
     screen: {},
     session: { defaultSession },
     shell: {},
-    systemPreferences: {},
+    systemPreferences: internalFeatures
+      ? { getUserDefault: (key) => key === "databricksInternalFeaturesEnabled" }
+      : {},
   };
 
   const localRequires = {
@@ -306,7 +309,11 @@ function loadNavigationHarness({
     clearTimeout,
     console,
     module,
-    process: { ...process, env: { ...process.env } },
+    process: {
+      ...process,
+      platform: internalFeatures ? "darwin" : process.platform,
+      env: { ...process.env },
+    },
     require: (specifier) => {
       if (specifier === "electron") return electron;
       if (specifier === "electron-updater") return { autoUpdater: {} };
@@ -414,6 +421,52 @@ describe("Databricks auth mode wiring", () => {
       h.calls.auth.map((call) => call[2].useStoredCredentials),
       [true, false, true],
     );
+  });
+
+  for (const [label, internalFeatures, hint] of [
+    ["asks about the VPN on a Databricks-managed device", true, /connected to the VPN/],
+    ["suggests checking the network elsewhere", false, /Check your network connection/],
+  ]) {
+    it(`${label} when the workspace is unreachable`, async (t) => {
+      const h = loadNavigationHarness({
+        serverUrl: workspace,
+        databricksMode: "browser",
+        internalFeatures,
+        ensureSession: async () => {
+          throw new TypeError("fetch failed");
+        },
+      });
+      t.after(h.cleanup);
+      await assert.rejects(
+        h.api.loadServerUrl(h.win, workspace, undefined, { interactive: true }),
+        /fetch failed/,
+      );
+      await tick();
+      const error = new URLSearchParams(h.calls.loadFile[0][1].search).get("error");
+      assert.match(error, /^Couldn't reach Databricks\. /);
+      assert.match(error, hint);
+    });
+  }
+
+  it("adds the VPN hint to unreachable Databricks page loads on managed devices", async (t) => {
+    const errors = await Promise.all(
+      [
+        [true, -105],
+        [false, -105],
+        [true, -310],
+      ].map(async ([internalFeatures, code]) => {
+        const h = loadNavigationHarness({ serverUrl: workspace, internalFeatures });
+        t.after(h.cleanup);
+        h.emit("did-fail-load", code, "ERR", `${workspace}/c/1`, true);
+        await tick();
+        return new URLSearchParams(h.calls.loadFile[0][1].search).get("error");
+      }),
+    );
+    assert.deepEqual(errors, [
+      "ERR (-105) Check that you're connected to the VPN, then click Connect.",
+      "ERR (-105)",
+      "ERR (-310)",
+    ]);
   });
 
   it("prepares stored credentials on saved-server launch and deep-link loads", async (t) => {
