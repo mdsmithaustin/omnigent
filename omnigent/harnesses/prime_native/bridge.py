@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from omnigent._platform import stable_user_id
-from omnigent.harnesses.pi_native.bridge import enqueue_interrupt as enqueue_interrupt
 from omnigent.process_logging import data_dir
 
 PRIME_NATIVE_BRIDGE_DIR_ENV_VAR = "HARNESS_PRIME_NATIVE_BRIDGE_DIR"
 PRIME_NATIVE_CONFIG_ENV_VAR = "OMNIGENT_EXTENSION_NATIVE_CONFIG"
+KERNEL_PROCESS_NAMES_FILE = "kernel-process-names.json"
 _DATA_ROOT = data_dir()
 _COMPACT_ROOT = Path("/tmp") / f"ogp-{stable_user_id()}"
 
@@ -58,6 +58,9 @@ class PrimeRuntimePaths:
             self.temp_dir,
             self.session_dir,
             self.root / "inbox",
+            self.root / "controls",
+            self.root / "controls" / "requests",
+            self.root / "controls" / "results",
         )
 
     def validate_existing(self) -> bool:
@@ -100,6 +103,7 @@ class PrimeRuntimePaths:
         for path in (
             *(self.agent_dir / name for name in ("auth.json", "settings.json", "models.json")),
             self.root / "executable",
+            self.root / KERNEL_PROCESS_NAMES_FILE,
             self.root / "terminal.json",
             self.root / "owner.pid",
             config_path(self.root),

@@ -550,8 +550,18 @@ bundle: agent .tar.gz file part
 Request parts:
 
   metadata (JSON string, required)
-    Session metadata. Shape matches `SessionCreateMetadata`:
-    `{title?: string | null, labels?: object, reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null, workspace?: string | null, terminal_launch_args?: string[] | null}`.
+    Session metadata uses `SessionCreateMetadata`. Common fields include
+    `{title?: string | null, labels?: object, reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null, host_id?: string | null, workspace?: string | null, terminal_launch_args?: string[] | null}`.
+    Other supported fields are `inference_configuration_revision`, `project_id`,
+    `parent_session_id`, `host_type`, and `sandbox_provider`.
+    For external sessions, `host_id` launches a runner on the selected registered host. It requires
+    `workspace`, which the server validates against the bundled agent's
+    `os_env.cwd`. A child can inherit its bound parent's runner through
+    `parent_session_id`. If neither applies, the caller must bind a registered
+    runner before posting messages.
+    With `host_type: "managed"`, the server provisions a runner unless the child
+    inherits one. Managed metadata rejects `host_id` and can select a
+    `sandbox_provider`.
     `terminal_launch_args` carries pass-through CLI args for a native
     terminal wrapper, e.g. `["--permission-mode", "bypassPermissions"]`
     (same field as the JSON create path below). Unknown fields fail with 400.
@@ -837,7 +847,7 @@ Request body:
 
   reasoning_effort (string or null, optional)
     Per-session reasoning-effort hint. Accepted metadata values are
-    `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+    `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`.
     Provider-specific support is validated when a turn executes.
     Clear values follow the existing sessions API semantics.
 
@@ -882,6 +892,30 @@ Request body:
 is used on a non-Codex-native session; or `external_session_id` would
 overwrite a different existing value
 404 Not Found - no session with that id
+
+Prime Native sessions apply `model_override` and `reasoning_effort` through the
+live extension before returning success. Models use exact `provider/model`
+identifiers. A combined PATCH applies the model before the effort. Native
+observations own the active settings, including independent terminal changes.
+The response reads that observed state, which may differ from an earlier
+acknowledgment. Prime can clamp effort for the chosen model.
+
+Settings success requires native callbacks and HTTP 2xx acceptance of their
+observations. If a model switch also clamps effort, both observations must
+publish successfully. A missing or rejected publication after mutation returns
+504 `prime_control_unknown`. Prime 0.9.6 does not emit a callback for a setting
+that is already active, so a same-value request can return this outcome too.
+Each runner serializes its admitted settings in order. Native terminal
+selections remain independent, and interrupt bypasses that queue.
+
+Clearing a live Prime setting or changing it with `silent` returns 409. A missing
+live binding returns 503. A possibly applied control without a usable result
+returns 504 and is not retried. A combined request can apply the model and fail
+the effort. Its error includes `outcomes` for the controls attempted, and the
+server retains the observed partial state. These rules apply to sessions with
+resolved harness `prime-native`, including custom agents without a wrapper label.
+An explicit harness override toward or away from Prime takes precedence over a
+stale native wrapper label. Other native wrapper precedence remains unchanged.
 
 This is the mutable affinity primitive for Alpha. The same endpoint
 serves create-bind, resume-bind, and recover-bind: the client starts a
@@ -962,6 +996,12 @@ Request body matches `SessionEventInput`:
                                   (there is no separate "resume" event).
                                   The conversation transcript is
                                   preserved. Returns `{queued: false}`.
+                                  For Prime Native, the public route returns
+                                  503 `runner_unavailable` if a terminal
+                                  launch is in progress or scoped shutdown
+                                  cannot be proved. Retry after launch
+                                  settles; failed stop retains the runtime's
+                                  ownership records.
       - "external_conversation_item"
                                 — internal terminal-observed item
                                   envelope; appends/broadcasts without
@@ -1109,6 +1149,17 @@ creating a task or item. Runner-hosted native sub-agent sessions also
 mirror that status into the parent stream as `session.child_session.updated`
 when the child is registered for fan-out. New user-facing event types should
 default to the queue.
+
+Prime Native uses its extension's control receipts. A successful interrupt
+returns HTTP 202 with `{"queued": true, "status": "interrupt_accepted"}`.
+That reply reports abort admission. The extension publishes the later native
+interruption separately, and the reply does not establish descendant settlement.
+A successful compact returns HTTP 202 with `{"queued": false}` after Prime's
+completion callback. Native rejection returns 409, a missing live binding
+returns 503, and an unproved result after possible mutation returns 504. Omnigent
+does not retry that uncertain control. Prime Native message events retain HTTP
+202 admission semantics, including requests for a streamed response. An inbox
+enqueue cannot publish native completion.
 
 ### Resolve Elicitation (URL-based)
 

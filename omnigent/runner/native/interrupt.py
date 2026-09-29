@@ -148,14 +148,6 @@ class _UniformStop:
 # enqueue_interrupt + OSError and no timeout; the rest inject_interrupt +
 # RuntimeError + timeout_s.
 _UNIFORM_INTERRUPT: dict[str, _UniformInterrupt] = {
-    "prime-native": _UniformInterrupt(
-        "omnigent.harnesses.prime_native.bridge",
-        "enqueue_interrupt",
-        "prime_native_interrupt_failed",
-        "prime-native interrupt",
-        (OSError,),
-        False,
-    ),
     "pi": _UniformInterrupt(
         "omnigent.harnesses.pi_native.bridge",
         "enqueue_interrupt",
@@ -358,6 +350,14 @@ class NativeInterruptRunner:
         if agent is None:
             return None
         key = agent.key
+        if key == "prime-native":
+            from omnigent.harnesses.prime_native.bridge import runtime_paths
+            from omnigent.harnesses.prime_native.controls import Interrupt, PrimeExtensionBinding
+
+            outcome = await PrimeExtensionBinding(runtime_paths(conv_id).root).execute(
+                Interrupt(), timeout_s=3.0
+            )
+            return JSONResponse(status_code=outcome.http_status, content=outcome.response_body())
         if key == "claude":
             return await self._claude_interrupt(conv_id)
         if key == "codex":
