@@ -522,6 +522,7 @@ _RUNNER_ENV_ALLOWLIST: frozenset[str] = frozenset(
         "CODEX_HOME",
         "OMNIGENT_PRIME_PATH",
         "PRIME_AGENT_CODING_AGENT_DIR",
+        "PRIME_AGENT_KERNEL_PYTHON",
         # DATABRICKS_AUTH_STORAGE selects the token-storage backend ("secure"
         # OS keychain vs "plaintext" JSON cache) — also a non-secret selector.
         # Without it a runner falls back to the ~/.databrickscfg [__settings__]
@@ -3273,6 +3274,22 @@ class HostProcess:
                 request_id=frame.request_id,
                 status="failed",
                 error="the codex model probe failed — see the host log",
+            )
+
+        if harness == "prime-native":
+            from omnigent.harnesses.prime_native.catalog import model_options
+
+            try:
+                models = await asyncio.to_thread(model_options)
+            except (OSError, ValueError, subprocess.SubprocessError, click.ClickException):
+                _logger.warning("Prime model catalog unavailable", exc_info=True)
+                return HostModelOptionsResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error="failed to resolve Prime model options",
+                )
+            return HostModelOptionsResultFrame(
+                request_id=frame.request_id, status="ok", models=with_source(models)
             )
 
         if harness == "pi-native":

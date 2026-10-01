@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import sys
@@ -26,7 +27,10 @@ from omnigent.harnesses.pi_native.bridge import (
 )
 from omnigent.harnesses.prime_native.bridge import runtime_paths
 from omnigent.harnesses.prime_native.process import (
+    abandon_prime_launch,
     build_prime_launch,
+    complete_prime_launch,
+    reserve_prime_launch,
     resolve_prime_executable,
     stop_prime_runtime,
 )
@@ -39,6 +43,8 @@ from omnigent.host.daemon_launch import (
 from omnigent.native.native_coding_agents import native_shell_terminal_spec
 from omnigent.native.native_terminal import bind_session_runner, url_component
 from omnigent.util.json_types import JsonObject
+
+_logger = logging.getLogger(__name__)
 
 
 def _materialize_prime_agent_spec(tmpdir: Path) -> Path:
@@ -206,101 +212,140 @@ async def _attach_session(
 
 
 async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView:
-    from omnigent.cli_auth import databricks_request_headers
-    from omnigent.harnesses.claude_native.bridge import _TOOL_RELAY_FILE, _read_json_file
-    from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
-    from omnigent.runner._entry import (
-        _make_auth_token_factory,
-        _runner_tunnel_binding_token_from_env,
-    )
-    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER
-    from omnigent.runner.native.orchestration import (
-        _agent_os_env_from_spec,
-        _pi_native_launch_config,
-        _unwrap_resolved_spec,
-    )
-    from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
-
-    config = await _pi_native_launch_config(
-        session_id=ctx.session_id, server_client=ctx.server_client
-    )
-    executable = await asyncio.to_thread(resolve_prime_executable)
     paths = runtime_paths(ctx.session_id)
-    await asyncio.to_thread(stop_prime_runtime, paths)
-    paths.prepare()
-    clear_inbox(paths.root)
-    factory = _make_auth_token_factory()
-    token = await asyncio.to_thread(factory) if factory else None
-    headers = databricks_request_headers(config.server_url, bearer_token=token)
-    binding_token = _runner_tunnel_binding_token_from_env()
-    if binding_token:
-        headers[RUNNER_TUNNEL_TOKEN_HEADER] = binding_token
-    spec = _unwrap_resolved_spec(ctx.agent_spec)
-    tools = build_native_relay_tool_schemas(spec)
-    extension, extension_config = write_extension_files(
-        paths.root,
-        session_id=ctx.session_id,
-        server_url=config.server_url,
-        conversation_url=conversation_url(config.server_url, ctx.session_id),
-        auth_headers=headers,
-        tools=tools,
-        agent_label="Prime Native",
-    )
-    from omnigent.runtime.prompt import build_instructions_nullable
-
-    instructions = build_instructions_nullable(spec, None, tools) if spec else None
-    model = config.model_override or (spec.executor.model if spec else None)
-    launch = build_prime_launch(
-        paths,
-        executable=executable,
-        extension=extension,
-        config=extension_config,
-        extra_args=config.terminal_launch_args or (),
-        external_session_id=config.external_session_id,
-        model=model,
-        reasoning_effort=config.reasoning_effort,
-        instructions=instructions,
-    )
-    agent_os_env = _agent_os_env_from_spec(ctx.agent_spec)
-    view = await ctx.resource_registry.launch_required_terminal(
-        session_id=ctx.session_id,
-        terminal_name="prime-native",
-        session_key="main",
-        resource_role="prime-native",
-        parent_os_env=agent_os_env,
-        spec=TerminalEnvSpec(
-            os_env=OSEnvSpec(
-                type="caller_process",
-                cwd=str(config.workspace),
-                sandbox=agent_os_env.sandbox if agent_os_env else None,
-            ),
-            command=sys.executable,
-            args=[
-                "-m",
-                "omnigent.harnesses.prime_native.process",
-                str(paths.root),
-                launch.executable,
-                *launch.argv,
-            ],
-            env=dict(launch.env),
-            scrollback=100_000,
-            tmux_allow_passthrough=True,
-            tmux_start_on_attach=False,
-            keep_alive_after_exit=True,
-        ),
-    )
-    ctx.publish_event(
-        ctx.session_id,
-        {"type": "session.resource.created", "resource": session_resource_view_to_dict(view)},
-    )
-    if ctx.server_client is not None and ctx.ensure_comment_relay is not None:
-        await ctx.ensure_comment_relay(
-            ctx.session_id, explicit_bridge_dir=paths.root, await_notify=False
+    reservation = reserve_prime_launch(paths)
+    dispatched = False
+    reservation_active = True
+    try:
+        from omnigent.cli_auth import databricks_request_headers
+        from omnigent.harnesses.claude_native.bridge import _TOOL_RELAY_FILE, _read_json_file
+        from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
+        from omnigent.runner._entry import (
+            _make_auth_token_factory,
+            _runner_tunnel_binding_token_from_env,
         )
-        relay = _read_json_file(paths.root / _TOOL_RELAY_FILE)
-        if relay and isinstance(relay.get("url"), str) and isinstance(relay.get("token"), str):
-            inject_relay_into_config(paths.root, relay["url"], relay["token"])
-    return view
+        from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER
+        from omnigent.runner.native.orchestration import (
+            _agent_os_env_from_spec,
+            _pi_native_launch_config,
+            _unwrap_resolved_spec,
+        )
+        from omnigent.runner.proxy_mcp_manager import ProxyMcpManager
+        from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
+
+        config = await _pi_native_launch_config(
+            session_id=ctx.session_id, server_client=ctx.server_client
+        )
+        executable = await asyncio.to_thread(resolve_prime_executable)
+        await asyncio.to_thread(stop_prime_runtime, paths, launch_reservation=reservation)
+        paths.prepare()
+        clear_inbox(paths.root)
+        factory = _make_auth_token_factory()
+        token = await asyncio.to_thread(factory) if factory else None
+        headers = databricks_request_headers(config.server_url, bearer_token=token)
+        binding_token = _runner_tunnel_binding_token_from_env()
+        if binding_token:
+            headers[RUNNER_TUNNEL_TOKEN_HEADER] = binding_token
+        spec = _unwrap_resolved_spec(ctx.agent_spec)
+        tools = build_native_relay_tool_schemas(spec)
+        if spec is not None and ctx.server_client is not None:
+            try:
+                mcp_schemas = await ProxyMcpManager(ctx.session_id, ctx.server_client).schemas_for(
+                    spec
+                )
+                tools.extend(mcp_schemas.schemas)
+                for server_name, error in mcp_schemas.failures.items():
+                    _logger.warning(
+                        "Prime Native MCP %r unavailable at launch: %s",
+                        server_name,
+                        error,
+                        extra={"session_id": ctx.session_id},
+                    )
+            except Exception:
+                _logger.exception(
+                    "Failed to discover Prime Native MCP tools for session %s; "
+                    "Prime will start without those MCP tools",
+                    ctx.session_id,
+                    extra={"session_id": ctx.session_id},
+                )
+        extension, extension_config = write_extension_files(
+            paths.root,
+            session_id=ctx.session_id,
+            server_url=config.server_url,
+            conversation_url=conversation_url(config.server_url, ctx.session_id),
+            auth_headers=headers,
+            tools=tools,
+            agent_label="Prime Native",
+        )
+        from omnigent.harnesses.pi_native.bridge import _atomic_text
+
+        extension_settings = json.loads(extension_config.read_text())
+        extension_settings["primeControlsDir"] = str(paths.root / "controls")
+        _atomic_text(extension_config, json.dumps(extension_settings))
+        from omnigent.runtime.prompt import build_instructions_nullable
+
+        instructions = build_instructions_nullable(spec, None, tools) if spec else None
+        model = config.model_override or (spec.executor.model if spec else None)
+        launch = build_prime_launch(
+            paths,
+            executable=executable,
+            extension=extension,
+            config=extension_config,
+            extra_args=config.terminal_launch_args or (),
+            external_session_id=config.external_session_id,
+            model=model,
+            reasoning_effort=config.reasoning_effort,
+            instructions=instructions,
+        )
+        agent_os_env = _agent_os_env_from_spec(ctx.agent_spec)
+        dispatched = True
+        view = await ctx.resource_registry.launch_required_terminal(
+            session_id=ctx.session_id,
+            terminal_name="prime-native",
+            session_key="main",
+            resource_role="prime-native",
+            parent_os_env=agent_os_env,
+            spec=TerminalEnvSpec(
+                os_env=OSEnvSpec(
+                    type="caller_process",
+                    cwd=str(config.workspace),
+                    sandbox=agent_os_env.sandbox if agent_os_env else None,
+                ),
+                command=sys.executable,
+                args=[
+                    "-m",
+                    "omnigent.harnesses.prime_native.process",
+                    str(paths.root),
+                    launch.executable,
+                    *launch.argv,
+                ],
+                env=dict(launch.env),
+                scrollback=100_000,
+                tmux_allow_passthrough=True,
+                tmux_start_on_attach=False,
+                keep_alive_after_exit=True,
+            ),
+        )
+        await asyncio.to_thread(complete_prime_launch, paths, reservation)
+        reservation_active = False
+        ctx.publish_event(
+            ctx.session_id,
+            {"type": "session.resource.created", "resource": session_resource_view_to_dict(view)},
+        )
+        if ctx.server_client is not None and ctx.ensure_comment_relay is not None:
+            await ctx.ensure_comment_relay(
+                ctx.session_id, explicit_bridge_dir=paths.root, await_notify=False
+            )
+            relay = _read_json_file(paths.root / _TOOL_RELAY_FILE)
+            if relay and isinstance(relay.get("url"), str) and isinstance(relay.get("token"), str):
+                inject_relay_into_config(paths.root, relay["url"], relay["token"])
+        return view
+    except BaseException:
+        if reservation_active:
+            await asyncio.to_thread(
+                abandon_prime_launch, paths, reservation, dispatched=dispatched
+            )
+        raise
 
 
 if TYPE_CHECKING:

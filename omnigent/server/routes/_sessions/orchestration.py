@@ -10831,48 +10831,11 @@ async def _fetch_model_options(
     conv: Conversation,
     agent_store: AgentStore | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Resolve the Web UI model-picker options for a native session.
-
-    Three shapes:
-
-    * **codex-native / cursor-native / kiro-native** — a *live* catalog only
-      the bound runner can read from the installed CLI. This stays
-      off the snapshot hot path: the first snapshot kicks a background fetch
-      and returns ``[]``; subsequent snapshots serve the cache. The cache
-      outlives the runner: with no runner bound (asleep session) it keeps
-      serving, and a stale-marked entry serves while a live re-fetch replaces
-      it.
-    * **claude-native** — the provider-neutral aliases from the exact launch
-      config, refreshed from Databricks before each new terminal starts.
-      With no runner bound and a cold cache (server restart while the
-      session slept), the session's host resolves a pre-launch preview
-      instead — the same source the new-session picker uses.
-    * **acp** — the deployment's curated provider ``models:`` shortlist from
-      the session's explicit provider (provider default first). Local to the
-      server, so a cold cache re-resolves inline with no runner round trip.
-      Served only when the deployment actually curated a set (2+ models); a
-      session configured without one shows no picker, matching pi-native's
-      no-scope-when-uncurated rule.
-
-    :param runner_client: HTTP client pointed at the bound runner, or
-        ``None`` when no runner is bound.
-    :param session_id: Session/conversation identifier,
-        e.g. ``"conv_abc123"``.
-    :param conv: Conversation row whose labels identify the wrapper.
-    :param agent_store: Optional store for the ACP spec lookup; resolves
-        from the runtime globals when ``None``.
-    :returns: Model options, or ``[]`` when the session has no model picker or
-        the runner-owned options are not yet available.
-    """
     wrapper = conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
-    if wrapper in {_PI_NATIVE_WRAPPER_LABEL_VALUE, "prime-native-ui"}:
-        # pi-native's catalog is PUSHED by its extension (its live
-        # ``ctx.modelRegistry``), not fetched: that reflects the models pi
-        # actually loaded regardless of auth path (Omnigent provider OR pi's
-        # own ``/login``), so the picker populates even when no ``models.json``
-        # is written into the bridge dir. Empty until the extension posts
-        # ``external_model_options`` on session start.
+    native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
+    if wrapper == _PI_NATIVE_WRAPPER_LABEL_VALUE or (
+        native_agent is not None and native_agent.harness == "prime-native"
+    ):
         return _pushed_model_options_cache.get(session_id, [])
     endpoint = _MODEL_OPTIONS_ENDPOINT_BY_WRAPPER.get(wrapper or "")
     if endpoint is None:
