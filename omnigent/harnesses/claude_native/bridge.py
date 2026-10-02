@@ -7787,11 +7787,6 @@ def _attachment_transcript_items_from_entry(
 # ``<bash-*>`` records when the operator types ``!cmd``. All are
 # CLI scaffolding, not user-typed content — rendering any of them as
 # a user bubble shows raw markup to a web viewer.
-# Today: drop isMeta + every CLI-scaffolding-prefixed record; for
-# ``<command-name>`` records also surface Skills as ``slash_command``
-# items. The original blanket drop was reverted because it
-# hid Skills; we keep the broad scaffolding filter and just
-# selectively re-surface the Skill case.
 _COMMAND_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
 _COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 _COMMAND_STDOUT_RE = re.compile(r"<local-command-stdout>(.*?)</local-command-stdout>", re.DOTALL)
@@ -8285,12 +8280,39 @@ def _user_transcript_items_from_entry(
     :returns: Updated active response id and parsed user/tool-result
         items.
     """
-    # ``isMeta=true`` carries CLI scaffolding like
-    # ``<local-command-caveat>``; no user-visible content.
-    if entry.get("isMeta") is True:
-        return current_response_id, []
     message = entry["message"]
     content = message.get("content") if isinstance(message, dict) else None
+    if entry.get("isMeta") is True:
+        texts = (
+            [content]
+            if isinstance(content, str)
+            else [
+                block["text"]
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") == "text"
+                and isinstance(block.get("text"), str)
+                and block["text"]
+            ]
+            if isinstance(content, list)
+            else []
+        )
+        if not any(text.startswith("Base directory for this skill: ") for text in texts):
+            return current_response_id, []
+        source_key = _transcript_source_key(entry, line_number, record_offset)
+        return current_response_id, [
+            ClaudeTranscriptItem(
+                source_id=_source_id(source_key, index, "message"),
+                item_type="message",
+                data={
+                    "role": "user",
+                    "is_meta": True,
+                    "content": [{"type": "input_text", "text": text}],
+                },
+                response_id=_response_id_from_source(source_key),
+            )
+            for index, text in enumerate(texts)
+        ]
     source_key = _transcript_source_key(entry, line_number, record_offset)
     fallback_response_id = _response_id_from_source(source_key)
 

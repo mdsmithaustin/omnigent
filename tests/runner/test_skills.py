@@ -670,3 +670,63 @@ async def test_codex_bundle_skill_not_duplicated_when_dir_differs_from_name(
     names = resp.json()["available"]
     # Exactly one entry for the skill (no phantom dir-named duplicate).
     assert names.count("triage") + names.count("sra--triage") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_harness,override,folder,invocation",
+    [
+        ("claude-native", None, ".claude", "/review now"),
+        ("codex-native", None, ".agents", "$review now"),
+        ("claude-sdk", "codex-native", ".agents", "$review now"),
+        ("codex-native", "claude-sdk", ".claude", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_native_invocation_resolve_honors_effective_session_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    spec_harness: str,
+    override: str | None,
+    folder: str,
+    invocation: str | None,
+) -> None:
+    from omnigent.harnesses.codex_native import bridge
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    skill = workspace / folder / "skills" / "review" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(_skill_md("review", "Review with the body sentinel."))
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setattr(bridge, "_BRIDGE_ROOT", tmp_path / "bridge")
+    monkeypatch.setattr(
+        _ServerClient._Response,
+        "json",
+        lambda self: {
+            "agent_id": "ag_x",
+            "workspace": str(workspace),
+            "harness_override": override,
+        },
+    )
+    bridge.write_bridge_state(
+        bridge.bridge_dir_for_bridge_id("conv_effective"),
+        bridge.CodexNativeBridgeState(
+            session_id="conv_effective",
+            socket_path="ws://127.0.0.1:1",
+            thread_id="native_test",
+            codex_home=str(home / ".codex"),
+        ),
+    )
+    app = _make_app(tmp_path / "bundle", [], "all", workspace=workspace, harness=spec_harness)
+    async for client in _client(app):
+        response = await client.post(
+            "/v1/sessions/conv_effective/skills/resolve",
+            json={"name": "review", "arguments": "now"},
+        )
+    assert response.status_code == 200, response.text
+    if invocation is not None:
+        assert response.json() == {"native_invocation": invocation}
+    else:
+        assert "body for review" in response.json()["meta_text"]
+        assert "<user_request>\nnow\n</user_request>" in response.json()["meta_text"]

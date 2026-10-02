@@ -12153,3 +12153,109 @@ async def test_external_info_error_item_publishes_and_persists_level(
     errors = [item for item in items.json()["data"] if item["type"] == "error"]
     assert len(errors) == 1
     assert errors[0]["level"] == "info"
+
+
+@pytest.mark.parametrize(
+    "invocation", ["/bundle:grill-me review this rollout", "$grill-me review this rollout"]
+)
+async def test_native_skill_dispatch_persists_only_command_and_suppresses_echo(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    invocation: str,
+) -> None:
+    forwarded: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/skills/resolve"):
+            return httpx.Response(200, json={"native_invocation": invocation})
+        if request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        agent = await create_test_agent(client, name="native-skill-agent")
+        session = await _create_session(client, agent["id"])
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {"kind": "skill", "name": "grill-me", "arguments": "review this rollout"},
+            },
+        )
+        assert response.status_code == 202, response.text
+        before = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        assert [item["type"] for item in before] == ["slash_command"]
+        assert before[0]["native_invocation"] == invocation
+        assert before[0]["name"] == "grill-me"
+        snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+        assert snapshot["pending_inputs"] == []
+        assert forwarded[0]["content"] == [{"type": "input_text", "text": invocation}]
+        assert forwarded[0]["persisted_item_id"] == before[0]["id"]
+        if invocation.startswith("/"):
+            item = {
+                "type": "slash_command",
+                "agent": "native-skill-agent",
+                "kind": "skill",
+                "name": "bundle:grill-me",
+                "arguments": "review this rollout",
+            }
+        else:
+            item = {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": invocation}],
+            }
+        echo_body = {
+            "type": "external_conversation_item",
+            "data": {
+                "source_id": "native-command",
+                "item_type": item.pop("type"),
+                "item_data": item,
+            },
+        }
+        echo = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert echo.status_code == 202, echo.text
+        again = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {"kind": "skill", "name": "grill-me", "arguments": "review this rollout"},
+            },
+        )
+        assert again.status_code == 202, again.text
+        retry = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert retry.status_code == 202, retry.text
+        echo_body["data"]["source_id"] = "second-native-command"
+        second_echo = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert second_echo.status_code == 202, second_echo.text
+        expansion = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "external_conversation_item",
+                "data": {
+                    "source_id": "native-expansion",
+                    "item_type": "message",
+                    "item_data": {
+                        "role": "user",
+                        "is_meta": True,
+                        "content": [{"type": "input_text", "text": "CLI-owned sentinel"}],
+                    },
+                },
+            },
+        )
+        assert expansion.status_code == 202, expansion.text
+        after = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        assert [item["type"] for item in after] == [
+            "slash_command",
+            "message",
+            "slash_command",
+            "message",
+            "message",
+        ]
+        assert after[1]["is_meta"] is True and after[1]["content"] == []
+        assert after[3]["is_meta"] is True and after[3]["content"] == []
+        assert after[4]["is_meta"] is True
+        assert after[4]["content"] == [{"type": "input_text", "text": "CLI-owned sentinel"}]

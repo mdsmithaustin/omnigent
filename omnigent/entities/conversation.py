@@ -742,6 +742,7 @@ class SlashCommandData(BaseModel):
     name: str
     arguments: str
     output: str | None = None
+    native_invocation: str | None = None
 
 
 ItemData = (
