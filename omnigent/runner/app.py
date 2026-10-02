@@ -12789,9 +12789,17 @@ def create_runner_app(
                     "native_invocation": f"{invocation} {arguments}" if arguments else invocation,
                 },
             )
+        history: list[_JsonObject] = []
+        if not is_native_harness(_session_harness_name(session_id)):
+            cached_history = _session_histories.get(session_id)
+            history = (
+                cached_history
+                if cached_history is not None
+                else await _load_history_as_input(session_id)
+            )
         return JSONResponse(
             status_code=200,
-            content={"meta_text": format_skill_meta_text(skill, arguments)},
+            content={"meta_text": format_skill_meta_text(skill, arguments, history=history)},
         )
 
     async def _fs_download(

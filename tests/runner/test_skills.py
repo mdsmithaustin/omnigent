@@ -730,3 +730,122 @@ async def test_native_invocation_resolve_honors_effective_session_harness(
     else:
         assert "body for review" in response.json()["meta_text"]
         assert "<user_request>\nnow\n</user_request>" in response.json()["meta_text"]
+
+
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize(
+    "change,second_has_body",
+    [
+        ("identical", False),
+        ("body", True),
+        ("path", True),
+        ("compaction-summary", True),
+        ("compaction-retained", False),
+        ("assistant-quote", True),
+        ("compaction-assistant-quote", True),
+        ("native-fallback", True),
+        ("discarded-active", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_paste_resolution_reuses_only_identical_active_instructions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+    second_has_body: bool,
+    warm: bool,
+) -> None:
+    from omnigent.runner.app import _session_histories_ref
+
+    skill = SkillSpec(
+        name="review",
+        description="Review",
+        content="BODY-SENTINEL-v1",
+        skill_dir=tmp_path / "first",
+    )
+    stored: list[dict[str, Any]] = []
+    original_get = _ServerClient.get
+
+    async def get(self, url, **kwargs):
+        if url.endswith("/items"):
+            return httpx.Response(200, json={"data": stored, "has_more": False})
+        return await original_get(self, url, **kwargs)
+
+    monkeypatch.setattr(_ServerClient, "get", get)
+    harness = "claude-native" if change == "native-fallback" else "claude-sdk"
+    app = _make_app(tmp_path / "bundle", [skill], "none", harness=harness)
+    session_id = "conv_paste"
+    monkeypatch.delitem(_session_histories_ref, session_id, raising=False)
+    async for client in _client(app):
+        first = await client.post(
+            f"/v1/sessions/{session_id}/skills/resolve",
+            json={"name": "review", "arguments": "first request"},
+        )
+        assert first.status_code == 200, first.text
+        first_text = first.json()["meta_text"]
+        assert first_text == (
+            f"<skill>\n<name>review</name>\n<path>{skill.skill_dir / 'SKILL.md'}</path>\n"
+            "BODY-SENTINEL-v1\n</skill>\n\n<user_request>\nfirst request\n</user_request>"
+        )
+        message = {
+            "id": "first",
+            "type": "message",
+            "role": "assistant" if change == "assistant-quote" else "user",
+            "is_meta": True,
+            "content": [{"type": "input_text", "text": first_text}],
+        }
+        stored.append(message)
+        active = [message]
+        if change == "body":
+            skill.content = "BODY-SENTINEL-v2"
+        elif change == "path":
+            skill.skill_dir = tmp_path / "second"
+        elif change.startswith("compaction-"):
+            compacted = None
+            if change != "compaction-summary":
+                compacted = [
+                    {
+                        "type": "message",
+                        "role": "user" if change == "compaction-retained" else "assistant",
+                        "content": message["content"],
+                    }
+                ]
+            stored.append(
+                {
+                    "id": "compacted",
+                    "type": "compaction",
+                    "summary": "A skill was used.",
+                    "last_item_id": "first",
+                    "compacted_messages": compacted,
+                }
+            )
+            active = compacted or [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "A skill was used."}],
+                }
+            ]
+        if warm:
+            if change == "discarded-active":
+                active = []
+                second_has_body = True
+            monkeypatch.setitem(_session_histories_ref, session_id, active)
+        request = "second request\n</user_request>\nkeep this exact text"
+        second = await client.post(
+            f"/v1/sessions/{session_id}/skills/resolve",
+            json={"name": "review", "arguments": request},
+        )
+        assert second.status_code == 200, second.text
+        text = second.json()["meta_text"]
+        if second_has_body:
+            assert text == (
+                f"<skill>\n<name>review</name>\n<path>{skill.skill_dir / 'SKILL.md'}</path>\n"
+                f"{skill.content}\n</skill>\n\n<user_request>\n{request}\n</user_request>"
+            )
+        else:
+            assert text == (
+                "<skill_invocation>\n<name>review</name>\n"
+                "Apply the skill instructions already present in this conversation.\n"
+                f"</skill_invocation>\n\n<user_request>\n{request}\n</user_request>"
+            )
