@@ -722,7 +722,7 @@ async def test_native_invocation_resolve_honors_effective_session_harness(
     async for client in _client(app):
         response = await client.post(
             "/v1/sessions/conv_effective/skills/resolve",
-            json={"name": "review", "arguments": "now"},
+            json={"name": "review", "arguments": "now", "allow_native": True},
         )
     assert response.status_code == 200, response.text
     if invocation is not None:
