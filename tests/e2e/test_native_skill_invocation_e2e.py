@@ -388,6 +388,21 @@ def test_native_skill_invocation(live_server, http_client, tmp_path, monkeypatch
                 for item in reversed(before_resume_items)
                 if "READY_ORCHARD" in _assistant_text(item)
             )
+            probe_skill = probe_dir / "SKILL.md"
+            original_skill = probe_skill.read_text()
+            changed_skill = original_skill.replace(
+                resume_marker, "REPLACED_ORCHARD_STATUS"
+            ).replace(fork_marker, "REPLACED_ORCHARD_LEDGER")
+            assert resume_marker not in changed_skill and fork_marker not in changed_skill
+            probe_skill.write_text(changed_skill)
+            result["replay_skill_before_sha256"] = hashlib.sha256(
+                original_skill.encode()
+            ).hexdigest()
+            result["replay_skill_after_sha256"] = hashlib.sha256(
+                probe_skill.read_bytes()
+            ).hexdigest()
+            assert result["replay_skill_before_sha256"] != result["replay_skill_after_sha256"]
+            save()
             info = result["tmux"]
             subprocess.run(
                 ["tmux", "-S", info["socket_path"], "kill-server"],
