@@ -85,3 +85,11 @@ def test_release_flags_have_lifecycle_metadata_and_default_off() -> None:
         assert definition.owner
         assert definition.review_by_release
         assert not FeatureFlags().enabled(definition.feature)
+
+
+def test_native_skill_routing_is_opt_in_and_not_frontend_visible() -> None:
+    assert not resolve_feature_flags({}).enabled(Feature.NATIVE_SKILL_ROUTING)
+    flags = resolve_feature_flags({FEATURES_ENV_VAR: "native_skill_routing"})
+    assert flags.enabled(Feature.NATIVE_SKILL_ROUTING)
+    assert flags.enabled_names() == ("native_skill_routing",)
+    assert "native_skill_routing" not in flags.frontend_dict()

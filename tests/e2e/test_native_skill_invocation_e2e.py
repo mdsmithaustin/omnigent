@@ -148,7 +148,13 @@ def test_native_skill_invocation(live_server, http_client, tmp_path, monkeypatch
             probe_dir, target_is_directory=True
         )
         monkeypatch.setenv("CODEX_HOME", str(temporary_home))
+    native_routing = (
+        "native_skill_routing"
+        in {value.strip() for value in os.environ.get("OMNIGENT_FEATURES", "").split(",")}
+        and os.environ.get("NATIVE_SKILL_BASELINE") != "1"
+    )
     result = {
+        "native_skill_routing_enabled": native_routing,
         "harness": harness,
         "terminal_launch_args": terminal_args,
         "native_cli_version": subprocess.check_output([harness, "--version"], text=True).strip(),
@@ -326,9 +332,13 @@ def test_native_skill_invocation(live_server, http_client, tmp_path, monkeypatch
                 )
                 native_records = (output / f"turn-{index}-native.jsonl").read_text()
                 assert "# Poteto mode" in native_records, "Native transcript has no skill body"
-                if os.environ.get("NATIVE_SKILL_BASELINE") != "1":
+                if native_routing:
                     assert "<user_request>" not in native_records, (
                         "Omnigent expanded the skill before native delivery"
+                    )
+                else:
+                    assert "<user_request>" in native_records, (
+                        "Disabled native routing did not deliver the pasted skill"
                     )
             assert result.get("native_transcript_path"), "Native transcript was not captured"
             response = http_client.post(
@@ -352,7 +362,7 @@ def test_native_skill_invocation(live_server, http_client, tmp_path, monkeypatch
             before_resume_items = json.loads(
                 (output / "before-resume-omnigent-items.json").read_text()
             )["data"]
-            if os.environ.get("NATIVE_SKILL_BASELINE") != "1":
+            if native_routing:
                 native_expansions = [
                     item
                     for item in before_resume_items

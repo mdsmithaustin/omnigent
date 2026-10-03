@@ -25,9 +25,10 @@ def _skill(root: Path, folder: str = "review", name: str = "review"):
         ("codex-native", ".agents", {"native_invocation": "$review first request"}),
     ],
 )
+@pytest.mark.parametrize("allow_native", [None, False, True])
 @pytest.mark.asyncio
 async def test_runner_resolution_uses_native_capability(
-    tmp_path, monkeypatch, harness, folder, expected
+    tmp_path, monkeypatch, harness, folder, expected, allow_native
 ):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
@@ -47,20 +48,36 @@ async def test_runner_resolution_uses_native_capability(
                 codex_home=str(home / ".codex"),
             ),
         )
+    from omnigent.native import native_dispatch
+
+    native_calls = []
+    original_resolve = native_dispatch.resolve_hook_for_key
+
+    def resolve_hook(key, name):
+        if name == "native_skill_invocation":
+            native_calls.append(key)
+        return original_resolve(key, name)
+
+    monkeypatch.setattr(native_dispatch, "resolve_hook_for_key", resolve_hook)
     app = _make_app(tmp_path / "bundle", [], "all", workspace=workspace, harness=harness)
+    payload = {"name": "review", "arguments": "first request"}
+    if allow_native is not None:
+        payload["allow_native"] = allow_native
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://runner"
     ) as client:
         response = await client.post(
             "/v1/sessions/conv_native/skills/resolve",
-            json={"name": "review", "arguments": "first request"},
+            json=payload,
         )
     assert response.status_code == 200, response.text
-    if expected is not None:
+    if expected is not None and allow_native is True:
         assert response.json() == expected
     else:
         assert "body for review" in response.json()["meta_text"]
         assert "first request" in response.json()["meta_text"]
+    if allow_native is not True:
+        assert native_calls == []
 
 
 @pytest.mark.parametrize(
@@ -217,14 +234,16 @@ async def test_codex_first_skill_uses_launch_home_before_thread_bridge_exists(
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://runner"
     ) as client:
-        first = await client.post("/v1/sessions/conv_cold/skills/resolve", json={"name": "review"})
+        first = await client.post(
+            "/v1/sessions/conv_cold/skills/resolve", json={"name": "review", "allow_native": True}
+        )
         assert first.status_code == 200, first.text
         assert first.json() == {"native_invocation": "$review"}
         (launch_home / "config.toml").write_text(
             f'[[skills.config]]\npath = "{selected.skill_dir / "SKILL.md"}"\nenabled = false\n'
         )
         disabled = await client.post(
-            "/v1/sessions/conv_cold/skills/resolve", json={"name": "review"}
+            "/v1/sessions/conv_cold/skills/resolve", json={"name": "review", "allow_native": True}
         )
         assert disabled.status_code == 200, disabled.text
         assert "meta_text" in disabled.json()
@@ -311,3 +330,21 @@ def test_claude_directory_command_cannot_select_another_frontmatter_alias(tmp_pa
     )
     assert claude_command(selected, ctx) is None
     assert claude_command(actual, ctx) is None
+
+
+@pytest.mark.parametrize("permission", [None, 0, 1, "false", "true", [], {}])
+@pytest.mark.asyncio
+async def test_runner_rejects_non_boolean_native_permission(tmp_path, permission):
+    app = _make_app(tmp_path / "bundle", ["review"], "all")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://runner"
+    ) as client:
+        response = await client.post(
+            "/v1/sessions/conv_native/skills/resolve",
+            json={"name": "review", "allow_native": permission},
+        )
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "invalid_request",
+        "detail": "'allow_native' must be a boolean.",
+    }

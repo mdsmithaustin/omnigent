@@ -18,6 +18,32 @@ remains a slash command. Client routing and the event format do not change.
 
 ## Native loading
 
+Native routing is off by default. Add `native_skill_routing` to the server's
+comma-separated `OMNIGENT_FEATURES` value and restart the server to enable it.
+For example, `OMNIGENT_FEATURES=usage_page,native_skill_routing` retains the
+Usage page feature and enables native routing. Configure the server rather
+than the runner; remote runners receive the decision in the resolve request.
+The deployment snapshot controls routing. Client event data cannot enable it.
+
+This temporary flag has owner `runtime` and a review target of `0.17.0`.
+Native Claude loading performs argument substitution and may execute embedded
+shell commands before sending skill content to the model. See the
+[Claude Code skill documentation](https://code.claude.com/docs/en/skills#inject-dynamic-context).
+The paste path
+inserts that content literally. The opt-in permits testing those semantics
+before enabling native routing for every deployment.
+
+Removing the entry and restarting the server restores paste routing for new
+structured invocations. Expansion capture, echo receipts, resume, and fork
+remain enabled for existing native history. The flag does not disable commands
+typed directly in native terminals. Listing removal and paste deduplication
+remain enabled regardless of the flag.
+
+An older server omits native permission, so a new runner pastes. A new server
+accepts legacy pasted responses from the pre-change runner. If a runner ignores
+an OFF permission and returns only a native command, the server rejects the
+response before saving or delivering the command.
+
 For `claude-native` and `codex-native`, the runner checks whether the CLI can
 invoke the selected skill file. A verified selection sends `/name arguments`
 to Claude Code or `$name arguments` to Codex. Claude plugin skills use their
@@ -112,7 +138,7 @@ three invocations, cold resume, and a truncated fork. Resume and fork must recal
 a marker found only in the skill instructions without using a tool to read it.
 
 ```sh
-OMNIGENT_E2E_NATIVE_SKILLS=1 TMPDIR=/tmp NATIVE_SKILL_OUTPUT=/tmp/native-skill-evidence uv run --no-sync pytest tests/e2e/test_native_skill_invocation_e2e.py --basetemp=/tmp/native-skill-check -q
+OMNIGENT_FEATURES=native_skill_routing OMNIGENT_E2E_NATIVE_SKILLS=1 TMPDIR=/tmp NATIVE_SKILL_OUTPUT=/tmp/native-skill-evidence uv run --no-sync pytest tests/e2e/test_native_skill_invocation_e2e.py --basetemp=/tmp/native-skill-check -q
 ```
 
 Inspect the saved CLI transcript and Omnigent items. Each request should have

@@ -12160,13 +12160,18 @@ async def test_external_info_error_item_publishes_and_persists_level(
 )
 async def test_native_skill_dispatch_persists_only_command_and_suppresses_echo(
     client: httpx.AsyncClient,
+    app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
     invocation: str,
 ) -> None:
+    from omnigent.server.feature_flags import FeatureFlags, resolve_feature_flags
+
+    app.state.feature_flags = resolve_feature_flags({"OMNIGENT_FEATURES": "native_skill_routing"})
     forwarded: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/skills/resolve"):
+            assert json.loads(request.content)["allow_native"] is True
             return httpx.Response(200, json={"native_invocation": invocation})
         if request.url.path.endswith("/events"):
             forwarded.append(json.loads(request.content))
@@ -12226,6 +12231,7 @@ async def test_native_skill_dispatch_persists_only_command_and_suppresses_echo(
             },
         )
         assert again.status_code == 202, again.text
+        app.state.feature_flags = FeatureFlags()
         retry = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
         assert retry.status_code == 202, retry.text
         echo_body["data"]["source_id"] = "second-native-command"
@@ -12259,3 +12265,80 @@ async def test_native_skill_dispatch_persists_only_command_and_suppresses_echo(
         assert after[3]["is_meta"] is True and after[3]["content"] == []
         assert after[4]["is_meta"] is True
         assert after[4]["content"] == [{"type": "input_text", "text": "CLI-owned sentinel"}]
+
+
+@pytest.mark.parametrize(
+    "enabled,resolution,expected_native,status",
+    [
+        (False, {"meta_text": "legacy skill body"}, False, 202),
+        (True, {"meta_text": "legacy skill body"}, False, 202),
+        (False, {"native_invocation": "$review request"}, False, 500),
+        (
+            False,
+            {"native_invocation": "$review request", "meta_text": "legacy skill body"},
+            False,
+            202,
+        ),
+        (True, {"native_invocation": "$review request"}, True, 202),
+    ],
+)
+async def test_skill_dispatch_obeys_server_feature_snapshot(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    resolution: dict[str, str],
+    expected_native: bool,
+    status: int,
+) -> None:
+    from omnigent.server.feature_flags import resolve_feature_flags
+
+    app.state.feature_flags = resolve_feature_flags(
+        {"OMNIGENT_FEATURES": "native_skill_routing" if enabled else ""}
+    )
+    forwarded = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/skills/resolve"):
+            assert json.loads(request.content) == {
+                "name": "review",
+                "arguments": "request",
+                "allow_native": enabled,
+            }
+            return httpx.Response(200, json=resolution)
+        if request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        agent = await create_test_agent(client, name="flagged-skill-agent")
+        session = await _create_session(client, agent["id"])
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {
+                    "kind": "skill",
+                    "name": "review",
+                    "arguments": "request",
+                    "allow_native": True,
+                },
+            },
+        )
+        assert response.status_code == status, response.text
+        items = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        if status == 500:
+            assert items == [] and forwarded == []
+        elif expected_native:
+            assert [item["type"] for item in items] == ["slash_command"]
+            assert items[0]["native_invocation"] == "$review request"
+            assert forwarded[0]["content"] == [{"type": "input_text", "text": "$review request"}]
+        else:
+            assert [item["type"] for item in items] == ["slash_command", "message"]
+            assert "native_invocation" not in items[0]
+            assert items[1]["is_meta"] is True
+            assert items[1]["content"] == [{"type": "input_text", "text": "legacy skill body"}]
+            assert forwarded[0]["content"] == items[1]["content"]

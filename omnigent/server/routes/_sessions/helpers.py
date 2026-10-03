@@ -7130,11 +7130,13 @@ async def _resolve_skill_invocation_via_runner(
     skill_name: str,
     arguments: str,
     runner_client: httpx.AsyncClient,
+    *,
+    allow_native: bool,
 ) -> tuple[str, bool]:
     try:
         resp = await runner_client.post(
             f"/v1/sessions/{session_id}/skills/resolve",
-            json={"name": skill_name, "arguments": arguments},
+            json={"name": skill_name, "arguments": arguments, "allow_native": allow_native},
             timeout=10.0,
         )
     except (httpx.HTTPError, ConnectionError) as exc:
@@ -7173,7 +7175,11 @@ async def _resolve_skill_invocation_via_runner(
             code=ErrorCode.INVALID_INPUT,
         )
     native_invocation = payload.get("native_invocation")
-    if isinstance(native_invocation, str) and native_invocation.startswith(("/", "$")):
+    if (
+        allow_native
+        and isinstance(native_invocation, str)
+        and native_invocation.startswith(("/", "$"))
+    ):
         return native_invocation, True
     meta_text = payload.get("meta_text")
     if not isinstance(meta_text, str):
@@ -7191,6 +7197,7 @@ async def _dispatch_skill_slash_command_to_runner(
     conversation_store: ConversationStore,
     runner_client: httpx.AsyncClient,
     *,
+    allow_native: bool,
     agent: Agent,
     has_mcp_servers: bool,
     created_by: str | None,
@@ -7203,6 +7210,7 @@ async def _dispatch_skill_slash_command_to_runner(
         skill_name,
         arguments,
         runner_client,
+        allow_native=allow_native,
     )
 
     response_id = f"turn_{uuid.uuid4().hex}"

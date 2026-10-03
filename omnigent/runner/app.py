@@ -12760,6 +12760,7 @@ def create_runner_app(
             )
         name = body.get("name")
         arguments = body.get("arguments", "")
+        allow_native = body.get("allow_native", False)
         if not isinstance(name, str) or not name:
             return JSONResponse(
                 status_code=400,
@@ -12769,6 +12770,14 @@ def create_runner_app(
             return JSONResponse(
                 status_code=400,
                 content={"error": "invalid_request", "detail": "'arguments' must be a string."},
+            )
+        if not isinstance(allow_native, bool):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request",
+                    "detail": "'allow_native' must be a boolean.",
+                },
             )
         skills = await _resolve_session_skills(session_id)
         skill = find_skill_by_name(skills, name)
@@ -12781,7 +12790,7 @@ def create_runner_app(
                     "available": sorted(s.name for s in skills),
                 },
             )
-        invocation = await _native_skill_invocation(session_id, skill)
+        invocation = await _native_skill_invocation(session_id, skill) if allow_native else None
         if invocation is not None:
             return JSONResponse(
                 status_code=200,
