@@ -71,6 +71,7 @@ NATIVE_PANE_TERMINAL_NAMES: frozenset[str] = frozenset(
         "kiro",
         "qwen",
         "pi",
+        "prime-native",
         "antigravity",
         "opencode",
     }
