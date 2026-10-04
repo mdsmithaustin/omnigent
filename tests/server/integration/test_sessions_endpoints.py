@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
 from omnigent.entities import (
     USER_SESSION_TITLE_MAX_CHARS,
@@ -12153,6 +12154,16 @@ async def test_external_info_error_item_publishes_and_persists_level(
     errors = [item for item in items.json()["data"] if item["type"] == "error"]
     assert len(errors) == 1
     assert errors[0]["level"] == "info"
+
+
+def _route_to_runner(monkeypatch: pytest.MonkeyPatch, runner: httpx.AsyncClient) -> None:
+    async def resolve(
+        session_id: str, runner_router: object, *, conversation: Any = None
+    ) -> httpx.AsyncClient:
+        assert conversation is None or conversation.id == session_id
+        return runner
+
+    monkeypatch.setattr("omnigent.server.routes.sessions._get_runner_client", resolve)
 
 
 @pytest.mark.parametrize(

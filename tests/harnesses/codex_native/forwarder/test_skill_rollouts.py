@@ -9,7 +9,7 @@ import pytest
 
 from omnigent.harnesses.codex_native import forwarder as fwd
 from omnigent.harnesses.codex_native.bridge import CodexNativeBridgeState, write_bridge_state
-from tests.harnesses.codex_native.forwarder._support import _RecordingClient
+from tests.test_codex_native_forwarder import _RecordingClient
 
 
 def _skill(body: str) -> str:

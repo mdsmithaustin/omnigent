@@ -58,7 +58,7 @@ and an unverified Codex launch environment keep the paste path.
 Claude checks its user and project skill directories and enabled plugins.
 A personal or project skill disabled by `skillOverrides` keeps the paste path.
 A plain Claude skill whose frontmatter name differs from its directory stays on
-the paste path because Claude resolves the directory command. Launching Claude
+the paste path because Omnigent cannot prove that both names select the same file. Launching Claude
 with `--bare` also keeps the paste path because that flag disables skills.
 A plugin name that already includes its own namespace keeps that prefix once.
 Codex checks its actual launch `CODEX_HOME`, `.agents/skills` directories from
@@ -73,7 +73,7 @@ Explicit invocation remains available for a Claude skill with
 invocation. They do not grant manual access to a skill the CLI has disabled. Claude skills
 with `user-invocable: false` also keep the paste path.
 
-The behavior was checked against Claude Code 2.1.288 and Codex 0.160.0.
+The behavior was checked against Claude Code 2.1.289 and Codex 0.160.0.
 See the [Claude skills reference](https://code.claude.com/docs/en/skills) and
 [Codex skills reference](https://learn.chatgpt.com/docs/build-skills). The
 [0.160.0 selection code](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/ext/skills/src/selection.rs)

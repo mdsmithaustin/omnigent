@@ -1269,7 +1269,9 @@ def test_native_skill_expansion_preserves_hidden_replay_context(
     content = [{"type": "text", "text": text}] if blocks else text
     transcript = tmp_path / "session.jsonl"
     transcript.write_text(
-        _transcript_line({"type": "user", "message": {"role": "user", "content": content}, "isMeta": True}),
+        _transcript_line(
+            {"type": "user", "message": {"role": "user", "content": content}, "isMeta": True}
+        ),
         encoding="utf-8",
     )
     _, response_id, items = read_transcript_items_since(

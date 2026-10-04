@@ -249,10 +249,16 @@ async def test_codex_first_skill_uses_launch_home_before_thread_bridge_exists(
         assert "meta_text" in disabled.json()
 
 
-def test_empty_native_receipt_does_not_enter_runner_or_runtime_prompt():
+@pytest.mark.asyncio
+async def test_empty_native_receipt_does_not_enter_runner_or_runtime_prompt():
+    import asyncio
+
     from omnigent.entities.conversation import ConversationItem, MessageData
-    from omnigent.runner.session_history import build_session_history
     from omnigent.runtime.prompt import history_to_input_items
+    from tests.runner.test_app_sessions_native_workflow_messages import (
+        _build_recovery_app,
+        _runner_client,
+    )
 
     receipt = ConversationItem(
         id="receipt",
@@ -263,19 +269,25 @@ def test_empty_native_receipt_does_not_enter_runner_or_runtime_prompt():
         data=MessageData(role="user", content=[], is_meta=True),
     )
     assert history_to_input_items([receipt]) == []
-
-    async def persist(*_):
-        raise AssertionError("conversion must not persist items")
-
-    history = build_session_history(
-        _background_tasks=set(),
-        _last_server_item_id={},
-        _persist_cancellation_items=persist,
-        _session_histories={},
-        _session_spec_cache={},
-        server_client=httpx.AsyncClient(),
-    )
-    assert history.convert_raw_items_to_input([receipt.to_api_dict()]) == []
+    user = {
+        "id": "user",
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "Continue the original request."}],
+    }
+    app, _, harness = _build_recovery_app([receipt.to_api_dict(), user])
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions",
+            json={"session_id": "conv_receipt", "agent_id": "test_agent"},
+        )
+        assert response.status_code == 201
+        async with asyncio.timeout(5):
+            while not harness.posted_bodies:
+                await asyncio.sleep(0.01)
+    assert [
+        item for item in harness.posted_bodies[0]["content"] if item.get("role") == "user"
+    ] == [{"type": "message", "role": "user", "content": user["content"]}]
 
 
 @pytest.mark.parametrize("name", ["help", "compact", "fork"])
