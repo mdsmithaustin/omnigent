@@ -255,9 +255,12 @@ has an independent scoped source verdict of PASS+NOTES and synthetic controls.
 Its provider SHA256 is
 `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
 PR6's MCP caller, fixture settlement, publisher, readers, and owner pin are
-migrated. Independent source review remains pending. Fresh live WAIT and MCP
-qualification on final integrated bytes remains pending. Changes to the probe, imported application
-source, or admitted runtime require fresh qualification. Full S01-S04 and the
+migrated at `ad945096ed6da2c1ffe866a33841188f77770b4f` with an independent
+scoped source verdict of PASS+NOTES. Its MCP SHA256 is
+`b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
+Fresh live WAIT and MCP qualification on final integrated bytes remains pending.
+Changes to the probe, imported application source, or admitted runtime require
+fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
 
 ## Qualify regular HTTP MCP reconnect
@@ -356,8 +359,9 @@ Its hashes identify the executed bytes, not a subsequently created commit.
 The three earlier actual MCP receipts remain FAILED. This historical case
 qualifies regular HTTP native error transport and recovery on those bytes only.
 It predates allocation-bound settlement and completion publication. It cannot
-qualify the migrated owner contract. Independent MCP source review and fresh
-live WAIT and MCP qualification on final integrated bytes remain pending.
+qualify the migrated owner contract. The exact provider and MCP hashes above
+have completed independent scoped source review with PASS+NOTES. Fresh live
+WAIT and MCP qualification on final integrated bytes remains pending.
 The historical case does not qualify real MRTR callbacks or approval-state recovery, stdio, all servers or providers, or
 the whole N19 requirement. See [the acceptance record](../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
 for the remaining matrix.

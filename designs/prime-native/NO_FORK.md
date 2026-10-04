@@ -199,10 +199,12 @@ This source verdict does not qualify a live provider or complete the roadmap.
 PR6's MCP constructor, fixture settlement, publisher, readers, and owner pin
 are migrated at `ad945096ed6da2c1ffe866a33841188f77770b4f`. The MCP driver SHA256
 is `b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
-Its author reports synthetic verification. Independent MCP source review remains
-pending. These implementation bytes do not inherit historical qualification.
-Fresh live WAIT and MCP receipts are required on the final integrated bytes. Independent review
-of these maintained documentation changes also remains required.
+Independent MCP source review returned PASS+NOTES on these exact provider and
+MCP hashes, with 178 dedicated tests passing without skips on admitted Darwin.
+This scoped source verdict does not qualify live execution. These implementation
+bytes do not inherit historical qualification. Fresh live WAIT and MCP receipts
+are required on the final integrated bytes. Independent review of these
+maintained documentation changes also remains required.
 
 A reply operation retains an immutable baseline and fixed deadline. Exactly one
 fresh public user message must concatenate valid `input_text` blocks to the
@@ -230,7 +232,8 @@ Only a written `fixture-cleanup.json` can support `settled_fixture`. Startup,
 stop, close, endpoint, or receipt failure yields `failed_fixture` with sticky
 errors. MCP rejects `no_fixture`, missing settlement, and another allocation's
 settlement. Failed settlement prevents runtime removal and retains scratch.
-Independent source review and fresh final-byte live proof remain pending.
+Independent scoped source review is complete with PASS+NOTES on the hashes
+above. Fresh final-byte live proof remains pending.
 
 Process census, sanitized capture completion, closed readers and sockets, source
 checks, and explicit fixture settlement precede recursive scratch mutation.

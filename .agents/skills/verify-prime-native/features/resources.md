@@ -60,9 +60,10 @@ new server PID and nonce. Require the same selected root and kernel object,
 with the count advancing from 41 to 42 and the original socket still open.
 The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run verified this bounded
 case on its recorded bytes. Earlier actual MCP failures remain FAILED.
-The owner-contract migration is implemented, but independent MCP source review
-and fresh final-byte WAIT and MCP receipts remain pending. Historical evidence
-does not qualify the migrated helper.
+The owner-contract migration has completed independent scoped source review
+with PASS+NOTES for the exact provider and MCP hashes recorded in the workflow.
+Fresh final-byte WAIT and MCP receipts remain pending. Historical evidence does
+not qualify the migrated helper.
 
 Real MRTR callbacks and opaque approval retries across restart, stdio restart,
 wider errors and cancellation timing, other server classes, and other providers

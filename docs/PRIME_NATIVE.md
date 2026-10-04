@@ -187,8 +187,9 @@ The later MCP working-tree repair passed one declared regular HTTP reconnect
 case with configured xAI credentials and Grok 4.7. Finite waits have not been
 rerun on those changed MCP and extension bytes. Each receipt identifies its
 source, so neither result qualifies an untested final commit. The MCP owner
-migration is implemented. Independent MCP source review and fresh live WAIT
-and MCP receipts on final integrated bytes remain pending.
+migration has completed independent scoped source review with PASS+NOTES.
+The verification workflow records the exact reviewed provider and MCP hashes.
+Fresh live WAIT and MCP receipts on final integrated bytes remain pending.
 
 The next qualification priorities follow the gaps in the
 [acceptance matrix](../designs/prime-native/NO_FORK.md#original-acceptance-criteria):
@@ -293,9 +294,11 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The repaired provider helper has independent source review and synthetic verification.
-PR6's MCP ownership and publication migration is implemented, with independent
-source review pending. Fresh live WAIT and MCP receipts on final integrated bytes are still required. Genuine native
+The repaired provider helper and PR6's MCP ownership and publication migration
+have independent scoped source verdicts of PASS+NOTES and synthetic verification.
+The [ownership contract](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
+records their exact reviewed hashes. Fresh live WAIT and MCP receipts on final
+integrated bytes are still required. Genuine native
 `waiting`, status-only protection during complete output silence, one-hour and
 indefinite waits, and the full S01-S04 guarantees remain unqualified.
 The separate daemon probe is a qualification gate and currently exits nonzero
