@@ -35,28 +35,39 @@ bash scripts/build_fork_release.sh "$source_sha" /tmp/omnigent-fork-build
 
 The builder installs the locked web dependencies and builds the UI from scratch. It builds four wheels and four sdists with the upstream builders, validates metadata and sibling pins, and runs Twine. It installs the wheels in clean Python 3.12 environments outside the checkout. It checks installed versions, imports, CLI output, Prime adapter registration, the opt-in skill flag, and bundled UI hashes. It separately rebuilds every sdist and repeats installation checks. These import checks do not qualify a live Prime session.
 
-The workflow runs source validation, all-files lint and type checks, canonical upstream Python test shards, mock integration, Slack and Databricks tests, web lint, types, tests and build, every changed addon unit and server test, and the distribution builder. Every job checks out the same full SHA and records the same run ID and attempt. A missing, failed, skipped, cancelled, or mixed-source required job cannot produce a certificate. The Python gate reads the 16 shard rows from `ci.yml` at the immutable payload anchor and retains their paths, extras, marks, worker counts, and distribution modes. It adds `codex-default` for the Codex parity tests selected by the default suite. Matrix fail-fast is disabled; certification requires all 17 Python shards to succeed. Collection failures and empty selections remain failures.
+The workflow runs source validation, all-files lint and type checks, canonical upstream Python test shards, mock integration, Slack and Databricks tests, web lint, types, tests and build, every changed addon unit and server test, and the distribution builder. Every job checks out the same full SHA and records the same run ID and attempt. A missing, failed, skipped, cancelled, or mixed-source required job cannot produce a certificate. The Python gate reads the 16 shard rows from `ci.yml` at the immutable payload anchor and retains their paths, extras, marks, worker counts, and distribution modes. It adds `codex-default` for the Codex parity tests selected by the default suite. Matrix fail-fast is disabled; certification requires all 17 Python shards to succeed. Collection failures and empty selections remain failures. The addon gate assigns every changed unit and server test file to exactly one populated canonical directory shard, retaining its worker and distribution settings and the `not databricks` marker. A separate serial `release-policy` shard runs the 47 release CLI cases. Every addon shard must succeed too.
 
 
-Check the matrix inventory from the reviewed workflow. A nonzero exit means the row count or canonical definitions differ; success prints `17 shards; 16 canonical rows unchanged`.
+Check the matrix inventory from the reviewed workflow. A nonzero exit means the row count or canonical definitions differ; success prints `17 Python shards; 12 addon shards; no missing or duplicate files`.
 
 ```sh
 uv run --no-project --with PyYAML==6.0.3 python - <<'PY'
-import json, os, subprocess, tempfile
+import json, os, shlex, subprocess, tempfile
 from pathlib import Path
 import yaml
 workflow = yaml.safe_load(Path(".github/workflows/fork-release.yml").read_bytes())
 step = next(step for step in workflow["jobs"]["source"]["steps"] if step.get("id") == "matrix")
 with tempfile.NamedTemporaryFile() as output:
     subprocess.run(["bash", "-c", step["run"]], env={**os.environ, "GITHUB_OUTPUT": output.name}, check=True)
-    rows = json.loads(Path(output.name).read_text().removeprefix("python_matrix="))["include"]
+    outputs = dict(line.split("=", 1) for line in Path(output.name).read_text().splitlines())
+    rows = json.loads(outputs["python_matrix"])["include"]
+    addons = json.loads(outputs["addon_matrix"])["include"]
 pin = json.loads(Path(".github/fork-release.json").read_bytes())
 canonical = yaml.safe_load(subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"]))["jobs"]["pytest"]["strategy"]["matrix"]["include"]
 assert len(rows) == 17 and len({row["group"] for row in rows}) == 17 and rows[:16] == canonical
 assert rows[-1] == {"group": "codex-default", "paths": "tests/codex_parity"}
-print("17 shards; 16 canonical rows unchanged")
+changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
+expected = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
+actual = [path for row in addons for path in shlex.split(row["paths"])]
+assert sorted(actual) == sorted([*expected, "tests/scripts/test_fork_release.py"])
+assert len(actual) == len(set(actual)) and len(addons) == len({row["group"] for row in addons})
+assert addons[-1]["group"] == "release-policy" and addons[-1]["workers"] == "0"
+print(f"17 Python shards; {len(addons)} addon shards; no missing or duplicate files")
 PY
 ```
+
+
+Failed Python and addon shards upload `fork-python-GROUP-RUN_ID-RUN_ATTEMPT` or `fork-addons-GROUP-RUN_ID-RUN_ATTEMPT` with pytest output, JUnit, per-worker progress, and memory/process summaries. The collection-time shutdown cascade after a worker loss was reproduced in xdist; the initial worker loss remains unexplained. Use these diagnostics to establish that cause. No retry or pytest-exit masking is applied.
 
 Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main`, `release/**`, and `codex/fork-release-*`. A development `main` history that violates the pin cannot certify.
 

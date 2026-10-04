@@ -37,6 +37,7 @@ jobs:
       run_attempt: ${{ steps.identity.outputs.run_attempt }}
       tag: ${{ steps.identity.outputs.tag }}
       python_matrix: ${{ steps.matrix.outputs.python_matrix }}
+      addon_matrix: ${{ steps.matrix.outputs.addon_matrix }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -64,13 +65,14 @@ jobs:
           python -c 'import json, os; version=json.load(open(".github/fork-release.json"))["version"]; print("tag=fork/v"+version, file=open(os.environ["GITHUB_OUTPUT"], "a"))'
 
       - uses: ./.github/actions/setup-uv
-      - name: Load immutable canonical Python test shards
+      - name: Load immutable canonical test shards
         id: matrix
         run: |
           uv run --no-project --with PyYAML==6.0.3 python - <<'PYCODE'
           import json
           import os
           from pathlib import Path
+          import shlex
           import subprocess
           import yaml
           pin = json.loads(Path(".github/fork-release.json").read_bytes())
@@ -80,8 +82,32 @@ jobs:
           rows = [*canonical, {"group": "codex-default", "paths": "tests/codex_parity"}]
           assert len(rows) == 17 and len({row["group"] for row in rows}) == 17
           assert rows[:16] == canonical
+          changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
+          paths = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
+          assert paths, "No addon tests found"
+          lean = [row for row in rows if row.get("markexpr", "not databricks") == "not databricks"]
+          assigned = {row["group"]: [] for row in lean}
+          def under(path, prefix):
+              return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+          for path in paths:
+              matches = []
+              for row in lean:
+                  args = shlex.split(row["paths"])
+                  assert all(not arg.startswith("-") or arg.startswith("--ignore=") for arg in args)
+                  included = [arg for arg in args if not arg.startswith("-")]
+                  ignored = [arg.removeprefix("--ignore=") for arg in args if arg.startswith("--ignore=")]
+                  if any(under(path, prefix) for prefix in included) and not any(under(path, prefix) for prefix in ignored):
+                      matches.append(row["group"])
+              assert len(matches) == 1, (path, matches)
+              assigned[matches[0]].append(path)
+          addons = [{**row, "paths": " ".join(assigned[row["group"]])} for row in lean if assigned[row["group"]]]
+          flattened = [path for row in addons for path in shlex.split(row["paths"])]
+          assert sorted(flattened) == sorted(paths) and len(flattened) == len(set(flattened))
+          addons.append({"group": "release-policy", "paths": "tests/scripts/test_fork_release.py", "workers": "0", "dist": "loadfile"})
+          assert len({row["group"] for row in addons}) == len(addons)
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print("python_matrix=" + json.dumps({"include": rows}, separators=(",", ":")), file=output)
+              print("addon_matrix=" + json.dumps({"include": addons}, separators=(",", ":")), file=output)
           PYCODE
 
   lint:
@@ -167,12 +193,35 @@ jobs:
         env:
           PYTHONFAULTHANDLER: '1'
           OMNIGENT_TEST_TIMEOUT_SCALE: '4'
+          PYTEST_PROGRESS_LOG_DIR: ${{ runner.temp }}/fork-pytest/progress
         run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
           env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest ${{ matrix.paths }} \
             -m "${{ matrix.markexpr || 'not databricks' }}" \
             -n ${{ matrix.workers || '8' }} \
             --dist=${{ matrix.dist || 'loadfile' }} \
-            --timeout=${{ matrix.timeout || '300' }}
+            --timeout=${{ matrix.timeout || '300' }} \
+            --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Capture failed worker resource diagnostics
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          free -m > "$RUNNER_TEMP/fork-pytest/memory.txt"
+          ps -eo pid,ppid,rss,comm > "$RUNNER_TEMP/fork-pytest/processes.txt"
+          for file in memory.events memory.peak memory.max; do
+            if [[ -r "/sys/fs/cgroup/$file" ]]; then
+              cat "/sys/fs/cgroup/$file" > "$RUNNER_TEMP/fork-pytest/$file"
+            fi
+          done
+      - name: Retain shard test and worker diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-python-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-pytest/
+          if-no-files-found: error
+          retention-days: 14
       - name: Record successful source and run
         id: identity
         env:
@@ -219,9 +268,13 @@ jobs:
           echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   addons:
+    name: Fork addons (${{ matrix.group }})
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.source.outputs.addon_matrix) }}
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
       run_id: ${{ steps.identity.outputs.run_id }}
@@ -242,26 +295,45 @@ jobs:
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap tmux dbus-daemon gnome-keyring
+          sudo apt-get install -y ripgrep bubblewrap tmux
+          if [[ "${{ matrix.group }}" == inner-rest ]]; then
+            sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring
+          fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          uv sync --locked --extra all --extra slack --group test
-      - name: Run every changed addon unit and server test
+          uv sync --locked --extra all --group test
+      - name: Run changed addon shard
         env:
+          PYTHONFAULTHANDLER: '1'
           OMNIGENT_TEST_TIMEOUT_SCALE: '4'
+          PYTEST_PROGRESS_LOG_DIR: ${{ runner.temp }}/fork-pytest/progress
         run: |
-          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync python - <<'PY'
-          import json
-          from pathlib import Path
-          import subprocess
-          import sys
-          pin = json.loads(Path(".github/fork-release.json").read_bytes())
-          changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
-          paths = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
-          if not paths:
-              raise SystemExit("No addon tests found")
-          subprocess.run([sys.executable, "-m", "pytest", *paths, "-m", "not databricks", "-n", "4", "--dist=worksteal", "--timeout=300"], check=True)
-          PY
-          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest tests/scripts/test_fork_release.py -q
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest ${{ matrix.paths }} \
+            -m 'not databricks' \
+            -n ${{ matrix.workers || '8' }} \
+            --dist=${{ matrix.dist || 'loadfile' }} \
+            --timeout=${{ matrix.timeout || '300' }} \
+            --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Capture failed worker resource diagnostics
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          free -m > "$RUNNER_TEMP/fork-pytest/memory.txt"
+          ps -eo pid,ppid,rss,comm > "$RUNNER_TEMP/fork-pytest/processes.txt"
+          for file in memory.events memory.peak memory.max; do
+            if [[ -r "/sys/fs/cgroup/$file" ]]; then
+              cat "/sys/fs/cgroup/$file" > "$RUNNER_TEMP/fork-pytest/$file"
+            fi
+          done
+      - name: Retain shard test and worker diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-addons-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-pytest/
+          if-no-files-found: error
+          retention-days: 14
       - name: Record successful source and run
         id: identity
         env:
