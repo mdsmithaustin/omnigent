@@ -1137,6 +1137,7 @@ class _SessionSnapshot:
     sub_agent_name: str | None = None
     parent_session_id: str | None = None
     agent_name: str | None = None
+    terminal_launch_args: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -3717,6 +3718,7 @@ def create_runner_app(
             sub_agent_name: str | None = None
             parent_session_id: str | None = None
             agent_name: str | None = None
+            terminal_launch_args: tuple[str, ...] = ()
             try:
                 resp = await server_client.get(
                     f"/v1/sessions/{session_id}", params=_SESSION_METADATA_PARAMS
@@ -3724,6 +3726,12 @@ def create_runner_app(
                 status_code = resp.status_code
                 if resp.status_code == 200:
                     body = resp.json()
+                    _note_session_harness_override(session_id, body.get("harness_override"))
+                    raw_launch_args = body.get("terminal_launch_args")
+                    if isinstance(raw_launch_args, list) and all(
+                        isinstance(arg, str) for arg in raw_launch_args
+                    ):
+                        terminal_launch_args = tuple(raw_launch_args)
                     raw_created = body.get("created_at")
                     if raw_created is not None:
                         created_at = float(raw_created)
@@ -3751,6 +3759,7 @@ def create_runner_app(
                 sub_agent_name=sub_agent_name,
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
+                terminal_launch_args=terminal_launch_args,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 if _session_cache_generation_is_current(session_id, generation):
@@ -3836,6 +3845,7 @@ def create_runner_app(
             agent_id=agent_id,
             sub_agent_name=envelope.sub_agent_name,
             parent_session_id=snapshot.parent_session_id,
+            terminal_launch_args=tuple(snapshot.terminal_launch_args or ()),
         )
         _session_start_cache[session_id] = float(snapshot.created_at)
         _session_workspace_cache[session_id] = snapshot.workspace
@@ -5347,6 +5357,8 @@ def create_runner_app(
             ):
                 _skipped_types.append(str(item_type))
             if item_type == "message":
+                if item.get("is_meta") is True and not item.get("content"):
+                    continue
                 result.append(
                     {
                         "type": "message",
@@ -5916,7 +5928,7 @@ def create_runner_app(
         spec = _session_spec_cache.get(conv_id)
         if spec is None:
             return None
-        h = spec.executor.config.get("harness") or spec.executor.type
+        h = _unwrap_resolved_spec(spec).executor.harness_kind
         return canonicalize_harness(h) or h
 
     def _publish_turn_status(
@@ -12360,13 +12372,57 @@ def create_runner_app(
             roots.append(Path.cwd())
 
         skills = await asyncio.to_thread(
-            resolve_session_skills, spec, tuple(roots), _resolved_spec_workdir(entry)
+            resolve_session_skills,
+            spec,
+            tuple(roots),
+            _resolved_spec_workdir(entry),
+            harness=_session_harness_name(session_id),
         )
         _session_skills_cache[session_id] = (
             time.monotonic() + _SESSION_SKILLS_CACHE_TTL_SECONDS,
             skills,
         )
         return skills
+
+    async def _native_skill_invocation(session_id: str, selected: SkillSpec) -> str | None:
+        from omnigent.native.native_dispatch import resolve_hook_for_key
+        from omnigent.spec.skill_sources import skill_source_context_from_env
+
+        entry = await _resolve_session_spec_entry(session_id)
+        spec = _unwrap_spec_entry(entry)
+        harness = _session_harness_name(session_id)
+        native = native_coding_agent_for_harness(harness)
+        hook = resolve_hook_for_key(native.key, "native_skill_invocation") if native else None
+        if hook is None or spec is None:
+            return None
+        await _ensure_native_terminal_for_turn(session_id, harness)
+        workspace = await _session_workspace_value(session_id)
+        cwd = (
+            Path(workspace)
+            if workspace
+            else runner_workspace or _resolved_spec_workdir(entry) or Path.cwd()
+        )
+        context = skill_source_context_from_env(
+            roots=(cwd,),
+            harness=harness,
+            skills_filter=spec.skills_filter,
+            bundle_dir=_resolved_spec_workdir(entry),
+        )
+        if native is not None and native.key == "codex":
+            state = await _codex_native_bridge_state_for_session(
+                session_id, action="skill invocation", missing_state_log_level=logging.DEBUG
+            )
+            if state is None:
+                registry = resource_registry.terminal_registry
+                instance = registry.get(session_id, "codex", "main") if registry else None
+                home = instance.env.get("CODEX_HOME") if instance else None
+                if not home:
+                    return None
+            else:
+                home = state.codex_home
+            context = dataclasses.replace(context, codex_home=Path(home))
+        snapshot = await _session_snapshot(session_id)
+        return await asyncio.to_thread(hook, selected, context, snapshot.terminal_launch_args)
 
     @app.get("/v1/sessions/{session_id}/models")
     async def get_session_models(session_id: str) -> JSONResponse:
@@ -12704,6 +12760,7 @@ def create_runner_app(
             )
         name = body.get("name")
         arguments = body.get("arguments", "")
+        allow_native = body.get("allow_native", False)
         if not isinstance(name, str) or not name:
             return JSONResponse(
                 status_code=400,
@@ -12713,6 +12770,14 @@ def create_runner_app(
             return JSONResponse(
                 status_code=400,
                 content={"error": "invalid_request", "detail": "'arguments' must be a string."},
+            )
+        if not isinstance(allow_native, bool):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request",
+                    "detail": "'allow_native' must be a boolean.",
+                },
             )
         skills = await _resolve_session_skills(session_id)
         skill = find_skill_by_name(skills, name)
@@ -12725,9 +12790,25 @@ def create_runner_app(
                     "available": sorted(s.name for s in skills),
                 },
             )
+        invocation = await _native_skill_invocation(session_id, skill) if allow_native else None
+        if invocation is not None:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "native_invocation": f"{invocation} {arguments}" if arguments else invocation,
+                },
+            )
+        history: list[_JsonObject] = []
+        if not is_native_harness(_session_harness_name(session_id)):
+            cached_history = _session_histories.get(session_id)
+            history = (
+                cached_history
+                if cached_history is not None
+                else await _load_history_as_input(session_id)
+            )
         return JSONResponse(
             status_code=200,
-            content={"meta_text": format_skill_meta_text(skill, arguments)},
+            content={"meta_text": format_skill_meta_text(skill, arguments, history=history)},
         )
 
     async def _fs_download(

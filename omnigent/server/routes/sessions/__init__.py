@@ -508,7 +508,7 @@ from omnigent.server.routes._sessions.helpers import (
     _require_permission_mode_forward as _require_permission_mode_forward,
     _reset_runner_resources_after_switch_impl as _reset_runner_resources_after_switch_impl,
     _resolve_llm_model as _resolve_llm_model,
-    _resolve_skill_meta_text_via_runner as _resolve_skill_meta_text_via_runner,
+    _resolve_skill_invocation_via_runner as _resolve_skill_invocation_via_runner,
     _resolve_subagent_spec as _resolve_subagent_spec,
     _resource_event_item_from_sse as _resource_event_item_from_sse,
     _routing_decision_item_from_sse as _routing_decision_item_from_sse,

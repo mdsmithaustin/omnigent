@@ -626,6 +626,9 @@ The same file can declare sub-agents and reviewers. For a fuller example, see
 Polly at [`examples/polly/`](https://github.com/omnigent-ai/omnigent/tree/main/examples/polly/), and the
 [Agent YAML spec](https://github.com/omnigent-ai/omnigent/blob/main/docs/AGENT_YAML_SPEC.md) for the full schema.
 
+For native skill loading, paste fallback, and history replay, see
+[Skill commands](docs/SKILL_COMMANDS.md).
+
 ---
 
 ## Telemetry

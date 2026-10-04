@@ -74,6 +74,7 @@ from omnigent.server.background_session_titles import (
     prepare_background_session_title,
     schedule_background_child_task_summary,
 )
+from omnigent.server.feature_flags import Feature
 from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.routes._auth_helpers import (
     attribution_user as _attribution_user,
@@ -2452,6 +2453,7 @@ def register_events_routes(
                 body,
                 conversation_store,
                 runner_client,
+                allow_native=request.app.state.feature_flags.enabled(Feature.NATIVE_SKILL_ROUTING),
                 agent=_agent,
                 has_mcp_servers=_has_mcp_servers,
                 created_by=created_by,

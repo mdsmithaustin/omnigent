@@ -7125,38 +7125,18 @@ def _build_skill_slash_command_policy_body(body: SessionEventInput) -> SessionEv
     )
 
 
-async def _resolve_skill_meta_text_via_runner(
+async def _resolve_skill_invocation_via_runner(
     session_id: str,
     skill_name: str,
     arguments: str,
     runner_client: httpx.AsyncClient,
-) -> str:
-    """
-    Resolve a skill's hidden ``<skill>`` meta text on the bound runner.
-
-    Skill content is runner-owned: the runner reads the ``SKILL.md``
-    body and resource files from the skill's directory on its own
-    filesystem, so the embedded ``<path>`` and resource listing are
-    valid where the harness executes. Wraps
-    ``POST /v1/sessions/{id}/skills/resolve``.
-
-    :param session_id: Session/conversation identifier,
-        e.g. ``"conv_abc123"``.
-    :param skill_name: Exact skill name to resolve, e.g.
-        ``"code-review"``.
-    :param arguments: Raw argument string typed after the slash
-        command, e.g. ``"review this plan"``. Empty when none.
-    :param runner_client: HTTP client pointed at the bound runner.
-    :returns: The hidden ``<skill>`` meta text for a single
-        ``input_text`` block.
-    :raises OmnigentError: If the skill is not exposed for the session
-        (the runner 404s with the available list), or the runner is
-        unreachable / errors while resolving.
-    """
+    *,
+    allow_native: bool,
+) -> tuple[str, bool]:
     try:
         resp = await runner_client.post(
             f"/v1/sessions/{session_id}/skills/resolve",
-            json={"name": skill_name, "arguments": arguments},
+            json={"name": skill_name, "arguments": arguments, "allow_native": allow_native},
             timeout=10.0,
         )
     except (httpx.HTTPError, ConnectionError) as exc:
@@ -7194,13 +7174,20 @@ async def _resolve_skill_meta_text_via_runner(
             f"Skill {skill_name!r} not found. Available skills: {available}",
             code=ErrorCode.INVALID_INPUT,
         )
+    native_invocation = payload.get("native_invocation")
+    if (
+        allow_native
+        and isinstance(native_invocation, str)
+        and native_invocation.startswith(("/", "$"))
+    ):
+        return native_invocation, True
     meta_text = payload.get("meta_text")
     if not isinstance(meta_text, str):
         raise OmnigentError(
             f"Runner returned malformed skill resolution for {skill_name!r}: missing 'meta_text'",
             code=ErrorCode.INTERNAL_ERROR,
         )
-    return meta_text
+    return meta_text, False
 
 
 async def _dispatch_skill_slash_command_to_runner(
@@ -7210,58 +7197,24 @@ async def _dispatch_skill_slash_command_to_runner(
     conversation_store: ConversationStore,
     runner_client: httpx.AsyncClient,
     *,
+    allow_native: bool,
     agent: Agent,
     has_mcp_servers: bool,
     created_by: str | None,
 ) -> str:
-    """
-    Persist a skill slash command and forward hidden skill context.
-
-    Skill content is runner-owned: this asks the bound runner to
-    resolve the skill (``POST /v1/sessions/{id}/skills/resolve``) into
-    its ``<skill>`` meta text, reading the ``SKILL.md`` body and
-    resource files from the skill's directory *on the runner* — so the
-    embedded ``<path>`` and resource listing are valid where the harness
-    executes. The server then persists the result (runner-resolves,
-    server-persists). Appends two conversation items with the same
-    response id:
-
-    * a visible ``slash_command`` item for the UI transcript;
-    * a hidden ``message`` item with ``is_meta=True`` containing the
-      full skill instructions for runner history replay.
-
-    Only the hidden message is sent to the runner as input. The visible
-    command is published as ``response.output_item.done`` after the
-    runner accepts the event.
-
-    :param session_id: Session/conversation identifier,
-        e.g. ``"conv_abc123"``.
-    :param conv: Conversation row for ``session_id``.
-    :param body: Structured ``slash_command`` event body.
-    :param conversation_store: Store used to append both durable
-        items.
-    :param runner_client: HTTP client pointed at the bound runner.
-    :param agent: Agent bound to the conversation.
-    :param has_mcp_servers: ``True`` when the agent spec declares MCP
-        servers; forwarded unchanged to the runner event.
-    :param created_by: Authenticated actor id, e.g.
-        ``"alice@example.com"``, or ``None`` in single-user mode.
-    :returns: The persisted visible ``slash_command`` item id.
-    :raises OmnigentError: If the skill is not exposed for the
-        session, or the runner is unreachable while resolving it.
-    """
     import uuid
 
     skill_name, arguments = _parse_skill_slash_command(body)
-    meta_text = await _resolve_skill_meta_text_via_runner(
+    input_text, native = await _resolve_skill_invocation_via_runner(
         session_id,
         skill_name,
         arguments,
         runner_client,
+        allow_native=allow_native,
     )
 
     response_id = f"turn_{uuid.uuid4().hex}"
-    meta_content = [{"type": "input_text", "text": meta_text}]
+    meta_content = [{"type": "input_text", "text": input_text}]
     visible_item = NewConversationItem(
         type=_SLASH_COMMAND_TYPE,
         response_id=response_id,
@@ -7270,6 +7223,7 @@ async def _dispatch_skill_slash_command_to_runner(
             kind="skill",
             name=skill_name,
             arguments=arguments,
+            native_invocation=input_text if native else None,
         ),
         created_by=created_by,
     )
@@ -7286,9 +7240,13 @@ async def _dispatch_skill_slash_command_to_runner(
     persisted_items = await asyncio.to_thread(
         conversation_store.append,
         session_id,
-        [visible_item, meta_item],
+        [visible_item] if native else [visible_item, meta_item],
     )
     visible = persisted_items[0]
+    if native:
+        pending_inputs.record(
+            session_id, meta_content, created_by=created_by, persisted_item_id=visible.id
+        )
 
     # Mirror the plain-message path's title seeding: a session whose FIRST
     # message is a skill invocation (web landing composer, REPL) would
@@ -7312,11 +7270,7 @@ async def _dispatch_skill_slash_command_to_runner(
         # Live-renderer hint: the runner drops ``browser_*`` schemas for
         # the turn when no renderer is subscribed to the session stream.
         "browser_renderer_available": session_stream.has_subscribers(session_id),
-        # The forwarded message carries ``meta_content`` — i.e. the
-        # META item (persisted_items[1]), not the user-visible item.
-        # Hand the runner that id so a cold-cache reload drops the
-        # right persisted copy (see _forward_event_to_runner).
-        "persisted_item_id": persisted_items[1].id,
+        "persisted_item_id": persisted_items[-1].id,
     }
     effective_runner_override = (
         body.model_override if body.model_override is not None else conv.model_override
@@ -11543,7 +11497,7 @@ __all__ = [
     "_reset_runner_resources_after_switch_impl",
     "_resolve_harness",
     "_resolve_llm_model",
-    "_resolve_skill_meta_text_via_runner",
+    "_resolve_skill_invocation_via_runner",
     "_resolve_subagent_spec",
     "_resource_event_item_from_sse",
     "_routing_decision_item_from_sse",
