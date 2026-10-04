@@ -33,15 +33,34 @@ def test_failed_migration_restores_or_discards_connection(
         config.attributes["connection"] = connection
         command.downgrade(config, "hh1b2c3d4e5f")
         connection.commit()
-        if version >= Version("24.1"):
-            connection.exec_driver_sql(f"SET autocommit_before_ddl = {prior_setting}")
-            connection.commit()
+
+    connections = [engine.connect() for _ in range(max(2, engine.pool.checkedin()))]
+    try:
+        for connection in connections:
+            if version >= Version("24.1"):
+                connection.exec_driver_sql(f"SET autocommit_before_ddl = {prior_setting}")
+                connection.commit()
+    finally:
+        for connection in connections:
+            connection.close()
 
     failed_drivers = []
     primary_errors = []
     restoration_errors = []
+    migration_prior_settings = []
 
     def interrupt(conn, cursor, statement, parameters, context, executemany):
+        if (
+            version >= Version("24.1")
+            and statement == "SET autocommit_before_ddl = true"
+            and not primary_errors
+        ):
+            migration_prior_settings.append(
+                (
+                    conn.connection.driver_connection,
+                    conn.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one(),
+                )
+            )
         if statement.startswith("UPDATE users SET account_generation"):
             failed_drivers.append(conn.connection.driver_connection)
             try:
@@ -59,53 +78,83 @@ def test_failed_migration_restores_or_discards_connection(
             restoration_errors.append(error)
             raise error
 
-    event.listen(engine, "before_cursor_execute", interrupt)
-    try:
-        with pytest.raises(RuntimeError, match="schema migration failed") as caught:
-            _initialize_or_verify_schema(engine, db_uri)
-    finally:
-        event.remove(engine, "before_cursor_execute", interrupt)
-
-    assert len(primary_errors) == 1
-    assert caught.value.__cause__ is primary_errors[0]
-    assert primary_errors[0].orig.sqlstate == "22012"
-    assert _get_current_db_revision(engine) == "hh1b2c3d4e5f"
-    assert "account_generation" in {c["name"] for c in inspect(engine).get_columns("users")}
-    assert len(restoration_errors) == int(restoration_fails)
-    if restoration_fails:
-        assert failed_drivers[0].closed
-
-    connections = [engine.connect() for _ in range(engine.pool.checkedin())]
-    try:
-        reused_failed_driver = False
-        for index, connection in enumerate(connections):
-            reused_failed_driver |= connection.connection.driver_connection is failed_drivers[0]
-            assert (
-                connection.exec_driver_sql("SHOW transaction_isolation").scalar_one()
-                == "read committed"
-            )
-            if version >= Version("24.1"):
-                assert (
-                    connection.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one() == "on"
-                )
-            else:
-                connection.rollback()
-                _prepare_crdb_schema_transaction(connection, version)
-            connection.exec_driver_sql(f"CREATE TABLE setting_check_{index} (id INT PRIMARY KEY)")
-            connection.commit()
-        assert reused_failed_driver == (not restoration_fails)
-    finally:
-        for connection in connections:
-            connection.close()
-
-    _initialize_or_verify_schema(engine, db_uri)
-    assert _get_current_db_revision(engine) == _get_head_db_revision(db_uri)
-    account = accounts.get_user("setting-user")
-    assert account is not None and len(account.account_generation) == 32
-    assert accounts.get_password_hash("setting-user") == "retained-password"
-    with engine.connect() as connection:
+    with engine.connect() as operator_connection:
+        operator_driver = operator_connection.connection.driver_connection
         if version >= Version("24.1"):
-            assert connection.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one() == "on"
+            operator_connection.exec_driver_sql("SET autocommit_before_ddl = false")
+            operator_connection.commit()
+
+        event.listen(engine, "before_cursor_execute", interrupt)
+        try:
+            with pytest.raises(RuntimeError, match="schema migration failed") as caught:
+                _initialize_or_verify_schema(engine, db_uri)
+        finally:
+            event.remove(engine, "before_cursor_execute", interrupt)
+
+        assert len(primary_errors) == 1
+        assert len(failed_drivers) == 1
+        failed_driver = failed_drivers[0]
+        assert failed_driver is not operator_driver
+        if version >= Version("24.1"):
+            assert len(migration_prior_settings) == 1
+            assert migration_prior_settings[0][0] is failed_driver
+            assert migration_prior_settings[0][1] == prior_setting
+        assert caught.value.__cause__ is primary_errors[0]
+        assert primary_errors[0].orig.sqlstate == "22012"
+        assert _get_current_db_revision(engine) == "hh1b2c3d4e5f"
+        assert "account_generation" in {c["name"] for c in inspect(engine).get_columns("users")}
+        assert len(restoration_errors) == int(restoration_fails)
+        if restoration_fails:
+            assert failed_driver.closed
+
+        connections = [engine.connect() for _ in range(engine.pool.checkedin())]
+        assert connections
+        try:
+            reused_failed_driver = False
+            for index, connection in enumerate(connections):
+                driver = connection.connection.driver_connection
+                reused_failed_driver |= driver is failed_driver
+                assert (
+                    connection.exec_driver_sql("SHOW transaction_isolation").scalar_one()
+                    == "read committed"
+                )
+                if driver is failed_driver and version >= Version("24.1"):
+                    assert (
+                        connection.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one()
+                        == "on"
+                    )
+                else:
+                    connection.rollback()
+                    _prepare_crdb_schema_transaction(connection, version)
+                connection.exec_driver_sql(
+                    f"CREATE TABLE setting_check_{index} (id INT PRIMARY KEY)"
+                )
+                connection.commit()
+                assert inspect(connection).has_table(f"setting_check_{index}")
+            assert reused_failed_driver == (not restoration_fails)
+        finally:
+            for connection in connections:
+                connection.close()
+
+        if version >= Version("24.1"):
+            assert (
+                operator_connection.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one()
+                == "off"
+            )
+            operator_connection.rollback()
+
+        _initialize_or_verify_schema(engine, db_uri)
+        assert _get_current_db_revision(engine) == _get_head_db_revision(db_uri)
+        account = accounts.get_user("setting-user")
+        assert account is not None and len(account.account_generation) == 32
+        assert accounts.get_password_hash("setting-user") == "retained-password"
+        assert operator_connection.connection.driver_connection is operator_driver
+        assert not operator_driver.closed
+        if version >= Version("24.1"):
+            assert (
+                operator_connection.exec_driver_sql("SHOW autocommit_before_ddl").scalar_one()
+                == "off"
+            )
 
 
 def test_successful_migration_discards_connection_when_restoration_fails(
@@ -151,5 +200,9 @@ def test_successful_migration_discards_connection_when_restoration_fails(
     assert _get_current_db_revision(engine) == _get_head_db_revision(db_uri)
     with engine.connect() as connection:
         assert connection.connection.driver_connection is not completed_drivers[0]
+        _prepare_crdb_schema_transaction(connection, version)
         connection.exec_driver_sql("CREATE TABLE successful_setting_check (id INT PRIMARY KEY)")
         connection.commit()
+        assert inspect(connection).has_table("successful_setting_check")
+    _initialize_or_verify_schema(engine, db_uri)
+    assert _get_current_db_revision(engine) == _get_head_db_revision(db_uri)
