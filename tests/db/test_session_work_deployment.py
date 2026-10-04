@@ -562,6 +562,50 @@ def test_backend_schema_semantics_and_lookup(uninitialized_database):
     assert "ix_session_work_unfinished" in plan, plan
 
 
+@pytest.mark.parametrize("drift", ["invisible_index", "prefix_index", "unenforced_check"])
+def test_mysql_native_drift_refuses_without_changes(uninitialized_database, drift):
+    uri, engine = uninitialized_database
+    if engine.dialect.name != "mysql":
+        pytest.skip("requires MySQL native index and check metadata")
+    ddl = ownership_ddl(engine)
+    if drift == "unenforced_check":
+        ddl = ddl[:-1] + " NOT ENFORCED)"
+    with schema_connection(engine) as connection:
+        connection.execute(sa.text(ddl))
+        columns = "workspace_id, session_id, state, operation_id"
+        if drift == "prefix_index":
+            columns = "workspace_id, session_id, state, operation_id(8)"
+        visibility = " INVISIBLE" if drift == "invisible_index" else ""
+        connection.execute(
+            sa.text(
+                f"CREATE INDEX ix_session_work_unfinished ON session_work ({columns}){visibility}"
+            )
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO session_work (workspace_id, session_id, operation_id, runner_id, "
+                "incarnation, kind, state, claim_id) "
+                "VALUES (7, :session, :operation, 'old runner', :incarnation, 1, 2, :claim)"
+            ),
+            {
+                "session": SESSION,
+                "operation": OPERATION,
+                "incarnation": INCARNATION,
+                "claim": CLAIM,
+            },
+        )
+    before = rows(engine, "session_work")
+    with engine.connect() as connection:
+        before_ddl = connection.execute(sa.text("SHOW CREATE TABLE session_work")).one()[1]
+    result = operator(uri)
+    assert result.returncode == 1, result.stdout
+    assert "Incompatible" in json.loads(result.stderr)["error"]
+    assert set(sa.inspect(engine).get_table_names()) == {"session_work"}
+    assert rows(engine, "session_work") == before
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("SHOW CREATE TABLE session_work")).one()[1] == before_ddl
+
+
 def seed_shared_ll(uri, engine):
     from alembic import command
 

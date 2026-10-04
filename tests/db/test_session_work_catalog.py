@@ -21,6 +21,13 @@ def mysql_catalog(monkeypatch):
         (Path(__file__).parent / "fixtures/session_work_mysql_8_0_46.json").read_text()
     )
     tables = copy.deepcopy(recorded["tables"])
+    enforcement = json.loads(
+        (Path(__file__).parent / "fixtures/session_work_mysql_8_0_46_enforcement.json").read_text()
+    )
+    for name, table in tables.items():
+        table["information_schema_table_constraints"] = [
+            row for row in enforcement["original_required_constraint"] if row["TABLE_NAME"] == name
+        ]
     types = {
         "BIGINT": mysql.BIGINT(),
         "SMALLINT": mysql.SMALLINT(),
@@ -97,4 +104,17 @@ def test_mysql_catalog_rejects_changed_check(mysql_catalog):
         "((`state` in (2,3,4)) and (`claim_id` is not null)))"
     )
     with pytest.raises(revision.SchemaDriftError, match="check constraints"):
+        revision.verify(connection)
+
+
+def test_mysql_catalog_rejects_unenforced_check(mysql_catalog):
+    connection, tables = mysql_catalog
+    revision.verify(connection)
+    check = next(
+        row
+        for row in tables["session_work"]["information_schema_table_constraints"]
+        if row["CONSTRAINT_TYPE"] == "CHECK"
+    )
+    check["ENFORCED"] = "NO"
+    with pytest.raises(revision.SchemaDriftError, match="check enforcement"):
         revision.verify(connection)

@@ -1,0 +1,32 @@
+{
+  "original_required_constraint": [
+    {
+      "TABLE_NAME": "session_work",
+      "CONSTRAINT_NAME": "ck_session_work_claim",
+      "CONSTRAINT_TYPE": "CHECK",
+      "ENFORCED": "YES"
+    },
+    {
+      "TABLE_NAME": "session_work",
+      "CONSTRAINT_NAME": "PRIMARY",
+      "CONSTRAINT_TYPE": "PRIMARY KEY",
+      "ENFORCED": "YES"
+    },
+    {
+      "TABLE_NAME": "session_work_admission",
+      "CONSTRAINT_NAME": "PRIMARY",
+      "CONSTRAINT_TYPE": "PRIMARY KEY",
+      "ENFORCED": "YES"
+    }
+  ],
+  "disabled_control": [
+    {
+      "TABLE_NAME": "fork_check_disabled_control",
+      "CONSTRAINT_NAME": "ck_disabled_control",
+      "CONSTRAINT_TYPE": "CHECK",
+      "ENFORCED": "NO"
+    }
+  ],
+  "disabled_check_admitted_state": 99,
+  "operator_qualified": false
+}
