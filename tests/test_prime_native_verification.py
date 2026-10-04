@@ -5,10 +5,427 @@ import dataclasses
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
+
+
+def _provider_probe():
+    scripts = Path(__file__).parents[1] / ".agents/skills/verify-prime-native/scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    spec = importlib.util.spec_from_file_location(
+        "prime_native_provider_probe_for_test", scripts / "provider_probe.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _provider_reply(probe):
+    header = {"id": "session", "type": "session"}
+    entries = [
+        header,
+        {
+            "id": "native-user",
+            "type": "message",
+            "parentId": None,
+            "message": {"role": "user", "content": "PROMPT"},
+        },
+        {
+            "id": "native-final",
+            "type": "message",
+            "parentId": "native-user",
+            "message": {
+                "role": "assistant",
+                "stopReason": "stop",
+                "content": [{"type": "text", "text": "REPLY"}],
+            },
+        },
+    ]
+    items = [
+        {
+            "id": "public-user",
+            "type": "message",
+            "role": "user",
+            "response_id": "independent-user-response",
+            "content": [{"type": "input_text", "text": "PROMPT"}],
+        },
+        {
+            "id": "public-final",
+            "type": "message",
+            "role": "assistant",
+            "response_id": "final-response",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "REPLY"}],
+        },
+    ]
+    operation = probe._ReplyOperation(
+        prompt="PROMPT",
+        literal="REPLY",
+        code=None,
+        deadline=time.monotonic() + 10,
+        native_baseline=probe._reply_rows([header]),
+        public_baseline=(),
+        native_ids=("session",),
+        public_ids=(),
+        journal_path=Path("/synthetic/journal"),
+        session_id="conversation",
+        external_id="session",
+        session_headers=("session",),
+        root=None,
+    )
+    return operation, entries, items
+
+
+def test_provider_reply_requires_a_fresh_public_prompt():
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+
+    missing = probe._reply_verdict(operation, entries, items[1:])
+    assert missing["complete"] is False
+    assert missing["predicates"]["public_user_count"] == 0
+    assert missing["predicates"]["public_final_position"] == 0
+    assert missing["predicates"]["public_user_before_final"] is False
+
+    valid = probe._reply_verdict(operation, entries, items)
+    assert valid["complete"] is True
+    assert valid["native_user_id"] == "native-user"
+    assert valid["public_user_id"] == "public-user"
+    assert valid["native_reply_id"] == "native-final"
+    assert valid["public_reply_id"] == "public-final"
+    assert valid["response_id"] == "final-response"
+    assert valid["predicates"]["public_user_ids"] == ["public-user"]
+    assert valid["predicates"]["public_user_positions"] == [0]
+    assert valid["predicates"]["public_user_fresh"] is True
+    assert valid["predicates"]["public_user_exact_prompt"] is True
+    assert valid["predicates"]["public_user_before_final"] is True
+
+
+@pytest.mark.parametrize("text", ["WRONG", " PROMPT", "PROMPT\n", "prompt", ""])
+def test_provider_reply_does_not_normalize_public_prompt(text):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    items[0]["content"][0]["text"] = text
+
+    result = probe._reply_verdict(operation, entries, items)
+
+    assert result["complete"] is False
+    assert result["predicates"]["public_user_count"] == 0
+    assert result["predicates"]["reason"] == "public_prompt_pending"
+
+
+@pytest.mark.parametrize("role", ["system", "tool", None])
+def test_provider_reply_counts_only_public_users(role):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    items[0]["role"] = role
+
+    result = probe._reply_verdict(operation, entries, items)
+
+    assert result["complete"] is False
+    assert result["predicates"]["public_user_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "PROMPT",
+        None,
+        {"type": "input_text", "text": "PROMPT"},
+        ["PROMPT"],
+        [{}],
+        [{"type": "input_text", "text": 7}],
+        [{"type": "output_text", "text": "PROMPT"}],
+        [{"type": "input_text", "input_text": "PROMPT"}],
+    ],
+)
+def test_provider_reply_rejects_malformed_public_user_content(content):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    items[0]["content"] = content
+
+    with pytest.raises(RuntimeError, match=r"public_.*content_malformed"):
+        probe._reply_verdict(operation, entries, items)
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("duplicate", "public_owned_prompt_ambiguous"),
+        ("late", "public_owned_prompt_after_final"),
+        ("intervening", "public_owned_turn_interrupted"),
+        ("stale", "public_owned_prompt_in_baseline"),
+        ("duplicate_id", "public_item_id_malformed_or_duplicate"),
+    ],
+)
+def test_provider_reply_rejects_ambiguous_or_unowned_public_turn(change, reason):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    if change == "duplicate":
+        items.insert(1, {**items[0], "id": "public-user-2"})
+    elif change == "late":
+        items.reverse()
+    elif change == "intervening":
+        items.insert(
+            1,
+            {
+                **items[0],
+                "id": "different-user",
+                "content": [{"type": "input_text", "text": "DIFFERENT"}],
+            },
+        )
+    elif change == "stale":
+        operation = dataclasses.replace(
+            operation,
+            public_baseline=probe._reply_rows(items[:1]),
+            public_ids=("public-user",),
+        )
+    else:
+        items.insert(1, dict(items[0]))
+
+    with pytest.raises(RuntimeError, match=reason):
+        probe._reply_verdict(operation, entries, items)
+
+
+def test_provider_reply_allows_earlier_wait_prompt_and_split_input_text():
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    wait_user = {
+        **items[0],
+        "id": "wait-user",
+        "content": [{"type": "input_text", "text": "WAIT"}],
+    }
+    items.insert(0, wait_user)
+    items[1]["content"] = [
+        {"type": "input_text", "text": "PRO"},
+        {"type": "input_text", "text": "MPT"},
+    ]
+    entries.insert(
+        1,
+        {
+            "id": "native-wait-user",
+            "type": "message",
+            "parentId": None,
+            "message": {"role": "user", "content": "WAIT"},
+        },
+    )
+    entries[2]["parentId"] = "native-wait-user"
+
+    result = probe._reply_verdict(operation, entries, items)
+
+    assert result["complete"] is True
+    assert result["predicates"]["public_user_count"] == 1
+    assert result["predicates"]["public_user_positions"] == [1]
+    assert result["predicates"]["public_final_position"] == 2
+
+
+def test_provider_reply_reports_prompt_evidence_before_final_arrives():
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+
+    waiting = probe._reply_verdict(operation, entries[:2], items[:1])
+    assert waiting["complete"] is False
+    assert waiting["predicates"]["public_user_count"] == 1
+    assert waiting["predicates"]["public_user_fresh"] is True
+    assert waiting["predicates"]["public_user_exact_prompt"] is True
+    assert waiting["predicates"]["public_final_position"] is None
+    assert waiting["predicates"]["public_user_before_final"] is False
+    assert probe._reply_verdict(operation, entries, items)["complete"] is True
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("native_branch", "native_branch_ambiguous"),
+        ("native_final", "native_assistant_not_successful"),
+        ("native_literal", "native_assistant_literal_mismatch"),
+        ("public_final", "public_final_interrupted"),
+        ("public_literal", "public_native_assistant_mismatch"),
+        ("public_status", "public_projection_not_completed"),
+        ("public_prefix", "public_baseline_changed"),
+    ],
+)
+def test_provider_public_prompt_does_not_relax_existing_reply_checks(change, reason):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    if change == "native_branch":
+        entries[-1]["parentId"] = None
+    elif change == "native_final":
+        entries[-1]["message"]["stopReason"] = "error"
+    elif change == "native_literal":
+        entries[-1]["message"]["content"][0]["text"] = "WRONG"
+    elif change == "public_final":
+        items[-1]["interrupted"] = True
+    elif change == "public_literal":
+        items[-1]["content"][0]["text"] = "WRONG"
+    elif change == "public_status":
+        items[-1]["status"] = "in_progress"
+    else:
+        operation = dataclasses.replace(
+            operation, public_baseline=probe._reply_rows(items[:1]), public_ids=("public-user",)
+        )
+        items[0]["content"][0]["text"] = "CHANGED"
+
+    with pytest.raises(RuntimeError, match=reason):
+        probe._reply_verdict(operation, entries, items)
+
+
+@pytest.mark.parametrize("change", [None, "call_id", "output", "response_id", "missing_result"])
+def test_provider_public_prompt_preserves_tool_projection(change):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    entries[2:2] = [
+        {
+            "id": "native-carrier",
+            "type": "message",
+            "parentId": "native-user",
+            "message": {
+                "role": "assistant",
+                "stopReason": "toolUse",
+                "content": [{"type": "toolCall", "id": "call", "name": "tool", "arguments": {}}],
+            },
+        },
+        {
+            "id": "native-result",
+            "type": "message",
+            "parentId": "native-carrier",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call",
+                "toolName": "tool",
+                "content": [{"type": "text", "text": "RESULT"}],
+            },
+        },
+    ]
+    entries[-1]["parentId"] = "native-result"
+    items[1:1] = [
+        {
+            "id": "public-call",
+            "type": "function_call",
+            "response_id": "tool-response",
+            "status": "completed",
+            "call_id": "call",
+            "name": "tool",
+            "arguments": "{}",
+        },
+        {
+            "id": "public-result",
+            "type": "function_call_output",
+            "response_id": "tool-response",
+            "status": "completed",
+            "call_id": "call",
+            "output": "RESULT",
+        },
+    ]
+    if change is None:
+        result = probe._reply_verdict(operation, entries, items)
+        assert result["complete"] is True
+        assert result["predicates"]["call_ids"] == ["call"]
+        assert result["predicates"]["result_ids"] == ["native-result"]
+        assert result["public_user_id"] == "public-user"
+        return
+    if change == "missing_result":
+        items.pop(2)
+    else:
+        items[2][change] = "WRONG"
+    with pytest.raises(RuntimeError, match=r"public_.*mismatch|public_result_unmatched"):
+        probe._reply_verdict(operation, entries, items)
+
+
+def _provider_capture_run(probe, operation, entries, tmp_path):
+    run = probe._OwnedRun.__new__(probe._OwnedRun)
+    run.evidence = tmp_path
+    run.journal_path = operation.journal_path
+    run.session_id = operation.session_id
+    run.external_id = operation.external_id
+    run.scenario_deadline = None
+    run.journal = lambda: entries
+    run.snapshot = lambda **kwargs: {"status": "idle"}
+    return run
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_provider_message_waits_for_public_prompt_with_one_deadline(
+    tmp_path, monkeypatch, terminal
+):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    run = _provider_capture_run(probe, operation, entries, tmp_path)
+    pages = iter([[], items])
+    deadlines = []
+
+    def collect(*, deadline):
+        deadlines.append(deadline)
+        return next(pages)
+
+    def baseline(prompt, literal, code, deadline):
+        assert (prompt, literal, code) == ("PROMPT", "REPLY", None)
+        return dataclasses.replace(operation, deadline=deadline)
+
+    sent = []
+    run.items = collect
+    run.reply_operation = baseline
+    run.send = lambda prompt, **kwargs: sent.append((prompt, kwargs))
+    run.census = list
+    run.metadata = {"tmux_target": "synthetic-pane"}
+    run.tmux = lambda *args: SimpleNamespace(stdout="REPLY\n", returncode=0)
+    monkeypatch.setattr(
+        probe, "time", SimpleNamespace(monotonic=lambda: 100.0, sleep=lambda _: None)
+    )
+
+    result = run.message("reply", "PROMPT", "REPLY", terminal=terminal, timeout=10)
+
+    assert result["public_user_id"] == "public-user"
+    assert deadlines == [110.0, 110.0]
+    assert sent == [("PROMPT", {"terminal": terminal, "deadline": 110.0})]
+    assert json.loads((tmp_path / "reply.json").read_text())["public_reply_id"] == "public-final"
+
+
+def test_provider_capture_missing_prompt_expires_without_resetting_deadline(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    operation = dataclasses.replace(operation, deadline=0.1)
+    run = _provider_capture_run(probe, operation, entries, tmp_path)
+    now = [0.0]
+    run.items = lambda **kwargs: items[1:]
+    monkeypatch.setattr(
+        probe,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="wait_scenario_deadline"):
+        run.completed_reply(operation, "missing")
+
+    receipt = json.loads((tmp_path / "missing-native-predicates.json").read_text())
+    assert receipt["public_user_count"] == 0
+    assert receipt["public_final_position"] == 0
+    assert receipt["reason"] == "wait_scenario_deadline"
+    assert now[0] == 0.1
+
+
+def test_provider_capture_preserves_rejected_prompt_evidence(tmp_path):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    run = _provider_capture_run(probe, operation, entries, tmp_path)
+    run.items = lambda **kwargs: list(reversed(items))
+
+    with pytest.raises(RuntimeError, match="public_owned_prompt_after_final"):
+        run.completed_reply(operation, "late")
+
+    receipt = json.loads((tmp_path / "late-native-predicates.json").read_text())
+    assert receipt["public_user_ids"] == ["public-user"]
+    assert receipt["public_user_positions"] == [1]
+    assert receipt["public_final_position"] == 0
+    assert receipt["public_user_before_final"] is False
 
 
 def _adapter_probe():

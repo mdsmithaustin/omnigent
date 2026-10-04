@@ -809,8 +809,19 @@ def _public_reply_content(item: dict) -> None:
     content = item.get("content")
     if not isinstance(content, list) or any(not isinstance(block, dict) for block in content):
         raise RuntimeError("public_message_content_malformed")
+    if item.get("role") == "user" and any(
+        block.get("type") != "input_text" or not isinstance(block.get("text"), str)
+        for block in content
+    ):
+        raise RuntimeError("public_user_content_malformed")
     if not isinstance(item.get("interrupted", False), bool):
         raise RuntimeError("public_message_interrupted_malformed")
+
+
+class _PublicPromptError(RuntimeError):
+    def __init__(self, reason: str, predicates: dict):
+        super().__init__(reason)
+        self.predicates = {**predicates, "reason": reason}
 
 
 def _reply_verdict(
@@ -944,6 +955,14 @@ def _reply_verdict(
         "call_ids": list(current_calls),
         "result_count": sum(call_id in results for call_id in current_calls),
         "result_ids": [results[key]["id"] for key in current_calls if key in results],
+        "public_user_count": 0,
+        "public_user_ids": [],
+        "public_user_positions": [],
+        "public_baseline_count": len(operation.public_baseline),
+        "public_final_position": None,
+        "public_user_fresh": False,
+        "public_user_before_final": False,
+        "public_user_exact_prompt": False,
     }
     verdict = {"complete": False, "predicates": predicates}
     if items is None:
@@ -953,6 +972,30 @@ def _reply_verdict(
         raise RuntimeError("public_baseline_changed")
     for item in items:
         _public_reply_content(item)
+    public_users = [
+        index
+        for index, item in enumerate(items)
+        if item.get("type") == "message" and item.get("role") == "user"
+    ]
+    matches = [
+        index
+        for index in public_users
+        if "".join(block["text"] for block in items[index]["content"]) == operation.prompt
+    ]
+    fresh_matches = [index for index in matches if index >= len(operation.public_baseline)]
+    predicates.update(
+        public_user_count=len(fresh_matches),
+        public_user_ids=[items[index]["id"] for index in fresh_matches],
+        public_user_positions=fresh_matches,
+        public_user_fresh=len(fresh_matches) == 1,
+        public_user_exact_prompt=len(fresh_matches) == 1,
+    )
+    if any(index < len(operation.public_baseline) for index in matches):
+        raise _PublicPromptError("public_owned_prompt_in_baseline", predicates)
+    if len(fresh_matches) > 1:
+        raise _PublicPromptError("public_owned_prompt_ambiguous", predicates)
+    if native_complete and not fresh_matches:
+        predicates["reason"] = "public_prompt_pending"
     public = [
         item
         for item in items
@@ -1024,12 +1067,24 @@ def _reply_verdict(
                 if item.get("interrupted", False) is True:
                     raise RuntimeError("public_final_interrupted")
                 final_item = item
+    if final_item is not None:
+        final_position = items.index(final_item)
+        predicates["public_final_position"] = final_position
+        if fresh_matches:
+            user_position = fresh_matches[0]
+            predicates["public_user_before_final"] = user_position < final_position
+            if user_position >= final_position:
+                raise _PublicPromptError("public_owned_prompt_after_final", predicates)
+            if any(user_position < index < final_position for index in public_users):
+                raise _PublicPromptError("public_owned_turn_interrupted", predicates)
     if native_complete and len(public) > len(projections):
         raise RuntimeError("public_projection_after_final")
     if not native_complete or len(public) != len(projections) or final_item is None:
         return verdict
     if final_item["id"] in operation.public_ids:
         raise RuntimeError("public_final_not_fresh")
+    if not fresh_matches:
+        return verdict
     predicates["reason"] = "native_public_reply_complete"
     return {
         "complete": True,
@@ -1041,6 +1096,7 @@ def _reply_verdict(
         "tool": tool,
         "journal": operation.journal_path,
         "native_user_id": entries[users[0]]["id"],
+        "public_user_id": items[fresh_matches[0]]["id"],
         "native_reply_id": finals[0]["id"],
         "public_reply_id": final_item["id"],
         "response_id": final_item["response_id"],
@@ -2004,6 +2060,8 @@ class _OwnedRun:
                     return verdict
                 time.sleep(min(0.1, self.remaining(operation.deadline)))
         except FINALIZATION_ERRORS as exc:
+            if isinstance(exc, _PublicPromptError):
+                predicates = exc.predicates
             predicates["reason"] = (
                 str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
             )
