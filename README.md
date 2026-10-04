@@ -64,6 +64,9 @@ Omnigent lets you:
 
 ### 1. Install
 
+For this fork, follow the [certified Python release guide](docs/FORK_RELEASES.md).
+Install and update from verified fork assets to retain the fork addons.
+
 One command installs Omnigent and everything it needs:
 
 ```bash
