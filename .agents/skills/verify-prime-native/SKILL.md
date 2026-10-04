@@ -187,8 +187,74 @@ The retained `provider-waits-m4g99h4o` run passed all five cases on the admitted
 Prime artifact with configured Grok 4.7. Its driver SHA256 is
 `a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
 The earlier `provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
-Changes to the probe, imported application source, or admitted runtime require
-fresh qualification.
+The later parent run `provider-waits-gkknmv6b` passed all five cases at revision
+`afe870ce93c9df8bccfa88be13bb54c39d64e5ae`. Its independent audit passed 2,616
+assertions over 309 child artifacts and 897 selected source files, with all 72
+recorded owned process identities absent. Earlier failed runs remain FAILED.
+These finite-wait receipts precede the MCP and extension repair. No finite-wait
+rerun on those changed bytes is claimed. Changes to the probe, imported
+application source, or admitted runtime require fresh qualification.
+
+## Qualify regular HTTP MCP reconnect
+
+`scripts/mcp_probe.py` drives one declared regular HTTP MCP tool through the
+real Prime terminal, Omnigent session proxy, and configured xAI Grok 4.7 provider.
+It owns a disposable two-generation MCP fixture. It does not replace the model
+provider or call the fixture directly to simulate a native tool invocation.
+
+Run from the checkout to qualify with its documented optional runtime dependencies
+installed. Supply the admitted full Prime 0.9.6 macOS arm64 bundle and a kernel
+environment containing the published Python runtime. Pass the environment's
+`bin/python` entry without resolving its symlink. Supply configured xAI
+credentials through `--auth-source` and keep evidence private. Do not copy
+credential contents or raw provider payloads into public reports.
+
+```sh
+uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence
+```
+
+Require exit zero, `passed: true`, no failure or finalization errors, and all
+eight required claims `VERIFIED` in the printed `result.json`. The required
+claims are `actual_provider`, `declared_tool`, `generation_1_success`,
+`completed_outage_error`, `generation_2_independent_success`,
+`selected_root_continuity`, `kernel_and_memory_continuity`, and `owned_cleanup`.
+A missing claim, non-`VERIFIED` claim, or nonzero exit fails qualification.
+Require empty cleanup errors, no owned survivors, private sockets, or credential
+copies, and `forced_native_fallback: false`.
+
+Inspect the retained sequence in order:
+
+1. Match the deployed declared schema, generation-1 fixture ledger, native tool
+   result, and provider continuation to the exact expected literal.
+2. Confirm the fixture stopped and the endpoint refused connections. Require a
+   completed native tool result with `isError: true` and the exact prefix
+   `Request failed on the runner; see the runner log for details: `.
+   Require no fixture invocation for the outage call.
+3. Require generation 2 to start only after that native error completed. Match
+   its unchanged endpoint and schema, fresh startup nonce, PID, and start time.
+4. Match a separate declared call to the generation-2 ledger, native result,
+   and provider continuation. Reusing the generation-1 literal fails the case.
+5. Compare selected root and kernel identities before and after recovery.
+   Require the existing memory object to advance from 41 to 42 with its original
+   token and open socket. Recreating the value or socket fails continuity.
+6. Inspect both fixture and runtime cleanup. Require exact owned absence and
+   unchanged source and deployed-extension evidence.
+
+Use `declared-schema.json`, `before-witness.json`, `outage-witness.json`,
+`outage-start.json`, `after-witness.json`, the generation startup and call
+records, `continuity.json`, kernel records, `fixture-cleanup.json`, and
+`cleanup.json`. `artifact.json`, `mcp-artifact.json`, the source inventories,
+and `manifest.json` bind the source and runtime used. The selector observation
+is source-inferred eligibility, not a live registry census.
+
+The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run reports all eight
+required claims verified on the repaired working tree above `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
+Its hashes identify the executed bytes, not a subsequently created commit.
+The three earlier actual MCP receipts remain FAILED. This passing case qualifies
+regular HTTP native error transport and recovery only. It does not qualify real
+MRTR callbacks or approval-state recovery, stdio, all servers or providers, or
+the whole N19 requirement. See [the acceptance record](../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+for the remaining matrix.
 
 ## Disposable daemon qualification
 

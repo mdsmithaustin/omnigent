@@ -102,7 +102,7 @@ A separate authenticated xAI run on revision `5001626a` verified launch, HTTP in
 
 All eight required checks passed. Cleanup recorded no fatal errors, owned survivors, remaining credential copies, cleanup errors, or forced native fallback. This historical run predates the `c22045ea9` pane-reaper selector change. It does not qualify finite waits, MCP reconnect, or the current observer. The retained `prior-provider-run-ltiscmii/result.json` and `manifest.json` identify the run. The driver hash is `860c55abe0b2c4120019ebdc01c22851fc89ffed8b7f9680734f2395a4413909`.
 
-The fresh authenticated finite-wait run `provider-waits-m4g99h4o` passed all five
+The historical authenticated finite-wait run `provider-waits-m4g99h4o` passed all five
 cases on the same admitted Prime 0.9.6 artifact with configured Grok 4.7. It ran
 on `c22045ea9` with provider driver SHA256
 `a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
@@ -124,7 +124,60 @@ pane cleanup failed after session deletion removed its owned credential tree.
 The current driver records the original directory deletion and rejects recreated
 copies or changed ownership. Finite native `running` is qualified. Genuine native
 `waiting`, status-only protection during complete output silence, one-hour and
-indefinite waits, and MCP reconnect remain unqualified.
+indefinite waits remain unqualified by that run. MCP reconnect has the separate
+bounded qualification below.
+
+The parent finite-wait run `provider-waits-gkknmv6b` passed five cases on revision
+`afe870ce93c9df8bccfa88be13bb54c39d64e5ae` with the same provider driver hash.
+The independent receipt audit passed 2,616 assertions over 309 child artifacts
+and 897 selected source files. All 72 recorded owned process identities were
+absent. The runner positive tool lasted 60.007 seconds with 37.432 quiet seconds.
+The pane positive tool lasted 300.004 seconds with 280.224 quiet seconds.
+Both idle controls expired, and pane idle actually reaped. The fresh wrong-memory
+control failed only at `memory_read_mismatch`. Every cleanup was verified.
+Earlier indexed failed runs, including `wy9dvn9_`, remain FAILED. The parent
+also passed 55 registry and reaper tests. These parent results do not qualify
+the later MCP and extension changes. No finite-wait rerun on those changed bytes
+is claimed. Gateway retry behavior, daemon recovery, global exclusivity, and
+descendant guarantees remain separate gaps.
+
+## Regular HTTP MCP reconnect qualification
+
+The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` probe reports
+`passed: true` and all eight required claims `VERIFIED`. It used configured xAI
+credentials and Grok 4.7 with published Prime 0.9.6 build `e260085d` on macOS
+arm64. This is one declared regular HTTP MCP case, measured on the MCP working
+tree above `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`. The receipt's source hashes
+identify the repaired connection, runner route, extension, and probe. The HEAD
+alone does not identify those uncommitted bytes or establish a final commit run.
+
+Generation 1 returned the declared tool's exact literal in the fixture ledger,
+native result, and provider continuation. The probe stopped the server and
+confirmed connection refusal. The next native call completed with `isError: true`
+and the runner error prefix. No fixture invocation fabricated the outage.
+Only after that error completed did generation 2 start at the same endpoint with
+the same schema, a distinct PID, and a fresh startup nonce. A separate declared
+call then returned the generation-2 literal in all three witnesses. The selected
+root and living kernel remained the same. The existing memory object advanced
+from 41 to 42 and retained its open socket. This does not prove a connected peer.
+Cleanup recorded no errors, owned survivors, private sockets, credential copies,
+or forced fallback.
+
+The [MCP verification workflow](../../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
+provides the repeat command and required receipts. Evidence remains private.
+The three earlier actual runs `provider-mcp-p6dnmwnf`, `provider-mcp-kt9j16e_`,
+and `provider-mcp-94f7fnro` remain FAILED with their original reasons.
+
+Controlled source verification passed 261 focused cases, 46 extension cases,
+and six independent private cases. Five source mutations produced 16 expected
+failing cases. Pi 0.84.2 error-mapping checks use explicit source provenance with
+`sdk_execution: false`. They do not run the Pi CLI. The actual Prime probe above
+qualifies the selected native error transport and recovery sequence.
+
+Real MRTR callbacks and opaque approval retries across restart, stdio restart,
+wider errors, cancellation and deadline behavior, other server classes, and
+other providers remain unqualified. Connection retries remain at-least-once and
+cannot reconstruct lost server approval state. This result does not complete N19.
 
 ## Original acceptance criteria
 
@@ -148,9 +201,9 @@ Every original ID remains visible. A narrower passing observation does not quali
 | N14 | A real Prime RLM child executed a nonce write without replacing the root's native identity, control incarnation, or transcript. Prime recursive lineage remains separate from Omnigent declared roles. Full descendant visibility is unqualified. |
 | N15 | Mixed declared-role compositions and completion-dependent Prime children remain unsupported. |
 | N16 | Prime's native long-running controls remain available in its terminal. Omnigent goals, heartbeat, and schedule controls need separate qualification. |
-| N17 | Actual 60-second and 300-second native Python tools passed with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
+| N17 | Parent revision `afe870ce` passed actual 60-second and 300-second native Python tools with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. The later MCP working tree has no finite-wait rerun. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
 | N18 | Inbox delivery is admission, not completion. Root quiescence is observed. Whole-descendant settlement remains unqualified. |
-| N19 | A declared MCP tool executed through Omnigent's relay with its literal result. The wrong-result control failed at that assertion with clean cleanup. Reconnect availability is unqualified. |
+| N19 | Declared tool execution and its wrong-result control passed. The later regular HTTP probe qualified a completed native outage error followed by an independent call to a fresh server generation, with matching fixture, native, and provider evidence, root and kernel continuity, and clean cleanup. Actual MRTR recovery, stdio, wider errors and timing, server classes, and providers remain unqualified. |
 | N20 | Root relayed write denial verified through HTTP and terminal input with absent marker files. The opposite side-effect control failed at its named assertion. Universal allow, deny, approval, native-client, and descendant coverage remains unmet. |
 | K01 | External. Prime remains an optional Kit target. |
 | K02 | External. Equal compiled resource digests for direct Prime and Omnigent delivery need Kit proof. |

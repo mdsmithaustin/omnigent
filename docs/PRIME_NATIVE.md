@@ -118,6 +118,14 @@ advertises the discovered tools through the shared extension, and the relay
 executes them. Discovery failures appear in the server or runner logs. The
 native terminal still starts when an additive MCP server is unavailable.
 
+After successful discovery, the retained MCP connection can recover on a later
+call even when an earlier call exhausted reconnect attempts. A failed first
+initialization does not enable that recovery. Prime receives a completed native
+tool error when runner dispatch fails. A subsequent eligible call can recover
+the connection after the server returns. The existing ordinary-call circuit breaker
+still applies. See [MCP recovery and retries](AGENT_YAML_SPEC.md#mcp-recovery-and-retries)
+for serialized calls, startup cancellation, teardown timing, and MRTR limits.
+
 Bundled skills use `load_skill` and `read_skill_file`. A Python resource delivered
 by those tools can execute in Prime's native `ipython` kernel. Configure resources
 in an [agent specification](AGENT_YAML_SPEC.md) and start a session with that
@@ -170,6 +178,34 @@ this implementation. Root policy hooks do not confine arbitrary Python code or
 recursive descendants. [The acceptance matrix](../designs/prime-native/NO_FORK.md)
 records each original requirement and its remaining evidence.
 
+## Remaining roadmap
+
+The supported adapter has measured launch, messages, controls, declared resources,
+root tool denial, and living-kernel reattachment. Finite native `running` waits
+passed on parent revision `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
+The later MCP working-tree repair passed one declared regular HTTP reconnect
+case with configured xAI credentials and Grok 4.7. Finite waits have not been
+rerun on those changed MCP and extension bytes. Each receipt identifies its
+source, so neither result qualifies an untested final commit.
+
+The next qualification priorities follow the gaps in the
+[acceptance matrix](../designs/prime-native/NO_FORK.md#original-acceptance-criteria):
+
+1. Extend N19 beyond regular HTTP. Exercise real MRTR callbacks and opaque
+   approval retries across restart, stdio restart, wider error and cancellation
+   paths, deadlines, server classes, and providers.
+2. Extend N17 beyond finite `running` tools. Prove genuine `waiting`, status-only
+   protection during complete output silence, default one-hour thresholds, and
+   indefinite waits. Qualify gateway retry behavior separately.
+3. Resolve the published daemon replay and worker-recovery failures before
+   claiming N08 or N09. Global control exclusivity, completion-dependent declared
+   children, and whole-descendant settlement remain gaps under N10, N15, and N18.
+4. Qualify the remaining controls, rich output, approvals, descendant visibility,
+   and external containment individually. Kit remains external to this adapter.
+
+The original 31-item program remains incomplete. The workflows below repeat the
+bounded passing cases and retain failures as separate evidence.
+
 ## Verify the adapter
 
 The project skill drives a real Prime binary, Omnigent server, host, runner,
@@ -213,7 +249,8 @@ not a prerequisite for public use. This broader probe pins the tested macOS
 arm64 artifact. See the [full probe workflow](../.agents/skills/verify-prime-native/SKILL.md#full-adapter-probe)
 for the runtime prerequisites, negative controls, and evidence inventory.
 The [authenticated finite-wait workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
-uses configured xAI credentials and Grok 4.7. The five-case qualification passed
+uses configured xAI credentials and Grok 4.7. The parent run
+`provider-waits-gkknmv6b` passed five cases on revision `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`,
 with actual 60-second and 300-second Python tools, matched runner and pane idle
 controls, HTTP steering, and reattachment to the same living kernel. Its receipt distinguishes finite native
 `running` from unqualified genuine `waiting` and status-only protection during
@@ -227,3 +264,22 @@ passing run also verified the wrong-memory control and clean cleanup in all
 five cases. See the workflow for the source hashes and cleanup receipts.
 The separate daemon probe is a qualification gate and currently exits nonzero
 for the published runtime's known gaps.
+
+To repeat the declared regular HTTP MCP restart case, run this command from the
+checkout to qualify. Supply the admitted Prime 0.9.6 binary, the kernel
+environment's `bin/python` entry without resolving its symlink, configured xAI
+credentials, and a private evidence directory.
+
+```sh
+uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence
+```
+
+Require exit zero, `passed: true`, and all eight required claims `VERIFIED` in
+the printed `result.json`. Require verified cleanup with no errors, survivors,
+private sockets, credential copies, or forced fallback. A nonzero exit, missing
+claim, or non-`VERIFIED` claim fails qualification. Inspect the completed native
+outage error before generation 2 starts, the new server PID and nonce, matching
+native, provider, and fixture results, and the same root and kernel object after
+recovery. Follow the [MCP verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
+for the exact sequence and evidence files. This case does not qualify MRTR,
+stdio, all servers, or all providers.
