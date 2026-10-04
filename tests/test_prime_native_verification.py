@@ -1338,3 +1338,650 @@ def test_cleanup_and_integrity_failures_are_both_retained(tmp_path: Path, monkey
     assert "cleanup failed" in outcomes
     assert "Source integrity changed" in outcomes
     assert '"after"' in integrity
+
+
+def _synthetic_owned_run(probe, tmp_path):
+    source = tmp_path / "synthetic-source"
+    source.write_text("SYNTHETIC SOURCE")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    sentinels = [source, tmp_path / "compact-sibling", evidence / "sentinel"]
+    for path in sentinels[1:]:
+        path.write_text("SYNTHETIC OUTSIDE")
+    before = {
+        path: (path.stat().st_dev, path.stat().st_ino, path.read_bytes()) for path in sentinels
+    }
+    request = probe.Request(
+        tmp_path / "no-prime",
+        tmp_path / "no-kernel",
+        source,
+        tmp_path,
+        "selector",
+        cooperative_cleanup=True,
+    )
+    owner = probe._RuntimeOwner.allocate(request, evidence)
+    run = probe._OwnedRun(request, probe.RUNNER, "selector", owner)
+    run.census = list
+    (run.runtime / "prime/auth.json").write_text("SYNTHETIC COPY")
+    (run.runtime / "data/logs").mkdir()
+    (run.runtime / "data/logs/diagnostic.log").write_text("synthetic log\n")
+    return request, owner, run, before
+
+
+def _assert_synthetic_sentinels(before):
+    for path, expected in before.items():
+        assert (path.stat().st_dev, path.stat().st_ino, path.read_bytes()) == expected
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_runtime_cleanup_removes_original_and_retries_known_credentials(tmp_path):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    with owner:
+        result = run.cleanup(settlement)
+        assert result.status == "VERIFIED"
+        assert owner.removed.root_identity == owner.target.directories[run.runtime]
+        assert not run.runtime.exists()
+        assert (run.evidence / "owned-logs/diagnostic.log").read_text() == "synthetic log\n"
+        for _ in range(2):
+            errors = []
+            run.finalize_owned_credentials(errors)
+            assert errors == []
+            assert run.cleanup(settlement).status == "VERIFIED"
+        with pytest.raises(RuntimeError, match="new_retired_descendant"):
+            run.register_owned_credential(run.runtime / "unknown/auth.json")
+        assert owner.removed.event_flags & probe.select.KQ_NOTE_DELETE
+    assert owner.closed is True
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "fixture",
+        "wrong_allocation",
+        "census",
+        "capture",
+        "symlink",
+        "rename",
+        "replacement",
+        "denied",
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_runtime_failure_retains_scratch_and_preserves_sentinels(
+    tmp_path, monkeypatch, failure
+):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    original = run.runtime
+    if failure == "fixture":
+        settlement = probe._ExternalSettlement(
+            owner.allocation_id, "failed_fixture", (), ("close failed",)
+        )
+    elif failure == "wrong_allocation":
+        settlement = probe._ExternalSettlement("wrong", "no_fixture", ())
+    elif failure == "census":
+
+        def unreadable():
+            raise OSError("census denied")
+
+        run.census = unreadable
+        monkeypatch.setattr(probe, "wait_for", lambda action, *args: action())
+    elif failure == "capture":
+        original_sanitize = probe.sanitize
+
+        def bad_capture(text):
+            if text == "synthetic log\n":
+                raise OSError("capture failed")
+            return original_sanitize(text)
+
+        monkeypatch.setattr(probe, "sanitize", bad_capture)
+    elif failure == "symlink":
+        (run.runtime / "workspace/external").symlink_to(tmp_path / "compact-sibling")
+    elif failure in ("rename", "replacement"):
+        original.rename(tmp_path / "renamed-original")
+        if failure == "replacement":
+            original.mkdir()
+            replacement = original / "replacement-sentinel"
+            replacement.write_text("DO NOT REMOVE")
+            before[replacement] = (
+                replacement.stat().st_dev,
+                replacement.stat().st_ino,
+                replacement.read_bytes(),
+            )
+    elif failure == "denied":
+
+        def denied(*args, **kwargs):
+            raise PermissionError("rmdir denied")
+
+        monkeypatch.setattr(probe.os, "rmdir", denied)
+    try:
+        try:
+            result = run.cleanup(settlement)
+        except (OSError, RuntimeError):
+            result = None
+        assert result is None or result.status == "FAILED"
+        assert owner.removed is None
+        assert (
+            (tmp_path / "renamed-original").is_dir()
+            if failure in ("rename", "replacement")
+            else original.is_dir()
+        )
+    finally:
+        with contextlib.suppress(RuntimeError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize("failure", ["receipt", "missing_event", "held_fstat", "recreated"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_runtime_removal_failure_never_readmits_path(tmp_path, monkeypatch, failure):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    original_write = probe.write_json
+    if failure == "receipt":
+
+        def bad_receipt(path, *args, **kwargs):
+            if path.name == "runtime-removal.json":
+                raise OSError("receipt failed")
+            return original_write(path, *args, **kwargs)
+
+        monkeypatch.setattr(probe, "write_json", bad_receipt)
+    elif failure == "missing_event":
+        monkeypatch.setattr(owner, "_events", lambda: 0)
+    elif failure == "held_fstat":
+        original_fstat = probe.os.fstat
+
+        def fail_fstat(fd):
+            if fd == owner.root_fd and not owner.root.exists():
+                raise OSError("held fstat unreadable")
+            return original_fstat(fd)
+
+        monkeypatch.setattr(probe.os, "fstat", fail_fstat)
+    else:
+        original_rmdir = probe.os.rmdir
+
+        def recreate(name, *, dir_fd):
+            original_rmdir(name, dir_fd=dir_fd)
+            if name == run.runtime.name:
+                run.runtime.mkdir()
+                sentinel = run.runtime / "replacement"
+                sentinel.write_text("RECREATED")
+                before[sentinel] = (
+                    sentinel.stat().st_dev,
+                    sentinel.stat().st_ino,
+                    sentinel.read_bytes(),
+                )
+
+        monkeypatch.setattr(probe.os, "rmdir", recreate)
+    try:
+        assert run.cleanup(settlement).status == "FAILED"
+        if failure not in ("missing_event", "held_fstat"):
+            assert owner.removed is not None
+        assert not (run.evidence / "completion.json").exists()
+        errors = []
+        run.finalize_owned_credentials(errors)
+        assert run.cleanup(settlement).status == "FAILED"
+    finally:
+        with contextlib.suppress(RuntimeError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+def _synthetic_draft(probe, evidence):
+    cleanup = probe.Observation("owned_cleanup", "VERIFIED", (), "synthetic")
+    observation = probe.Observation("literal", "VERIFIED", (), "synthetic")
+    result = probe.CaseResult(evidence / "result.json", ("literal",), (observation,), cleanup)
+    return probe._CaseDraft(result, {"failure": None}, {"synthetic": True})
+
+
+@pytest.mark.parametrize(
+    "failure", [None, "result", "manifest", "completion", "chmod", "inventory", "commit"]
+)
+def test_provider_publication_has_one_authority(tmp_path, monkeypatch, failure):
+    probe = _provider_probe()
+    draft = _synthetic_draft(probe, tmp_path)
+    original_write = probe.write_json
+    names = {
+        "result": "result.json",
+        "manifest": "manifest.json",
+        "completion": ".completion-pending.json",
+    }
+    if failure in names:
+
+        def fail_write(path, *args, **kwargs):
+            if path.name == names[failure]:
+                raise OSError("publication failed")
+            return original_write(path, *args, **kwargs)
+
+        monkeypatch.setattr(probe, "write_json", fail_write)
+    elif failure == "chmod":
+
+        def fail_chmod(*args, **kwargs):
+            raise OSError("chmod failed")
+
+        monkeypatch.setattr(Path, "chmod", fail_chmod)
+    elif failure == "inventory":
+
+        def fail_inventory(*args, **kwargs):
+            raise OSError("inventory failed")
+
+        monkeypatch.setattr(Path, "rglob", fail_inventory)
+    elif failure == "commit":
+
+        def fail_commit(*args, **kwargs):
+            raise OSError("commit failed")
+
+        monkeypatch.setattr(probe.os, "rename", fail_commit)
+    assert draft.result.passed is False
+    if failure:
+        with pytest.raises(OSError):
+            probe._publish_case(draft)
+        assert draft.result.passed is False
+        assert not (tmp_path / "completion.json").exists()
+    else:
+        result = probe._publish_case(draft)
+        assert result.passed is True
+        assert json.loads(result.receipt.read_text())["authority"] == "completion.json"
+        assert "passed" not in json.loads(result.receipt.read_text())
+        assert json.loads((tmp_path / "completion.json").read_text())["passed"] is True
+
+
+@pytest.mark.parametrize("failure", ["constructor", "enter", "exit", "pin_close"])
+@pytest.mark.parametrize("expected_memory", [None, "WRONG"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_guard_prevents_late_success(
+    tmp_path, monkeypatch, failure, expected_memory
+):
+    probe = _provider_probe()
+    request = probe.Request(
+        tmp_path / "no-prime",
+        tmp_path / "no-kernel",
+        tmp_path / "synthetic-source",
+        tmp_path,
+        "selector",
+        expected_memory,
+        True,
+    )
+    allocations = []
+    real_allocate = probe._RuntimeOwner.allocate
+
+    def allocate(request, evidence):
+        owner = real_allocate(request, evidence)
+        allocations.append(owner)
+        return owner
+
+    monkeypatch.setattr(probe._RuntimeOwner, "allocate", allocate)
+
+    def qualify(run):
+        run.census = list
+        cleanup = run.cleanup(
+            probe._ExternalSettlement(run.runtime_owner.allocation_id, "no_fixture", ())
+        )
+        assert cleanup.status == "VERIFIED"
+        return _synthetic_draft(probe, run.evidence)
+
+    monkeypatch.setattr(probe._OwnedRun, "qualify", qualify)
+    if failure == "constructor":
+
+        def fail_constructor(run, request, profile, kind, owner):
+            (owner.root / "partial").mkdir()
+            raise RuntimeError("partial constructor")
+
+        monkeypatch.setattr(probe._OwnedRun, "__init__", fail_constructor)
+    elif failure == "enter":
+        original_enter = probe._RuntimeOwner.__enter__
+
+        def fail_enter(owner):
+            owner.root.rename(tmp_path / "moved")
+            return original_enter(owner)
+
+        monkeypatch.setattr(probe._RuntimeOwner, "__enter__", fail_enter)
+    elif failure == "exit":
+        original_exit = probe._RuntimeOwner.__exit__
+
+        def fail_exit(owner, *args):
+            original_exit(owner, *args)
+            raise OSError("late owner failure")
+
+        monkeypatch.setattr(probe._RuntimeOwner, "__exit__", fail_exit)
+    else:
+        original_close = probe.os.close
+
+        def fail_close(fd):
+            original_close(fd)
+            if allocations and fd == allocations[0].root_fd and allocations[0].closed:
+                raise OSError("pin close failed")
+
+        monkeypatch.setattr(probe.os, "close", fail_close)
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+    assert result.passed is False
+    assert result.cleanup.status == "FAILED"
+    assert allocations[0].closed is True
+    if failure in ("exit", "pin_close"):
+        assert allocations[0].removed is not None
+        assert (result.receipt.parent / "runtime-removal.json").is_file()
+    elif failure == "enter":
+        assert (
+            json.loads((result.receipt.parent / "runtime-enter-failed.json").read_text())[
+                "retained"
+            ]
+            is True
+        )
+    assert json.loads((result.receipt.parent / "completion.json").read_text())["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "allocation",
+        "watch_registration",
+        "watch_close",
+        "owner_receipt",
+        "thread",
+        "socket",
+        "fixture_receipt",
+        "log_symlink",
+        "capture_writer",
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_allocation_and_settlement_fail_closed(tmp_path, monkeypatch, failure):
+    probe = _provider_probe()
+    if failure in ("allocation", "watch_registration"):
+        request = probe.Request(
+            tmp_path / "no-prime",
+            tmp_path / "no-kernel",
+            tmp_path / "synthetic-source",
+            tmp_path,
+            "selector",
+            cooperative_cleanup=True,
+        )
+        real_open = probe.os.open
+        created = []
+        real_mkdtemp = probe.tempfile.mkdtemp
+
+        def allocate(*args, **kwargs):
+            path = real_mkdtemp(*args, **kwargs)
+            if kwargs.get("prefix") == "pw-":
+                created.append(Path(path))
+            return path
+
+        monkeypatch.setattr(probe.tempfile, "mkdtemp", allocate)
+        if failure == "allocation":
+
+            def bad_open(path, flags, *args, **kwargs):
+                if created and str(path) == created[0].name:
+                    raise OSError("pin admission denied")
+                return real_open(path, flags, *args, **kwargs)
+
+            monkeypatch.setattr(probe.os, "open", bad_open)
+        else:
+
+            def bad_watch():
+                raise OSError("watch admission denied")
+
+            monkeypatch.setattr(probe.select, "kqueue", bad_watch)
+        result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+        assert result.passed is False
+        assert created[0].is_dir()
+        assert (
+            json.loads((result.receipt.parent / "runtime-allocation-failed.json").read_text())[
+                "retained"
+            ]
+            is True
+        )
+        return
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    if failure == "watch_close":
+        queue = owner.queue
+
+        class BadClose:
+            def control(self, *args):
+                return queue.control(*args)
+
+            def close(self):
+                queue.close()
+                raise OSError("watch close denied")
+
+        owner.queue = BadClose()
+    elif failure == "owner_receipt":
+        original_write = probe.write_json
+
+        def bad_receipt(path, *args, **kwargs):
+            if path.name == "runtime-owner.json":
+                raise OSError("owner receipt denied")
+            return original_write(path, *args, **kwargs)
+
+        monkeypatch.setattr(probe, "write_json", bad_receipt)
+    elif failure == "thread":
+        run.server_thread = SimpleNamespace(join=lambda **kwargs: None, is_alive=lambda: True)
+    elif failure == "socket":
+        run.private_sockets = lambda: [str(run.runtime / "live-socket")]
+        run.census_errors.add("unreadable owner")
+    elif failure == "capture_writer":
+        run.server_capture_error = "synthetic capture writer failure"
+    elif failure == "fixture_receipt":
+        settlement = probe._ExternalSettlement(
+            owner.allocation_id, "settled_fixture", ("missing-receipt.json",)
+        )
+    else:
+        (run.runtime / "data/logs/external").symlink_to(tmp_path / "compact-sibling")
+    try:
+        if failure == "log_symlink":
+            with pytest.raises(RuntimeError, match="capture_unsafe"):
+                run.cleanup(settlement)
+        else:
+            cleanup = run.cleanup(settlement)
+            assert cleanup.status == (
+                "VERIFIED" if failure in ("watch_close", "owner_receipt") else "FAILED"
+            )
+        if failure in ("watch_close", "owner_receipt"):
+            assert owner.removed is not None
+            with pytest.raises((RuntimeError, OSError)):
+                owner.__exit__(None, None, None)
+            assert not (run.evidence / "completion.json").exists()
+        else:
+            assert run.runtime.is_dir()
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_known_compact_retirement_remains_independent(tmp_path, monkeypatch):
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    sibling = bridge._COMPACT_ROOT / "sibling"
+    sibling.write_text("SYNTHETIC SIBLING")
+    before[sibling] = (sibling.stat().st_dev, sibling.stat().st_ino, sibling.read_bytes())
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+
+    def delete(method, route, **kwargs):
+        assert method == "DELETE"
+        assert route == "/v1/sessions/synthetic-session"
+        for directory in reversed(paths._directories):
+            directory.rmdir()
+        return httpx.Response(200, request=httpx.Request("DELETE", "http://synthetic/session"))
+
+    run.request_http = delete
+    retirement = {"steps": [], "errors": []}
+    run._delete_owned_session(retirement)
+    assert retirement["errors"] == []
+    assert retirement["retired_owned_trees"][0]["event_flags"] & probe.select.KQ_NOTE_DELETE
+    with owner:
+        owner.finish(
+            probe._ExternalSettlement(owner.allocation_id, "no_fixture", ()),
+            run._capture_owned_logs(),
+        )
+        for _ in range(2):
+            errors = []
+            run.finalize_owned_credentials(errors)
+            assert errors == []
+        assert not compact.exists()
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_fixture_settlement_is_required_and_bound_to_allocation(tmp_path):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    with owner:
+        with pytest.raises(TypeError):
+            run.cleanup()
+        assert run.runtime.is_dir()
+        probe.write_json(run.evidence / "fixture.json", {"closed": True, "synthetic": True})
+        result = run.cleanup(
+            probe._ExternalSettlement(owner.allocation_id, "settled_fixture", ("fixture.json",))
+        )
+        assert result.status == "VERIFIED"
+        assert not run.runtime.exists()
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_credential_recreation_after_removal_is_read_only_and_sticky(tmp_path):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    assert run.cleanup(settlement).status == "VERIFIED"
+    (run.runtime / "prime").mkdir(parents=True)
+    replacement = run.runtime / "prime/auth.json"
+    replacement.write_text("SYNTHETIC RECREATED COPY")
+    before[replacement] = (
+        replacement.stat().st_dev,
+        replacement.stat().st_ino,
+        replacement.read_bytes(),
+    )
+    try:
+        for _ in range(2):
+            assert run.cleanup(settlement).status == "FAILED"
+            _assert_synthetic_sentinels(before)
+    finally:
+        with pytest.raises(RuntimeError, match="runtime_root_recreated"):
+            owner.__exit__(None, None, None)
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize("substitution", ["parent", "descendant", "before_rmdir", "closed_watch"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_substitution_before_enforced_check_preserves_external_tree(
+    tmp_path, monkeypatch, substitution
+):
+    probe = _provider_probe()
+    allocation_parent = tmp_path / "allocation-parent"
+    allocation_parent.mkdir(mode=0o700)
+    original_mkdtemp = probe.tempfile.mkdtemp
+
+    def allocate(*args, **kwargs):
+        if kwargs.get("prefix") == "pw-":
+            kwargs["dir"] = allocation_parent
+        return original_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(probe.tempfile, "mkdtemp", allocate)
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    owned_file = run.runtime / "workspace/owned.txt"
+    owned_file.write_text("ORIGINAL")
+
+    def preserve(path):
+        path.write_text("EXTERNAL REPLACEMENT")
+        before[path] = (path.stat().st_dev, path.stat().st_ino, path.read_bytes())
+
+    if substitution == "parent":
+        allocation_parent.rename(tmp_path / "original-parent")
+        allocation_parent.mkdir()
+        preserve(allocation_parent / "external")
+    elif substitution == "descendant":
+        check = owner._check_directory
+
+        def substitute(fd, path):
+            if path == run.workspace and not (tmp_path / "moved-workspace").exists():
+                path.rename(tmp_path / "moved-workspace")
+                path.mkdir()
+                preserve(path / "external")
+            return check(fd, path)
+
+        monkeypatch.setattr(owner, "_check_directory", substitute)
+    elif substitution == "before_rmdir":
+        remove_contents = owner._remove_contents
+
+        def substitute(fd, path):
+            remove_contents(fd, path)
+            if path == owner.root:
+                path.rename(tmp_path / "moved-root")
+                path.mkdir()
+                preserve(path / "external")
+
+        monkeypatch.setattr(owner, "_remove_contents", substitute)
+    else:
+        owner.queue.close()
+    try:
+        with contextlib.suppress(RuntimeError, ValueError, OSError):
+            result = run.cleanup(probe._ExternalSettlement(owner.allocation_id, "no_fixture", ()))
+            assert result.status == "FAILED"
+        assert owner.removed is None
+        assert not (run.evidence / "completion.json").exists()
+    finally:
+        with contextlib.suppress(RuntimeError, ValueError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+def test_provider_completion_rejects_changed_manifest(tmp_path):
+    probe = _provider_probe()
+    result = probe._publish_case(_synthetic_draft(probe, tmp_path))
+    assert result.passed is True
+    manifest = tmp_path / "manifest.json"
+    manifest.chmod(0o600)
+    manifest.write_text('{"qualified": true}\n')
+    assert result.passed is False
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_partial_subclass_retains_allocation_without_fabricated_settlement(tmp_path):
+    probe = _provider_probe()
+    source = tmp_path / "synthetic-source"
+    source.write_text("SYNTHETIC SOURCE")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    request = probe.Request(
+        tmp_path / "no-prime",
+        tmp_path / "no-kernel",
+        source,
+        tmp_path,
+        "selector",
+        cooperative_cleanup=True,
+    )
+    owner = probe._RuntimeOwner.allocate(request, evidence)
+
+    class Partial(probe._OwnedRun):
+        def __init__(self):
+            super().__init__(request, probe.RUNNER, "selector", owner)
+            raise RuntimeError("subclass setup failed")
+
+    with pytest.raises(RuntimeError, match="runtime_retained_unsettled"):
+        with owner:
+            Partial()
+    assert owner.root.is_dir()
+    assert owner.closed is True
+    assert owner.removed is None
+    assert not (evidence / "runtime-settlement.json").exists()
+    assert not (evidence / "completion.json").exists()
+    assert source.read_text() == "SYNTHETIC SOURCE"

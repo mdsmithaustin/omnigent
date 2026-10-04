@@ -64,6 +64,7 @@ class Request:
     evidence_parent: Path
     case: Literal["selector", "runner", "pane", "waits"]
     expected_memory: str | None = None
+    cooperative_cleanup: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,11 +97,89 @@ class CaseResult:
     cleanup: Observation
 
     @property
-    def passed(self) -> bool:
+    def qualified(self) -> bool:
         claims = {item.claim: item for item in self.observations}
         return self.cleanup.status == "VERIFIED" and all(
             name in claims and claims[name].status == "VERIFIED" for name in self.required_claims
         )
+
+    @property
+    def committed(self) -> bool:
+        completion = self.receipt.parent / "completion.json"
+        if not completion.is_file():
+            return False
+        value = json.loads(completion.read_text())
+        return (
+            value["passed"] is self.qualified
+            and value["result_sha256"] == sha256(self.receipt)
+            and value["manifest_sha256"] == sha256(self.receipt.parent / "manifest.json")
+        )
+
+    @property
+    def passed(self) -> bool:
+        return self.qualified and self.committed
+
+
+@dataclass(frozen=True)
+class _CaseDraft:
+    result: CaseResult
+    payload: dict
+    manifest: dict
+
+
+def _publish_case(draft: _CaseDraft) -> CaseResult:
+    result = draft.result
+    evidence = result.receipt.parent
+    write_json(
+        result.receipt,
+        {
+            **draft.payload,
+            "qualified": result.qualified,
+            "authority": "completion.json",
+        },
+        immutable=True,
+    )
+    artifacts = []
+    for path in sorted(evidence.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError("publication_symlink")
+        if path.is_file():
+            path.chmod(0o400)
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+            artifacts.append(
+                {
+                    "path": str(path.relative_to(evidence)),
+                    "sha256": sha256(path),
+                    "bytes": path.stat().st_size,
+                }
+            )
+    manifest = evidence / "manifest.json"
+    write_json(
+        manifest,
+        {
+            **draft.manifest,
+            "artifacts": artifacts,
+            "qualified": result.qualified,
+            "authority": "completion.json",
+        },
+        immutable=True,
+    )
+    staged = evidence / ".completion-pending.json"
+    write_json(
+        staged,
+        {
+            "passed": result.qualified,
+            "result_sha256": sha256(result.receipt),
+            "manifest_sha256": sha256(manifest),
+        },
+        immutable=True,
+    )
+    for path in (result.receipt, manifest, staged):
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    os.rename(staged, evidence / "completion.json")
+    return result
 
 
 @dataclass(frozen=True)
@@ -1158,24 +1237,394 @@ class _RetiredOwnedTree:
     event_flags: int
 
 
+def _open_witnessed_directory(target: _CredentialTarget, directory: Path) -> int | None:
+    for alias, identity in target.aliases.items():
+        metadata = alias.lstat()
+        if (metadata.st_dev, metadata.st_ino) != identity or os.readlink(alias) != "private/tmp":
+            raise RuntimeError("owned_credential_temp_anchor_replaced")
+    witnesses = target.directories
+    ancestors = (*reversed(directory.parents), directory)
+    descriptor = None
+    try:
+        for ancestor in ancestors:
+            try:
+                opened = os.open(
+                    str(ancestor) if descriptor is None else ancestor.name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError:
+                if any(item.is_relative_to(ancestor) for item in witnesses):
+                    raise RuntimeError("owned_credential_directory_missing") from None
+                return None
+            try:
+                metadata = os.fstat(opened)
+                identity = (metadata.st_dev, metadata.st_ino)
+                if ancestor in witnesses and witnesses[ancestor] != identity:
+                    raise RuntimeError("owned_credential_directory_replaced")
+                witnesses[ancestor] = identity
+            except BaseException:
+                os.close(opened)
+                raise
+            if descriptor is not None:
+                os.close(descriptor)
+            descriptor = opened
+        result, descriptor = descriptor, None
+        return result
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@dataclass(frozen=True)
+class _ExternalSettlement:
+    allocation_id: str
+    status: Literal["no_fixture", "settled_fixture", "failed_fixture"]
+    evidence: tuple[str, ...]
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _RemovedRuntime:
+    allocation_id: str
+    root: Path
+    root_identity: tuple[int, int]
+    parent_identity: tuple[int, int]
+    event_flags: int
+    descriptor_links: int
+
+
+class _RuntimeOwner:
+    def __init__(self, evidence: Path):
+        self.evidence = evidence
+        self.allocation_id = uuid.uuid4().hex
+        self.root: Path | None = None
+        self.target: _CredentialTarget | None = None
+        self.root_fd: int | None = None
+        self.parent_fd: int | None = None
+        self.queue = None
+        self.removed: _RemovedRuntime | None = None
+        self.errors: list[str] = []
+        self.closed = False
+        self.event_flags = 0
+
+    @classmethod
+    def allocate(cls, request: Request, evidence: Path) -> _RuntimeOwner:
+        owner = cls(evidence)
+        try:
+            if not request.cooperative_cleanup:
+                raise RuntimeError("runtime_cooperative_environment_not_admitted")
+            if sys.platform != "darwin" or os.uname().machine != "arm64":
+                raise RuntimeError("runtime_removal_platform_unqualified")
+            lexical = Path(tempfile.mkdtemp(prefix="pw-", dir="/tmp"))
+            owner.root = lexical
+            canonical, aliases = _OwnedRun._credential_path(lexical / "allocation")
+            owner.root = canonical.parent
+            source = request.auth_source.resolve()
+            retained = evidence.resolve()
+            if (
+                source.is_relative_to(owner.root)
+                or retained.is_relative_to(owner.root)
+                or owner.root.is_relative_to(retained)
+            ):
+                raise RuntimeError("runtime_allocation_overlaps_preserved_path")
+            owner.target = _CredentialTarget(canonical, {}, aliases)
+            owner.parent_fd = _open_witnessed_directory(owner.target, owner.root.parent)
+            owner.root_fd = _open_witnessed_directory(owner.target, owner.root)
+            metadata = os.fstat(owner.root_fd)
+            if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise RuntimeError("runtime_allocation_not_private")
+            owner.queue = select.kqueue()
+            owner.queue.control(
+                [
+                    select.kevent(
+                        owner.root_fd,
+                        filter=select.KQ_FILTER_VNODE,
+                        flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
+                        fflags=select.KQ_NOTE_DELETE
+                        | select.KQ_NOTE_RENAME
+                        | select.KQ_NOTE_REVOKE
+                        | select.KQ_NOTE_LINK,
+                    )
+                ],
+                0,
+                0,
+            )
+            if owner._events():
+                raise RuntimeError("runtime_event_before_admission")
+            owner.check_live()
+            return owner
+        except BaseException as exc:
+            owner.errors.append(type(exc).__name__ + ": " + sanitize(str(exc)))
+            try:
+                owner.close()
+            finally:
+                write_json(
+                    evidence / "runtime-allocation-failed.json",
+                    {
+                        "root": owner.root,
+                        "errors": owner.errors,
+                        "retained": True,
+                        "allocation_id": owner.allocation_id,
+                    },
+                    immutable=True,
+                )
+            raise
+
+    def _events(self) -> int:
+        flags = 0
+        for event in self.queue.control([], 1, 0):
+            if (
+                event.ident != self.root_fd
+                or event.filter != select.KQ_FILTER_VNODE
+                or event.flags & ~(select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR)
+                or event.fflags & (select.KQ_NOTE_RENAME | select.KQ_NOTE_REVOKE)
+                or event.fflags
+                & ~(
+                    select.KQ_NOTE_DELETE
+                    | select.KQ_NOTE_LINK
+                    | select.KQ_NOTE_WRITE
+                    | select.KQ_NOTE_EXTEND
+                    | select.KQ_NOTE_ATTRIB
+                )
+                or event.data != 0
+            ):
+                raise RuntimeError(f"runtime_deletion_event_invalid {event!r}")
+            flags |= event.fflags
+        self.event_flags |= flags
+        return flags
+
+    def check_live(self) -> None:
+        if self.closed or self.removed is not None:
+            raise RuntimeError("runtime_not_live")
+        for fd, path in ((self.parent_fd, self.root.parent), (self.root_fd, self.root)):
+            metadata = os.fstat(fd)
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or (metadata.st_dev, metadata.st_ino) != self.target.directories[path]
+            ):
+                raise RuntimeError("runtime_pin_changed")
+        checked = _open_witnessed_directory(self.target, self.root)
+        if checked is None:
+            raise RuntimeError("runtime_root_missing")
+        os.close(checked)
+        if self._events() & select.KQ_NOTE_DELETE:
+            raise RuntimeError("runtime_deleted_before_removal")
+
+    def check_removed(self) -> None:
+        if self.removed is None:
+            raise RuntimeError("runtime_removal_unproved")
+        checked = _open_witnessed_directory(self.target, self.root.parent)
+        if checked is None:
+            raise RuntimeError("runtime_parent_missing")
+        try:
+            try:
+                os.stat(self.root.name, dir_fd=checked, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            raise RuntimeError("runtime_root_recreated")
+        finally:
+            os.close(checked)
+
+    def _check_directory(self, descriptor: int, directory: Path) -> None:
+        self.check_live()
+        checked = _open_witnessed_directory(self.target, directory)
+        if checked is None:
+            raise RuntimeError("runtime_descendant_missing")
+        try:
+            current, held = os.fstat(checked), os.fstat(descriptor)
+            if (current.st_dev, current.st_ino) != (held.st_dev, held.st_ino):
+                raise RuntimeError("runtime_descendant_replaced")
+        finally:
+            os.close(checked)
+
+    def _remove_contents(self, descriptor: int, directory: Path) -> None:
+        for name in os.listdir(descriptor):
+            self._check_directory(descriptor, directory)
+            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            if (
+                metadata.st_uid != os.getuid()
+                or metadata.st_dev != self.target.directories[self.root][0]
+            ):
+                raise RuntimeError("runtime_descendant_not_owned")
+            identity = (metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode))
+            if stat.S_ISDIR(metadata.st_mode):
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+                try:
+                    held = os.fstat(child)
+                    if (held.st_dev, held.st_ino, stat.S_IFMT(held.st_mode)) != identity:
+                        raise RuntimeError("runtime_descendant_replaced")
+                    self.target.directories[directory / name] = identity[:2]
+                    self._remove_contents(child, directory / name)
+                    self._check_directory(descriptor, directory)
+                    current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                    if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode)) != identity:
+                        raise RuntimeError("runtime_descendant_replaced")
+                    os.rmdir(name, dir_fd=descriptor)
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
+                self._check_directory(descriptor, directory)
+                current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode)) != identity:
+                    raise RuntimeError("runtime_descendant_replaced")
+                os.unlink(name, dir_fd=descriptor)
+            else:
+                raise RuntimeError("runtime_unsafe_descendant")
+
+    def finish(self, settlement: _ExternalSettlement, captures: tuple[Path, ...]) -> None:
+        try:
+            if self.removed is not None:
+                self.check_removed()
+                if self.errors:
+                    raise RuntimeError("runtime_prior_finalization_failed")
+                return
+            if self.errors:
+                raise RuntimeError("runtime_prior_finalization_failed")
+            if (
+                settlement.allocation_id != self.allocation_id
+                or settlement.status not in ("no_fixture", "settled_fixture")
+                or settlement.errors
+                or (settlement.status == "settled_fixture" and not settlement.evidence)
+            ):
+                raise RuntimeError("runtime_external_settlement_unproved")
+            if any(
+                Path(item).is_absolute() or ".." in Path(item).parts
+                for item in settlement.evidence
+            ):
+                raise RuntimeError("runtime_settlement_evidence_escape")
+            for path in (*captures, *(self.evidence / item for item in settlement.evidence)):
+                if (
+                    not path.is_relative_to(self.evidence)
+                    or path.is_symlink()
+                    or not path.is_file()
+                ):
+                    raise RuntimeError("runtime_capture_unproved")
+                with path.open("rb") as handle:
+                    os.fsync(handle.fileno())
+            self.check_live()
+            self._remove_contents(self.root_fd, self.root)
+            self.check_live()
+            os.rmdir(self.root.name, dir_fd=self.parent_fd)
+            self._events()
+            held = os.fstat(self.root_fd)
+            if (
+                not self.event_flags & select.KQ_NOTE_DELETE
+                or not stat.S_ISDIR(held.st_mode)
+                or (held.st_dev, held.st_ino) != self.target.directories[self.root]
+            ):
+                raise RuntimeError("runtime_original_removal_unproved")
+            self.removed = _RemovedRuntime(
+                self.allocation_id,
+                self.root,
+                self.target.directories[self.root],
+                self.target.directories[self.root.parent],
+                self.event_flags,
+                held.st_nlink,
+            )
+            self.check_removed()
+            write_json(
+                self.evidence / "runtime-removal.json",
+                {
+                    **asdict(self.removed),
+                    "proof": "original_vnode_namespace_removal",
+                    "precondition": "cooperative_namespace_and_settled_owned_writers",
+                    "hostile_final_syscall": "BLOCKED",
+                },
+                immutable=True,
+            )
+        except BaseException as exc:
+            self.errors.append(type(exc).__name__ + ": " + sanitize(str(exc)))
+            raise
+
+    def close(self) -> None:
+        if self.closed:
+            if self.errors:
+                raise RuntimeError("runtime_owner_failed")
+            return
+        self.closed = True
+        for name in ("queue", "root_fd", "parent_fd"):
+            handle = getattr(self, name)
+            if handle is not None:
+                try:
+                    handle.close() if name == "queue" else os.close(handle)
+                except FINALIZATION_ERRORS as exc:
+                    self.errors.append(
+                        name + ": " + type(exc).__name__ + ": " + sanitize(str(exc))
+                    )
+        if self.errors:
+            raise RuntimeError("runtime_owner_failed: " + "; ".join(self.errors))
+
+    def __enter__(self) -> _RuntimeOwner:
+        try:
+            self.check_live()
+            return self
+        except BaseException as exc:
+            self.errors.append(type(exc).__name__ + ": " + sanitize(str(exc)))
+            try:
+                self.close()
+            finally:
+                write_json(
+                    self.evidence / "runtime-enter-failed.json",
+                    {
+                        "root": self.root,
+                        "allocation_id": self.allocation_id,
+                        "errors": self.errors,
+                        "retained": True,
+                    },
+                    immutable=True,
+                )
+            raise
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        try:
+            if self.removed is None:
+                self.errors.append("runtime_retained_unsettled")
+            else:
+                self.check_removed()
+                receipt = json.loads((self.evidence / "runtime-removal.json").read_text())
+                expected = json.loads(json.dumps(asdict(self.removed), default=str))
+                if any(receipt.get(key) != value for key, value in expected.items()):
+                    raise RuntimeError("runtime_removal_receipt_changed")
+        except FINALIZATION_ERRORS as error:
+            self.errors.append(type(error).__name__ + ": " + sanitize(str(error)))
+        finally:
+            try:
+                self.close()
+            finally:
+                write_json(
+                    self.evidence / "runtime-owner.json",
+                    {
+                        "allocation_id": self.allocation_id,
+                        "root": self.root,
+                        "removed": asdict(self.removed) if self.removed else None,
+                        "errors": self.errors,
+                        "closed": self.closed,
+                    },
+                    immutable=True,
+                )
+
+
 class _OwnedRun:
-    def __init__(self, request: Request, profile: ClockProfile, kind: str, parent: Path):
+    def __init__(
+        self, request: Request, profile: ClockProfile, kind: str, runtime_owner: _RuntimeOwner
+    ):
         self.request = request
         self.profile = profile
         self.kind = kind
-        self.evidence = Path(tempfile.mkdtemp(prefix=f"{profile.name}-{kind}-", dir=parent))
-        self.evidence.chmod(0o700)
-        self.runtime = Path(tempfile.mkdtemp(prefix="pw-", dir="/tmp")).resolve()
-        self.runtime.chmod(0o700)
+        self.runtime_owner = runtime_owner
+        self.evidence = runtime_owner.evidence
+        self.runtime = runtime_owner.root
         self.workspace = self.runtime / "workspace"
         self.prime = self.runtime / "prime"
-        for name in ("workspace", "prime", "sessions", "data", "config", "artifacts"):
-            (self.runtime / name).mkdir(mode=0o700)
         self.url = f"http://127.0.0.1:{unused_port()}"
         self.session_id: str | None = None
         self.external_id: str | None = None
         self.server: subprocess.Popen | None = None
         self.server_thread: threading.Thread | None = None
+        self.server_capture_error: str | None = None
         self.foreground_host: subprocess.Popen | None = None
         self.foreground_host_identity: ProcessIdentity | None = None
         self.host_log_handle: TextIO | None = None
@@ -1187,7 +1636,6 @@ class _OwnedRun:
         self.credential_copies: set[Path] = set()
         self.credential_targets: dict[Path, _CredentialTarget] = {}
         self._retired_trees: dict[Path, _RetiredOwnedTree] = {}
-        self.register_owned_credential(self.prime / "auth.json")
         self.terminal_sockets: set[Path] = set()
         self.census_errors: set[str] = set()
         self.observations: list[Observation] = []
@@ -1218,6 +1666,9 @@ class _OwnedRun:
         self.journal_path: Path | None = None
         self.seed: SelectedRootIdentity | None = None
         self.expired: set[tuple[int, float]] = set()
+        for name in ("workspace", "prime", "sessions", "data", "config", "artifacts"):
+            (self.runtime / name).mkdir(mode=0o700)
+        self.register_owned_credential(self.prime / "auth.json")
         self.progress("prepared_no_auth")
 
     def progress(self, phase: str) -> None:
@@ -1768,10 +2219,13 @@ class _OwnedRun:
         identity = self.own(psutil.Process(self.server.pid))
 
         def drain() -> None:
-            with (self.evidence / "server.log").open("w") as handle:
-                for line in self.server.stdout:
-                    handle.write(sanitize(line))
-                    handle.flush()
+            try:
+                with (self.evidence / "server.log").open("w") as handle:
+                    for line in self.server.stdout:
+                        handle.write(sanitize(line))
+                        handle.flush()
+            except FINALIZATION_ERRORS as exc:
+                self.server_capture_error = type(exc).__name__ + ": " + sanitize(str(exc))
 
         self.server_thread = threading.Thread(target=drain, daemon=True)
         self.server_thread.start()
@@ -3168,53 +3622,21 @@ class _OwnedRun:
                 directory = Path("/private/tmp") / directory.relative_to(anchor)
         return directory / path.name, aliases
 
-    def _credential_ancestor(self, target: _CredentialTarget, directory: Path) -> int | None:
-        for alias, identity in target.aliases.items():
-            metadata = alias.lstat()
-            if (metadata.st_dev, metadata.st_ino) != identity or os.readlink(
-                alias
-            ) != "private/tmp":
-                raise RuntimeError("owned_credential_temp_anchor_replaced")
-        witnesses = target.directories
-        ancestors = (*reversed(directory.parents), directory)
-        descriptor = None
-        try:
-            for ancestor in ancestors:
-                try:
-                    opened = os.open(
-                        str(ancestor) if descriptor is None else ancestor.name,
-                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                        dir_fd=descriptor,
-                    )
-                except FileNotFoundError:
-                    if any(item.is_relative_to(ancestor) for item in witnesses):
-                        raise RuntimeError("owned_credential_directory_missing") from None
-                    return None
-                try:
-                    metadata = os.fstat(opened)
-                    identity = (metadata.st_dev, metadata.st_ino)
-                    if ancestor in witnesses and witnesses[ancestor] != identity:
-                        raise RuntimeError("owned_credential_directory_replaced")
-                    witnesses[ancestor] = identity
-                except BaseException:
-                    os.close(opened)
-                    raise
-                if descriptor is not None:
-                    os.close(descriptor)
-                descriptor = opened
-            result, descriptor = descriptor, None
-            return result
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
-
     def credential_directory(self, path: Path) -> int | None:
         canonical, _ = self._credential_path(path)
         target = self.credential_targets[canonical]
+        if self.runtime_owner.removed is not None and canonical.is_relative_to(self.runtime):
+            if (
+                not target.copy_absence_required
+                or target.directories.get(self.runtime) != self.runtime_owner.removed.root_identity
+            ):
+                raise RuntimeError("runtime_credential_retirement_mismatch")
+            self.runtime_owner.check_removed()
+            return None
         root = target.path.parent.parent
         receipt = self._retired_trees.get(root)
         if receipt is None:
-            return self._credential_ancestor(target, target.path.parent)
+            return _open_witnessed_directory(target, target.path.parent)
         if (
             not target.copy_absence_required
             or receipt.session_id != self.session_id
@@ -3222,7 +3644,7 @@ class _OwnedRun:
             or target.directories.get(root.parent) != receipt.parent_identity
         ):
             raise RuntimeError("owned_tree_retirement_mismatch")
-        descriptor = self._credential_ancestor(target, root.parent)
+        descriptor = _open_witnessed_directory(target, root.parent)
         if descriptor is None:
             raise RuntimeError("owned_credential_directory_missing")
         try:
@@ -3240,7 +3662,9 @@ class _OwnedRun:
         if canonical == source:
             raise RuntimeError("owned_credential_is_original_source")
         if canonical not in self.credential_targets:
-            if any(canonical.is_relative_to(root) for root in self._retired_trees):
+            if (
+                self.runtime_owner.removed is not None and canonical.is_relative_to(self.runtime)
+            ) or any(canonical.is_relative_to(root) for root in self._retired_trees):
                 raise RuntimeError("owned_credential_new_retired_descendant")
             self.credential_targets[canonical] = _CredentialTarget(canonical, {}, aliases)
         else:
@@ -3337,11 +3761,11 @@ class _OwnedRun:
                     if member.path.is_relative_to(root)
                 ):
                     raise RuntimeError("owned_tree_copy_absence_unproved")
-                parent = self._credential_ancestor(target, root.parent)
+                parent = _open_witnessed_directory(target, root.parent)
                 if parent is None:
                     raise RuntimeError("owned_credential_directory_missing")
                 handles.callback(os.close, parent)
-                descriptor = self._credential_ancestor(target, root)
+                descriptor = _open_witnessed_directory(target, root)
                 if descriptor is None:
                     raise RuntimeError("owned_credential_directory_missing")
                 handles.callback(os.close, descriptor)
@@ -3403,7 +3827,7 @@ class _OwnedRun:
                 events[event.ident] = event.fflags
             for root, target in roots.items():
                 parent, descriptor = pins[root]
-                checked = self._credential_ancestor(target, root.parent)
+                checked = _open_witnessed_directory(target, root.parent)
                 if checked is None:
                     raise RuntimeError("owned_credential_directory_missing")
                 try:
@@ -3436,7 +3860,98 @@ class _OwnedRun:
                 finally:
                     os.close(checked)
 
-    def cleanup(self) -> Observation:
+    def _capture_owned_logs(self) -> tuple[Path, ...]:
+        owner = self.runtime_owner
+        captures = []
+        logs = self.runtime / "data/logs"
+        descriptor = _open_witnessed_directory(owner.target, logs)
+        if descriptor is None:
+            return ()
+
+        def capture(directory: Path, fd: int) -> None:
+            owner._check_directory(fd, directory)
+            for name in os.listdir(fd):
+                metadata = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                if (
+                    metadata.st_uid != os.getuid()
+                    or metadata.st_dev != owner.target.directories[self.runtime][0]
+                ):
+                    raise RuntimeError("runtime_capture_not_owned")
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                if stat.S_ISDIR(metadata.st_mode):
+                    flags |= os.O_DIRECTORY
+                elif not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise RuntimeError("runtime_capture_unsafe_file")
+                child = os.open(name, flags, dir_fd=fd)
+                try:
+                    held = os.fstat(child)
+                    if (held.st_dev, held.st_ino, held.st_mode) != (
+                        metadata.st_dev,
+                        metadata.st_ino,
+                        metadata.st_mode,
+                    ):
+                        raise RuntimeError("runtime_capture_replaced")
+                    if stat.S_ISDIR(held.st_mode):
+                        owner.target.directories[directory / name] = (held.st_dev, held.st_ino)
+                        capture(directory / name, child)
+                    else:
+                        owner._check_directory(fd, directory)
+                        with os.fdopen(os.dup(child), "r", errors="replace") as handle:
+                            text = sanitize(handle.read())
+                        destination = (
+                            self.evidence / "owned-logs" / (directory / name).relative_to(logs)
+                        )
+                        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        destination.write_text(text)
+                        destination.chmod(0o600)
+                        captures.append(destination)
+                finally:
+                    os.close(child)
+
+        try:
+            capture(logs, descriptor)
+        finally:
+            os.close(descriptor)
+        return tuple(captures)
+
+    def finalize_owned_credentials(self, errors: list[str]) -> None:
+        if self.runtime_owner.removed is None and not self.runtime_owner.errors:
+            if self.session_id or (self.server and self.server.poll() is None and self.terminal):
+                try:
+                    self.recover_owned_session()
+                except FINALIZATION_ERRORS as exc:
+                    errors.append("credential recovery: " + sanitize(str(exc)))
+        self.remove_owned_credentials(errors)
+
+    def cleanup(self, external_settlement: _ExternalSettlement) -> Observation:
+        if self.runtime_owner.removed is not None or self.runtime_owner.errors:
+            errors = list(
+                dict.fromkeys([*self.runtime_owner.errors, *(self.cleanup_errors or [])])
+            )
+            self.finalize_owned_credentials(errors)
+            self.cleanup_errors = errors
+            return Observation(
+                "owned_cleanup",
+                "FAILED" if errors else "VERIFIED",
+                ("cleanup.json",),
+                "cleanup_error" if errors else "exact_owned_absence",
+            )
+        try:
+            result = self._cleanup_live(external_settlement)
+        except FINALIZATION_ERRORS as exc:
+            self.runtime_owner.errors.append(
+                "cleanup failed: " + type(exc).__name__ + ": " + sanitize(str(exc))
+            )
+            raise
+        if result.status != "VERIFIED":
+            self.runtime_owner.errors.extend(
+                error
+                for error in (self.cleanup_errors or [])
+                if error not in self.runtime_owner.errors
+            )
+        return result
+
+    def _cleanup_live(self, external_settlement: _ExternalSettlement) -> Observation:
         self.quiet = False
         self.scenario_deadline = None
         result = {"steps": [], "errors": [], "forced_native_fallback": False}
@@ -3654,6 +4169,14 @@ class _OwnedRun:
                 self.server.wait(timeout=5)
         if self.server_thread:
             self.server_thread.join(timeout=3)
+        if self.server_thread and self.server_thread.is_alive():
+            errors.append("server_log_reader_survives")
+        elif self.server and self.server.stdout:
+            attempt("server output close", self.server.stdout.close)
+        if self.server_capture_error:
+            errors.append("server_capture_failed: " + self.server_capture_error)
+        if self.server and not (self.evidence / "server.log").is_file():
+            errors.append("server_capture_missing")
         remaining = attempt("final census", self.census)
         if remaining:
             result["forced_native_fallback"] = True
@@ -3760,20 +4283,38 @@ class _OwnedRun:
         result["unrelated_process_identities_preserved"] = attempt(
             "unrelated process identities", baseline_unchanged
         )
-        for source in sorted((self.runtime / "data/logs").rglob("*")):
-            if source.is_file() and not source.is_symlink():
-                destination = (
-                    self.evidence / "owned-logs" / source.relative_to(self.runtime / "data/logs")
-                )
-                destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                destination.write_text(sanitize(source.read_text(errors="replace")))
-                destination.chmod(0o600)
+        captures = list(self._capture_owned_logs())
+        if self.stream_thread and self.stream_thread.is_alive():
+            errors.append("stream_reader_survives")
         errors.extend(sorted(self.census_errors))
         if self.contaminated:
             errors.append("quiet_contamination")
+        for root in self.bridge_roots:
+            canonical, _ = self._credential_path(root / "agent/auth.json")
+            owned_root = canonical.parent.parent
+            if (
+                not owned_root.is_relative_to(self.runtime)
+                and owned_root not in self._retired_trees
+            ):
+                errors.append("compact_runtime_removal_unproved: " + str(owned_root))
+        if (
+            not errors
+            and result["final_owned_census"] == []
+            and not result["forced_native_fallback"]
+        ):
+            write_json(self.evidence / "runtime-settlement.json", result, immutable=True)
+            captures.append(self.evidence / "runtime-settlement.json")
+            attempt(
+                "runtime removal",
+                lambda: self.runtime_owner.finish(external_settlement, tuple(captures)),
+            )
+        self.finalize_owned_credentials(errors)
+        result["runtime_removed"] = self.runtime_owner.removed is not None
+        errors.extend(error for error in self.runtime_owner.errors if error not in errors)
         write_json(self.evidence / "cleanup.json", result)
         passed = (
             not errors
+            and result["runtime_removed"]
             and result["final_owned_census"] == []
             and not result["forced_native_fallback"]
         )
@@ -3784,7 +4325,7 @@ class _OwnedRun:
             "exact_owned_absence" if passed else "cleanup_error",
         )
 
-    def qualify(self) -> CaseResult:
+    def qualify(self) -> _CaseDraft:
         required = ["launch", "kernel_seed", "selector_eligible"]
         if self.kind == "idle":
             required.append(f"{self.profile.name}_idle_negative")
@@ -3811,7 +4352,9 @@ class _OwnedRun:
             self.record_failure(exc, "case")
         finally:
             try:
-                cleanup = self.cleanup()
+                cleanup = self.cleanup(
+                    _ExternalSettlement(self.runtime_owner.allocation_id, "no_fixture", ())
+                )
             except FINALIZATION_ERRORS as exc:
                 credential_errors = []
                 observer_errors = []
@@ -3821,15 +4364,7 @@ class _OwnedRun:
                     observer_errors.append(
                         type(observer_error).__name__ + ": " + sanitize(str(observer_error))
                     )
-                self.remove_owned_credentials(credential_errors)
-                if self.session_id or (
-                    self.server and self.server.poll() is None and self.terminal
-                ):
-                    try:
-                        self.recover_owned_session()
-                    except FINALIZATION_ERRORS as auth_error:
-                        credential_errors.append(sanitize(str(auth_error)))
-                self.remove_owned_credentials(credential_errors)
+                self.finalize_owned_credentials(credential_errors)
                 write_json(
                     self.evidence / "cleanup-finalization.json",
                     {
@@ -3884,8 +4419,8 @@ class _OwnedRun:
         result = CaseResult(
             self.evidence / "result.json", tuple(required), tuple(self.observations), cleanup
         )
-        write_json(
-            result.receipt,
+        return _CaseDraft(
+            result,
             {
                 "profile": asdict(self.profile),
                 "kind": self.kind,
@@ -3894,34 +4429,68 @@ class _OwnedRun:
                 "required_claims": required,
                 "observations": [asdict(item) for item in result.observations],
                 "cleanup": asdict(cleanup),
-                "passed": result.passed,
                 "failure": failure,
             },
-            immutable=True,
-        )
-        artifacts = [
-            {
-                "path": str(path.relative_to(self.evidence)),
-                "sha256": sha256(path),
-                "bytes": path.stat().st_size,
-            }
-            for path in sorted(self.evidence.rglob("*"))
-            if path.is_file() and not path.is_symlink()
-        ]
-        write_json(
-            self.evidence / "manifest.json",
             {
                 "driver_sha256": sha256(Path(__file__)),
                 "owners": list(self.owners.values()),
                 "foreground_host": self.foreground_host_state(),
                 "api_pid": self.server.pid if self.server else None,
                 "receipt": result.receipt.name,
-                "artifacts": artifacts,
-                "passed": result.passed,
+            },
+        )
+
+
+def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) -> CaseResult:
+    evidence = Path(tempfile.mkdtemp(prefix=f"{profile.name}-{kind}-", dir=parent))
+    draft = None
+    runtime_owner = None
+    try:
+        evidence.chmod(0o700)
+        aggregate = parent / "manifest.json"
+        if aggregate.is_file():
+            progress = json.loads(aggregate.read_text())
+            write_json(
+                aggregate,
+                {
+                    **progress,
+                    "active_run": str(evidence),
+                    "exact_owners_progress": str(evidence / "progress.json"),
+                },
+            )
+        runtime_owner = _RuntimeOwner.allocate(request, evidence)
+        with runtime_owner:
+            run = _OwnedRun(request, profile, kind, runtime_owner)
+            draft = run.qualify()
+    except FINALIZATION_ERRORS as exc:
+        failure = sanitize(type(exc).__name__ + ": " + str(exc))
+        write_json(
+            evidence / "case-finalization.json",
+            {
+                "error": failure,
+                "runtime": runtime_owner.root if runtime_owner else None,
             },
             immutable=True,
         )
-        return result
+        cleanup = Observation("owned_cleanup", "FAILED", ("case-finalization.json",), failure)
+        if draft is None:
+            result = CaseResult(evidence / "result.json", ("case_finalization",), (), cleanup)
+            draft = _CaseDraft(result, {"failure": failure, "request": asdict(request)}, {})
+        else:
+            result = replace(
+                draft.result,
+                cleanup=cleanup,
+                observations=tuple(
+                    cleanup if item.claim == "owned_cleanup" else item
+                    for item in draft.result.observations
+                ),
+            )
+            draft = replace(
+                draft,
+                result=result,
+                payload={**draft.payload, "cleanup": asdict(cleanup), "failure": failure},
+            )
+    return _publish_case(draft)
 
 
 def as_role_tuple(root: SelectedRootIdentity) -> tuple[ProcessIdentity, ...]:
@@ -3943,18 +4512,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
     }
     results = []
     for profile, kind in cases[request.case]:
-        run = _OwnedRun(request, profile, kind, parent)
-        write_json(
-            parent / "manifest.json",
-            {
-                "status": "interrupted",
-                "request": asdict(request),
-                "runs": [str(item.receipt) for item in results],
-                "active_run": str(run.evidence),
-                "exact_owners_progress": str(run.evidence / "progress.json"),
-            },
-        )
-        result = run.qualify()
+        result = _run_case(request, profile, kind, parent)
         results.append(result)
         write_json(
             parent / "manifest.json",
@@ -3985,18 +4543,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
         )
     wrong = None
     if request.case == "waits" and request.expected_memory is None and len(results) == 4:
-        run = _OwnedRun(replace(request, expected_memory="WRONG"), RUNNER, "positive", parent)
-        write_json(
-            parent / "manifest.json",
-            {
-                "status": "interrupted",
-                "request": asdict(request),
-                "runs": [str(item.receipt) for item in results],
-                "active_run": str(run.evidence),
-                "exact_owners_progress": str(run.evidence / "progress.json"),
-            },
-        )
-        wrong = run.qualify()
+        wrong = _run_case(replace(request, expected_memory="WRONG"), RUNNER, "positive", parent)
         results.append(wrong)
     wrong_verified = False
     if wrong:
@@ -4022,6 +4569,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
         claims = {item.claim: item for item in wrong.observations}
         wrong_verified = (
             matched_deployments
+            and wrong.committed
             and all(result.passed for result in results[:4])
             and receipt["failure"] == "memory_read_mismatch"
             and not wrong.passed
@@ -4038,6 +4586,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
     passed = (
         matched_deployments
         and len(results) >= expected_count
+        and all(result.committed for result in results)
         and all(result.passed for result in results[:expected_count])
     )
     if request.case == "waits" and request.expected_memory is None:
@@ -4056,6 +4605,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
                     "receipt": str(result.receipt),
                     "sha256": sha256(result.receipt),
                     "manifest_sha256": sha256(result.receipt.parent / "manifest.json"),
+                    "completion_sha256": sha256(result.receipt.parent / "completion.json"),
                     "passed": result.passed,
                 }
                 for result in results
@@ -4105,6 +4655,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Change only the final memory verifier literal. "
         "WRONG must exit 1 at memory_read_mismatch.",
     )
+    parser.add_argument(
+        "--cooperative-cleanup",
+        action="store_true",
+        required=True,
+        help="Admit no hostile concurrent namespace writer during cleanup.",
+    )
     args = parser.parse_args(argv)
     for name in ("prime_path", "kernel_python", "auth_source", "evidence_parent"):
         if not getattr(args, name).is_absolute():
@@ -4117,6 +4673,7 @@ def main(argv: list[str] | None = None) -> int:
         args.evidence_parent,
         args.case,
         args.expected_memory,
+        args.cooperative_cleanup,
     )
     try:
         passed, _ = qualify(request)
