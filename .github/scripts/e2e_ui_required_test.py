@@ -238,18 +238,68 @@ class GateTest(unittest.TestCase):
     def test_workflow_nonweb_without_configuration(self):
         self.assert_result(0, NO_WEB, ["files", "count"])
 
-    def test_no_web_zero_multipage_and_current_filename(self):
+    def test_no_web_zero_multipage_and_unrelated_rename(self):
         for pages, count in [
             ([[]], 0),
             ([[file_entry("tests/e2e_ui/test.py")]], 1),
             ([[file_entry("docs/a.md")], [], [file_entry("docs/b.md")]], 2),
-            ([[file_entry("docs/moved.md", previous_filename="web/old.ts", status="renamed")]], 1),
+            (
+                [[file_entry("docs/moved.md", previous_filename="docs/old.md", status="renamed")]],
+                1,
+            ),
         ]:
             for direct in (False, True):
                 with self.subTest(pages=pages, direct=direct):
                     self.fixture["files"] = response(pages)
                     self.fixture["count"] = response({"changed_files": count})
                     self.assert_result(0, NO_WEB, ["files", "count"], direct=direct)
+
+    def test_renamed_web_paths_require_configuration_and_reach_judge(self):
+        for filename, previous in (
+            ("web/new.ts", "docs/old.ts"),
+            ("docs/new.ts", "web/old.ts"),
+            ("web/new.ts", "web/old.ts"),
+        ):
+            for direct in (False, True):
+                with self.subTest(filename=filename, previous=previous, direct=direct):
+                    self.env = {k: v for k, v in self.env.items() if k not in CONFIG}
+                    self.fixture["files"] = response(
+                        [[file_entry(filename, status="renamed", previous_filename=previous)]]
+                    )
+                    for key in CONFIG:
+                        self.assert_result(
+                            1, CONFIG_ERRORS[key], ["files", "count"], direct=direct
+                        )
+                        self.env[key] = CONFIG[key]
+                    calls = self.assert_result(
+                        0,
+                        "PASS: e2e_ui judge -> no test required. covered\n",
+                        ["files", "count", "title", "judge"],
+                        direct=direct,
+                    )
+                    self.assertEqual(
+                        calls[-1]["payload"]["messages"][1]["content"],
+                        "PR title: Fixture PR\n\nDiff (web/** and tests/e2e_ui/** only):\n\n"
+                        f"=== renamed {filename} (from {previous}) ===\n+change",
+                    )
+
+    def test_invalid_original_paths_block_before_classification(self):
+        entries = [file_entry("docs/new.ts", status="renamed")]
+        for status in ("renamed", "modified"):
+            entries.extend(
+                file_entry("docs/new.ts", status=status, previous_filename=previous)
+                for previous in (None, "", 1, True, [], {})
+            )
+        for entry in entries:
+            for pages in (
+                [[entry], [file_entry("docs/other.md")]],
+                [[file_entry("docs/other.md")], [entry]],
+            ):
+                for direct in (False, True):
+                    with self.subTest(entry=entry, pages=pages, direct=direct):
+                        self.fixture["files"] = response(pages)
+                        self.fixture["count"] = response({"changed_files": 2})
+                        self.assert_result(1, INVALID, ["files"], direct=direct)
 
     def test_later_page_web_and_configuration_inverse(self):
         self.fixture["files"] = response([[file_entry("docs/a")], [file_entry("web/a")]])
