@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import random
+import sys
 import threading
 import time
 import uuid
@@ -596,17 +597,27 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
     def migrate() -> None:
         config = _build_alembic_config(db_uri)
         with engine.connect() as connection:
-            if crdb_version is not None:
-                _prepare_crdb_schema_transaction(connection, crdb_version)
-                if crdb_version.major >= 24:
-                    # DDL and its Alembic revision must share a durable boundary.
-                    connection.execute(text("SET autocommit_before_ddl = false"))
-            config.attributes["connection"] = connection
-            command.upgrade(config, "head")
-            if crdb_version is not None:
-                if connection.in_transaction():
+            try:
+                if crdb_version is not None:
+                    _prepare_crdb_schema_transaction(connection, crdb_version)
+                    if crdb_version.major >= 24:
+                        # DDL and its Alembic revision must share a durable boundary.
+                        connection.execute(text("SET autocommit_before_ddl = false"))
+                config.attributes["connection"] = connection
+                command.upgrade(config, "head")
+                if crdb_version is not None and connection.in_transaction():
                     connection.commit()
-                _prepare_crdb_schema_transaction(connection, crdb_version)
+            finally:
+                if crdb_version is not None:
+                    migration_error = sys.exception()
+                    try:
+                        connection.rollback()
+                        _prepare_crdb_schema_transaction(connection, crdb_version)
+                    except BaseException as restoration_error:
+                        connection.invalidate(restoration_error)
+                        if migration_error is None:
+                            raise
+            if crdb_version is not None:
                 for base in (OmnigentBase, ConversationBase):
                     base.metadata.create_all(bind=connection, checkfirst=True)
                 connection.commit()
