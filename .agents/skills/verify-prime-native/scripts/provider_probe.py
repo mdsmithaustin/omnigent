@@ -897,6 +897,255 @@ def _public_reply_content(item: dict) -> None:
         raise RuntimeError("public_message_interrupted_malformed")
 
 
+_SEED_DIAGNOSTIC_ENUMS = {
+    "schema": ("native_seed_diagnostic_v1",),
+    "operation": ("kernel_seed", "unknown"),
+    "observation_scope": ("current_rejected_entry", "same_operation_events", "unavailable"),
+    "stop_reason": (
+        "stop",
+        "error",
+        "aborted",
+        "length",
+        "toolUse",
+        "missing",
+        "malformed",
+        "unknown",
+    ),
+    "diagnostic_origin": (
+        "provider_stream_failure",
+        "agent_lifecycle_failure",
+        "both",
+        "absent",
+        "malformed",
+        "unknown",
+    ),
+    "failure_kind": (
+        "refusal",
+        "safety",
+        "overloaded",
+        "rate_limit",
+        "server_error",
+        "auth",
+        "permission",
+        "invalid_request",
+        "malformed_response",
+        "unknown",
+        "unavailable",
+    ),
+    "http_status": (
+        "http_400",
+        "http_401",
+        "http_403",
+        "http_404",
+        "http_408",
+        "http_429",
+        "http_500",
+        "http_502",
+        "http_503",
+        "http_504",
+        "http_529",
+        "other",
+        "absent",
+        "malformed",
+        "unavailable",
+    ),
+    "error_code": (
+        "ENOENT",
+        "EACCES",
+        "EPERM",
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "other",
+        "absent",
+        "malformed",
+        "unavailable",
+    ),
+    "phase": (
+        "launch",
+        "kernel_start",
+        "runtime_bootstrap",
+        "model_setup",
+        "provider_stream",
+        "cell_execution",
+        "agent_lifecycle",
+        "unknown",
+    ),
+    "phase_evidence": (
+        "explicit_producer_flag",
+        "native_diagnostic_type",
+        "tool_status_only",
+        "helper_admission_only",
+        "unavailable",
+    ),
+    "kernel_ready": ("observed", "not_observed", "unavailable"),
+    "protocol_match": ("match", "mismatch", "unavailable"),
+    "bootstrap_done": ("ok", "error", "aborted", "unavailable"),
+    "ipython_call": ("observed", "not_observed", "unavailable"),
+    "ipython_done": ("ok", "error", "aborted", "starting", "absent", "malformed", "unavailable"),
+    "ipython_is_error": ("true", "false", "absent", "malformed", "unavailable"),
+}
+
+
+def _validate_seed_diagnostic(value: dict) -> dict:
+    booleans = {"error_present", "kernel_identity_receipt_present", "projection_complete"}
+    if (
+        type(value) is not dict
+        or not all(type(key) is str for key in value)
+        or set(value) != set(_SEED_DIAGNOSTIC_ENUMS) | booleans
+    ):
+        raise ValueError("native_seed_diagnostic_schema")
+    for field, allowed in _SEED_DIAGNOSTIC_ENUMS.items():
+        item = value[field]
+        if type(item) is not str or len(item) > 64 or item not in allowed:
+            raise ValueError("native_seed_diagnostic_enum")
+    if any(type(value[field]) is not bool for field in booleans):
+        raise ValueError("native_seed_diagnostic_boolean")
+    return value
+
+
+def _seed_diagnostic(diagnostics, tools: list[dict], called: bool, stop: str, error: bool) -> dict:
+    result = {
+        "schema": "native_seed_diagnostic_v1",
+        "operation": "unknown",
+        "observation_scope": "current_rejected_entry",
+        "stop_reason": stop,
+        "error_present": error,
+        "diagnostic_origin": "absent",
+        "failure_kind": "unavailable",
+        "http_status": "unavailable",
+        "error_code": "unavailable",
+        "phase": "unknown",
+        "phase_evidence": "unavailable",
+        "kernel_ready": "unavailable",
+        "protocol_match": "unavailable",
+        "bootstrap_done": "unavailable",
+        "ipython_call": "observed" if called else "not_observed",
+        "ipython_done": "unavailable",
+        "ipython_is_error": "unavailable",
+        "kernel_identity_receipt_present": False,
+        "projection_complete": False,
+    }
+    known = {"provider_stream_failure", "agent_lifecycle_failure"}
+    if diagnostics is not None:
+        if type(diagnostics) is not list or len(diagnostics) > 16:
+            result["diagnostic_origin"] = "malformed"
+        elif diagnostics:
+            origins = []
+            for diagnostic in diagnostics:
+                origin = diagnostic.get("type") if type(diagnostic) is dict else None
+                origins.append(
+                    "malformed"
+                    if type(diagnostic) is not dict or type(origin) is not str
+                    else origin
+                    if len(origin) <= 64 and origin in known
+                    else "unknown"
+                )
+            result["diagnostic_origin"] = (
+                "both" if set(origins) == known else origins[0] if len(origins) == 1 else "unknown"
+            )
+            if len(diagnostics) == 1 and origins[0] in known:
+                diagnostic = diagnostics[0]
+                result["phase"] = (
+                    "provider_stream"
+                    if origins[0] == "provider_stream_failure"
+                    else "agent_lifecycle"
+                )
+                result["phase_evidence"] = "native_diagnostic_type"
+                details = diagnostic.get("details")
+                if type(details) is dict:
+                    kind = details.get("kind")
+                    result["failure_kind"] = (
+                        kind
+                        if type(kind) is str
+                        and len(kind) <= 64
+                        and kind in _SEED_DIAGNOSTIC_ENUMS["failure_kind"][:-1]
+                        else "unknown"
+                    )
+                    status = details.get("status")
+                    result["http_status"] = (
+                        "absent"
+                        if status is None
+                        else "malformed"
+                        if type(status) is not int
+                        else f"http_{status}"
+                        if status in (400, 401, 403, 404, 408, 429, 500, 502, 503, 504, 529)
+                        else "other"
+                    )
+                elif details is not None:
+                    result["failure_kind"] = "unknown"
+                    result["http_status"] = "malformed"
+                error_info = diagnostic.get("error")
+                if type(error_info) is dict:
+                    code = error_info.get("code")
+                    result["error_code"] = (
+                        "absent"
+                        if code is None
+                        else "malformed"
+                        if type(code) not in (str, int)
+                        else code
+                        if type(code) is str
+                        and code
+                        in ("ENOENT", "EACCES", "EPERM", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT")
+                        else "other"
+                    )
+                elif error_info is not None:
+                    result["error_code"] = "malformed"
+                else:
+                    result["error_code"] = "absent"
+    if called:
+        result["observation_scope"] = "same_operation_events"
+        if result["phase_evidence"] == "unavailable":
+            result["phase_evidence"] = "tool_status_only"
+        if not tools:
+            result["ipython_done"] = "absent"
+            result["ipython_is_error"] = "absent"
+        elif len(tools) == 1 and type(tools[0]) is dict:
+            details = tools[0].get("details")
+            status = details.get("status") if type(details) is dict else None
+            result["ipython_done"] = (
+                "malformed"
+                if details is not None and type(details) is not dict
+                else "absent"
+                if status is None
+                else status
+                if type(status) is str and status in ("ok", "error", "aborted", "starting")
+                else "malformed"
+            )
+            is_error = tools[0].get("isError")
+            result["ipython_is_error"] = (
+                "absent"
+                if is_error is None
+                else "malformed"
+                if type(is_error) is not bool
+                else "true"
+                if is_error
+                else "false"
+            )
+        else:
+            result["ipython_done"] = "malformed"
+            result["ipython_is_error"] = "malformed"
+    return _validate_seed_diagnostic(result)
+
+
+@dataclass
+class _RetirementAttempt:
+    allocation_id: str
+    session_id: str | None
+    schema: str = "native_retirement_attempt_v1"
+    root_identity: tuple[int, int] | None = None
+    parent_identity: tuple[int, int] | None = None
+    external_root: bool | None = None
+    delete_step: int | None = None
+    http_status: int | None = None
+    phase: str = "admission"
+    branch: str = "unobserved"
+    held_root_matches: bool | None = None
+    held_parent_matches: bool | None = None
+    name_state: str = "unobserved"
+    event_flags: int | None = None
+
+
 @dataclass(frozen=True)
 class _NativeFailureObservation:
     version: int
@@ -914,10 +1163,19 @@ class _NativeFailureObservation:
     error_present: bool
     error_class: str
     classification_input_truncated: bool
+    diagnostic: dict
 
 
 class _NativeReplyFailure(RuntimeError):
-    def __init__(self, operation: _ReplyOperation, entries: list[dict], user: int, final: int):
+    def __init__(
+        self,
+        operation: _ReplyOperation,
+        entries: list[dict],
+        user: int,
+        final: int,
+        calls: dict,
+        results: dict,
+    ):
         super().__init__("native_assistant_not_successful")
         message = entries[final]["message"]
         reason = message.get("stopReason")
@@ -975,6 +1233,20 @@ class _NativeReplyFailure(RuntimeError):
             not absent,
             category,
             truncated,
+            _seed_diagnostic(
+                message.get("diagnostics"),
+                [
+                    results[key]["message"]
+                    for key, (index, _, call) in calls.items()
+                    if user < index < final and call["name"] == "ipython" and key in results
+                ],
+                any(
+                    user < index < final and call["name"] == "ipython"
+                    for index, _, call in calls.values()
+                ),
+                stop,
+                not absent,
+            ),
         )
 
 
@@ -1059,7 +1331,7 @@ def _reply_verdict(
             if users and index > users[0]:
                 finals.append(entry)
                 if message.get("stopReason") != "stop" or message.get("errorMessage"):
-                    raise _NativeReplyFailure(operation, entries, users[0], index)
+                    raise _NativeReplyFailure(operation, entries, users[0], index, calls, results)
                 if assistant_text(message).strip() != operation.literal:
                     raise RuntimeError("native_assistant_literal_mismatch")
         if role == "assistant" and _reply_text(message):
@@ -2782,6 +3054,12 @@ class _OwnedRun:
                     }
                     else "unknown"
                 )
+                observation["diagnostic"]["operation"] = (
+                    "kernel_seed" if name == "kernel-seed" else "unknown"
+                )
+                observation["diagnostic"]["kernel_identity_receipt_present"] = (
+                    self.evidence / "kernel-identity.json"
+                ).is_file()
                 observation["reason"] = "native_assistant_not_successful"
                 write_json(self.evidence / f"{name}-native-failure.json", observation)
                 predicates = {**predicates, "observation_state": "previous_poll"}
@@ -3998,138 +4276,251 @@ class _OwnedRun:
             bridge._DATA_ROOT = previous
         return removed
 
-    def _delete_owned_session(self, result: dict) -> None:
-        errors = result["errors"]
-        prior_errors = len(errors)
-        self.remove_owned_credentials(errors)
-        if len(errors) != prior_errors or any(
-            "remove credential copy:" in error for error in errors
+    def _delete_owned_session(self, result: dict, *, unavailable: bool = False) -> None:
+        session = self.session_id
+        if type(session) is not str or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", session
         ):
-            raise RuntimeError("owned_tree_credential_cleanup_failed")
-        if sys.platform != "darwin" or os.uname().machine != "arm64":
-            raise RuntimeError("owned_tree_deletion_platform_unqualified")
-        targets = tuple(self.credential_targets)
-        roots = {}
-        for path in sorted(self.bridge_roots):
-            canonical, _ = self._credential_path(path / "agent" / "auth.json")
-            target = self.credential_targets[canonical]
-            root = canonical.parent.parent
-            if self.request.auth_source.resolve().is_relative_to(root):
-                raise RuntimeError("owned_tree_contains_original_source")
-            if root in self._retired_trees:
-                self.credential_directory(canonical)
-            else:
-                roots[root] = target
-        with ExitStack() as handles:
-            queue = select.kqueue()
-            handles.callback(queue.close)
-            pins = {}
-            flags = select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME | select.KQ_NOTE_REVOKE
-            for root, target in roots.items():
-                if any(
-                    not member.copy_absence_required
-                    for member in self.credential_targets.values()
-                    if member.path.is_relative_to(root)
-                ):
-                    raise RuntimeError("owned_tree_copy_absence_unproved")
-                parent = _open_witnessed_directory(target, root.parent)
-                if parent is None:
-                    raise RuntimeError("owned_credential_directory_missing")
-                handles.callback(os.close, parent)
-                descriptor = _open_witnessed_directory(target, root)
-                if descriptor is None:
-                    raise RuntimeError("owned_credential_directory_missing")
-                handles.callback(os.close, descriptor)
-                pins[root] = (parent, descriptor)
-                queue.control(
-                    [
-                        select.kevent(
-                            descriptor,
-                            filter=select.KQ_FILTER_VNODE,
-                            flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
-                            fflags=flags,
-                        )
-                    ],
-                    0,
-                    0,
+            session = None
+        current = _RetirementAttempt(self.runtime_owner.allocation_id, session)
+        attempts = [current]
+        observations = {}
+        try:
+            if self.session_id and session is None:
+                raise RuntimeError("owned_tree_session_identity_invalid")
+            if not self.session_id:
+                current.branch = "no_session"
+                return
+            if unavailable:
+                current.branch = "api_unavailable"
+                raise RuntimeError("owned_API_not_alive_for_public_cleanup")
+            if len(self.bridge_roots) > 64:
+                current.branch = "root_limit"
+                raise RuntimeError("owned_tree_retirement_root_limit")
+            errors = result["errors"]
+            prior_errors = len(errors)
+            self.remove_owned_credentials(errors)
+            if len(errors) != prior_errors or any(
+                "remove credential copy:" in error for error in errors
+            ):
+                raise RuntimeError("owned_tree_credential_cleanup_failed")
+            if sys.platform != "darwin" or os.uname().machine != "arm64":
+                raise RuntimeError("owned_tree_deletion_platform_unqualified")
+            targets = tuple(self.credential_targets)
+            roots = {}
+            for path in sorted(self.bridge_roots):
+                canonical, _ = self._credential_path(path / "agent" / "auth.json")
+                target = self.credential_targets[canonical]
+                root = canonical.parent.parent
+                current = _RetirementAttempt(
+                    self.runtime_owner.allocation_id,
+                    session,
+                    root_identity=target.directories[root],
+                    parent_identity=target.directories[root.parent],
+                    external_root=not root.is_relative_to(self.runtime),
                 )
-            if queue.control([], max(1, len(pins)), 0):
-                raise RuntimeError("owned_tree_event_before_delete")
-            for target in roots.values():
-                checked = self.credential_directory(target.path)
-                if checked is None:
-                    raise RuntimeError("owned_credential_directory_missing")
-                try:
-                    try:
-                        os.stat(target.path.name, dir_fd=checked, follow_symlinks=False)
-                    except FileNotFoundError:
-                        pass
-                    else:
-                        raise RuntimeError("owned_credential_copy_recreated")
-                finally:
-                    os.close(checked)
-            response = self.request_http("DELETE", f"/v1/sessions/{self.session_id}", timeout=60)
-            step = len(result["steps"])
-            result["steps"].append(
-                {"delete_session": self.session_id, "status": response.status_code}
-            )
-            response.raise_for_status()
-            if tuple(self.credential_targets) != targets:
-                raise RuntimeError("owned_tree_admission_changed_during_delete")
-            events = {}
-            for event in queue.control([], max(1, len(pins)), 0):
-                if (
-                    event.ident not in {descriptor for _, descriptor in pins.values()}
-                    or event.filter != select.KQ_FILTER_VNODE
-                    or event.flags & ~(select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR)
-                    or event.fflags & (select.KQ_NOTE_RENAME | select.KQ_NOTE_REVOKE)
-                    or event.fflags
-                    & ~(
-                        flags
-                        | select.KQ_NOTE_WRITE
-                        | select.KQ_NOTE_EXTEND
-                        | select.KQ_NOTE_ATTRIB
-                        | select.KQ_NOTE_LINK
+                attempts.append(current)
+                observations[root] = current
+                if self.request.auth_source.resolve().is_relative_to(root):
+                    raise RuntimeError("owned_tree_contains_original_source")
+                if root in self._retired_trees:
+                    self.credential_directory(canonical)
+                    current.branch = "previously_retired"
+                else:
+                    roots[root] = target
+            with ExitStack() as handles:
+                queue = select.kqueue()
+                handles.callback(queue.close)
+                pins = {}
+                flags = select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME | select.KQ_NOTE_REVOKE
+                for root, target in roots.items():
+                    current = observations[root]
+                    current.phase = "watch_admission"
+                    if any(
+                        not member.copy_absence_required
+                        for member in self.credential_targets.values()
+                        if member.path.is_relative_to(root)
+                    ):
+                        raise RuntimeError("owned_tree_copy_absence_unproved")
+                    parent = _open_witnessed_directory(target, root.parent)
+                    if parent is None:
+                        raise RuntimeError("owned_credential_directory_missing")
+                    handles.callback(os.close, parent)
+                    descriptor = _open_witnessed_directory(target, root)
+                    if descriptor is None:
+                        raise RuntimeError("owned_credential_directory_missing")
+                    handles.callback(os.close, descriptor)
+                    pins[root] = (parent, descriptor)
+                    queue.control(
+                        [
+                            select.kevent(
+                                descriptor,
+                                filter=select.KQ_FILTER_VNODE,
+                                flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
+                                fflags=flags,
+                            )
+                        ],
+                        0,
+                        0,
                     )
-                    or event.data != 0
-                    or event.ident in events
-                ):
-                    raise RuntimeError("owned_tree_deletion_event_invalid")
-                events[event.ident] = event.fflags
-            for root, target in roots.items():
-                parent, descriptor = pins[root]
-                checked = _open_witnessed_directory(target, root.parent)
-                if checked is None:
-                    raise RuntimeError("owned_credential_directory_missing")
-                try:
-                    for fd, name in ((parent, root.parent), (descriptor, root)):
-                        metadata = os.fstat(fd)
-                        if (metadata.st_dev, metadata.st_ino) != target.directories[name]:
-                            raise RuntimeError("owned_credential_directory_replaced")
+                if queue.control([], max(1, len(pins)), 0):
+                    raise RuntimeError("owned_tree_event_before_delete")
+                for target in roots.values():
+                    checked = self.credential_directory(target.path)
+                    if checked is None:
+                        raise RuntimeError("owned_credential_directory_missing")
                     try:
-                        metadata = os.stat(root.name, dir_fd=checked, follow_symlinks=False)
-                    except FileNotFoundError:
-                        if not events.get(descriptor, 0) & select.KQ_NOTE_DELETE:
-                            raise RuntimeError("owned_tree_deletion_event_missing") from None
-                        receipt = _RetiredOwnedTree(
-                            root,
-                            target.directories[root],
-                            target.directories[root.parent],
-                            self.session_id,
-                            step,
-                            response.status_code,
-                            events[descriptor],
+                        try:
+                            os.stat(target.path.name, dir_fd=checked, follow_symlinks=False)
+                        except FileNotFoundError:
+                            pass
+                        else:
+                            raise RuntimeError("owned_credential_copy_recreated")
+                    finally:
+                        os.close(checked)
+                for observation in attempts:
+                    observation.phase = "delete_request"
+                    observation.delete_step = len(result["steps"])
+                response = self.request_http(
+                    "DELETE", f"/v1/sessions/{self.session_id}", timeout=60
+                )
+                for observation in attempts:
+                    observation.http_status = response.status_code
+                    observation.phase = "delete_response"
+                step = len(result["steps"])
+                result["steps"].append(
+                    {"delete_session": self.session_id, "status": response.status_code}
+                )
+                response.raise_for_status()
+                if tuple(self.credential_targets) != targets:
+                    raise RuntimeError("owned_tree_admission_changed_during_delete")
+                for observation in attempts:
+                    observation.phase = "event_validation"
+                events = {}
+                for event in queue.control([], max(1, len(pins)), 0):
+                    if (
+                        event.ident not in {descriptor for _, descriptor in pins.values()}
+                        or event.filter != select.KQ_FILTER_VNODE
+                        or event.flags
+                        & ~(select.KQ_EV_ADD | select.KQ_EV_ENABLE | select.KQ_EV_CLEAR)
+                        or event.fflags & (select.KQ_NOTE_RENAME | select.KQ_NOTE_REVOKE)
+                        or event.fflags
+                        & ~(
+                            flags
+                            | select.KQ_NOTE_WRITE
+                            | select.KQ_NOTE_EXTEND
+                            | select.KQ_NOTE_ATTRIB
+                            | select.KQ_NOTE_LINK
                         )
-                        result.setdefault("retired_owned_trees", []).append(asdict(receipt))
-                        self._retired_trees[root] = receipt
-                    else:
-                        if (metadata.st_dev, metadata.st_ino) != target.directories[root]:
-                            raise RuntimeError("owned_credential_directory_replaced")
-                        if events.get(descriptor, 0) & select.KQ_NOTE_DELETE:
-                            raise RuntimeError("owned_credential_root_recreated")
-                        self.register_owned_credential(target.path)
-                finally:
-                    os.close(checked)
+                        or event.data != 0
+                        or event.ident in events
+                    ):
+                        raise RuntimeError("owned_tree_deletion_event_invalid")
+                    events[event.ident] = event.fflags
+                for root, target in roots.items():
+                    current = observations[root]
+                    current.phase = "identity_validation"
+                    parent, descriptor = pins[root]
+                    current.event_flags = events.get(descriptor, 0)
+                    checked = _open_witnessed_directory(target, root.parent)
+                    if checked is None:
+                        raise RuntimeError("owned_credential_directory_missing")
+                    try:
+                        for fd, name in ((parent, root.parent), (descriptor, root)):
+                            metadata = os.fstat(fd)
+                            matches = (metadata.st_dev, metadata.st_ino) == target.directories[
+                                name
+                            ]
+                            if name == root:
+                                current.held_root_matches = matches
+                            else:
+                                current.held_parent_matches = matches
+                            if not matches:
+                                raise RuntimeError("owned_credential_directory_replaced")
+                        current.phase = "name_observation"
+                        try:
+                            metadata = os.stat(root.name, dir_fd=checked, follow_symlinks=False)
+                        except FileNotFoundError:
+                            current.name_state = "absent"
+                            if not events.get(descriptor, 0) & select.KQ_NOTE_DELETE:
+                                raise RuntimeError("owned_tree_deletion_event_missing") from None
+                            receipt = _RetiredOwnedTree(
+                                root,
+                                target.directories[root],
+                                target.directories[root.parent],
+                                self.session_id,
+                                step,
+                                response.status_code,
+                                events[descriptor],
+                            )
+                            result.setdefault("retired_owned_trees", []).append(asdict(receipt))
+                            self._retired_trees[root] = receipt
+                            current.phase = "complete"
+                            current.branch = "retired"
+                        else:
+                            current.name_state = (
+                                "original"
+                                if (metadata.st_dev, metadata.st_ino) == target.directories[root]
+                                else "replaced"
+                            )
+                            if current.name_state == "replaced":
+                                raise RuntimeError("owned_credential_directory_replaced")
+                            if events.get(descriptor, 0) & select.KQ_NOTE_DELETE:
+                                raise RuntimeError("owned_credential_root_recreated")
+                            self.register_owned_credential(target.path)
+                            credential = self.credential_directory(target.path)
+                            if credential is None:
+                                raise RuntimeError("owned_credential_directory_missing")
+                            try:
+                                try:
+                                    os.stat(
+                                        target.path.name, dir_fd=credential, follow_symlinks=False
+                                    )
+                                except FileNotFoundError:
+                                    pass
+                                else:
+                                    raise RuntimeError("owned_credential_copy_recreated")
+                            finally:
+                                os.close(credential)
+                            current.phase = "complete"
+                            current.branch = "retained_original"
+                    finally:
+                        os.close(checked)
+        except FINALIZATION_ERRORS as exc:
+            reason = exc.args[0] if type(exc) is RuntimeError and exc.args else None
+            branch = (
+                reason
+                if type(reason) is str
+                and reason
+                in {
+                    "owned_API_not_alive_for_public_cleanup",
+                    "owned_credential_copy_recreated",
+                    "owned_credential_directory_missing",
+                    "owned_credential_directory_replaced",
+                    "owned_credential_root_recreated",
+                    "owned_tree_admission_changed_during_delete",
+                    "owned_tree_contains_original_source",
+                    "owned_tree_copy_absence_unproved",
+                    "owned_tree_credential_cleanup_failed",
+                    "owned_tree_deletion_event_invalid",
+                    "owned_tree_deletion_event_missing",
+                    "owned_tree_deletion_platform_unqualified",
+                    "owned_tree_event_before_delete",
+                    "owned_tree_retirement_root_limit",
+                    "owned_tree_session_identity_invalid",
+                }
+                else "unclassified_failure"
+            )
+            if isinstance(exc, httpx.HTTPStatusError):
+                branch = "delete_http_error"
+            elif isinstance(exc, httpx.RequestError):
+                branch = "delete_transport_error"
+            current.branch = branch
+            raise
+        finally:
+            records = [asdict(item) for item in (attempts[1:] or attempts)]
+            result["retirement_attempts"] = records
+            write_json(self.evidence / "retirement-attempts.json", records)
 
     def _capture_owned_logs(self) -> tuple[Path, ...]:
         owner = self.runtime_owner
@@ -4314,14 +4705,18 @@ class _OwnedRun:
                 response.raise_for_status()
                 raise RuntimeError(f"public_stop_unexpected_status {response.status_code}")
 
-        def delete_session() -> None:
+        def delete_session() -> bool:
             self._delete_owned_session(result)
+            return True
 
         if self.session_id and self.server and self.server.poll() is None:
-            attempt("public stop_session", stop_session)
-            attempt("public DELETE", delete_session)
-        elif self.session_id:
-            errors.append("owned_API_not_alive_for_public_cleanup")
+            if not attempt("public DELETE", delete_session):
+                attempt("public stop_session", stop_session)
+        else:
+            attempt(
+                "public DELETE unavailable",
+                lambda: self._delete_owned_session(result, unavailable=True),
+            )
         if self.terminal:
             attachment = attempt("close attachment", self.close_attachment)
             if attachment:
