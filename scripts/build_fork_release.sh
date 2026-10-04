@@ -39,7 +39,7 @@ from scripts.fork_release import inventory_ui, write_json
 write_json(Path(sys.argv[1]) / "evidence/ui-inventory.json", inventory_ui(Path("omnigent/server/static/web-ui")))
 PY
 export OMNIGENT_SKIP_WEB_UI=true
-uv build --out-dir "$output/dist"
+uv build --no-create-gitignore --out-dir "$output/dist"
 uv run --no-project --with build python scripts/build_subpackages.py --out-dir "$output/dist" omnigent-client omnigent-ui-sdk omnigent-slack
 uvx twine check "$output"/dist/*
 python - "$output" "$version" <<'PY'

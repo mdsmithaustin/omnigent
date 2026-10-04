@@ -126,6 +126,8 @@ jobs:
           python-version-file: .python-version
       - uses: ./.github/actions/setup-uv
       - uses: ./.github/actions/setup-pnpm
+        with:
+          cache: ''
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
@@ -204,6 +206,8 @@ jobs:
           python-version-file: .python-version
       - uses: ./.github/actions/setup-uv
       - uses: ./.github/actions/setup-pnpm
+        with:
+          cache: ''
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
