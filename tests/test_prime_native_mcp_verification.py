@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -62,6 +63,20 @@ def run(probe, tmp_path):
 
 
 def test_real_fixture_generations_settle_before_scratch_removal(probe, run):
+    producer = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from omnigent.cli_diagnostics import setup_cli_logging; "
+            "import logging; setup_cli_logging(['synthetic-mcp']); logging.shutdown()",
+        ],
+        env={**os.environ, "OMNIGENT_DATA_DIR": str(run.runtime / "data")},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert producer.returncode == 0, producer.stderr
+    assert (run.runtime / "data/logs/cli/latest-cli.log").is_symlink()
     first = run.fixture.start(1)
     assert first.process.poll() is None
     assert run.fixture.refused() is False
@@ -87,6 +102,10 @@ def test_real_fixture_generations_settle_before_scratch_removal(probe, run):
     assert cleanup.status == "VERIFIED"
     assert run.runtime_owner.removed is not None
     assert run.runtime.exists() is False
+    alias = json.loads((run.evidence / "runtime-cli-alias-remove.json").read_text())
+    assert alias["action"] == "unlink_alias"
+    assert alias["allocation_id"] == settlement.allocation_id
+    assert not (run.evidence / "owned-logs/cli/latest-cli.log").exists()
     errors = []
     run.finalize_owned_credentials(errors)
     assert errors == []
@@ -572,3 +591,110 @@ def test_live_generation_cannot_be_restarted_before_stop(probe, run):
     assert run.fixture.refused() is True
     assert run.cleanup(settlement).status == "FAILED"
     assert run.runtime.is_dir()
+
+
+@pytest.mark.parametrize(
+    "stale_pin",
+    ["0" * 64, "a4ac20a5c467e8b867d281759b2c193dd0b6d659cc6cd87fc3a8d2f62fba36ed"],
+    ids=["unknown", "previous-provider"],
+)
+def test_mcp_rejects_stale_owner_before_allocation(probe, tmp_path, monkeypatch, stale_pin):
+    req = request(probe, tmp_path)
+    allocations = []
+    monkeypatch.setattr(probe, "OWNER_SHA256", stale_pin)
+    monkeypatch.setattr(
+        probe.owner._RuntimeOwner, "allocate", lambda *args: allocations.append(args)
+    )
+    passed, receipt = probe.qualify(req)
+    assert passed is False
+    assert allocations == []
+    assert "mcp_provider_owner_not_admitted" in receipt.read_text()
+    assert json.loads((receipt.parent / "completion.json").read_text())["passed"] is False
+
+
+def test_mcp_current_owner_pin_reaches_provider_boundary(probe, run, monkeypatch):
+    def stop_at_provider(subject):
+        raise RuntimeError("synthetic_provider_boundary")
+
+    monkeypatch.setattr(probe.owner._OwnedRun, "preflight", stop_at_provider)
+    with pytest.raises(RuntimeError, match="synthetic_provider_boundary"):
+        run.preflight()
+
+
+@pytest.mark.parametrize("poll_pass", [1, 2])
+@pytest.mark.parametrize(
+    "error,expected_class",
+    [
+        ("connection refused SYNTHETIC_SECRET", "transport"),
+        ([], "malformed"),
+        ({}, "malformed"),
+        (False, "malformed"),
+        (0, "malformed"),
+    ],
+    ids=["transport", "empty-list", "empty-dict", "false", "zero"],
+)
+def test_mcp_completed_reply_retains_native_failure(probe, run, poll_pass, error, expected_class):
+    import time
+
+    header = {"id": "session", "type": "session"}
+    entries = [
+        header,
+        {
+            "id": "user",
+            "type": "message",
+            "parentId": None,
+            "message": {"role": "user", "content": "PROMPT"},
+        },
+        {
+            "id": "final",
+            "type": "message",
+            "parentId": "user",
+            "message": {
+                "role": "assistant",
+                "stopReason": "error",
+                "errorMessage": error,
+                "content": [{"type": "text", "text": ""}],
+            },
+        },
+    ]
+    run.session_id, run.external_id = "conversation", "session"
+    run.journal_path = run.runtime / "synthetic-journal"
+    pages = iter([entries[:2], entries] if poll_pass == 2 else [entries])
+    run.journal = lambda: next(pages)
+    run.items = lambda **kwargs: []
+    run.snapshot = lambda **kwargs: {"status": "idle"}
+    operation = probe.owner._ReplyOperation(
+        "PROMPT",
+        "REPLY",
+        None,
+        time.monotonic() + 5,
+        probe.owner._reply_rows([header]),
+        (),
+        ("session",),
+        (),
+        run.journal_path,
+        "conversation",
+        "session",
+        ("session",),
+        None,
+    )
+    with pytest.raises(RuntimeError, match=r"^native_assistant_not_successful$"):
+        run.completed_reply(operation, "outage")
+    text = (run.evidence / "outage-native-failure.json").read_text()
+    assert "SYNTHETIC_SECRET" not in text
+    observation = json.loads(text)
+    assert observation["error_class"] == expected_class
+    assert observation["error_present"] is True
+    assert observation["operation"] == "outage"
+    assert observation["native_reply_id"] == "final"
+    assert observation["native_final_position"] == 2
+    assert observation["native_user_id"] == "user"
+    assert observation["native_user_position"] == 1
+    assert observation["session_id"] == "conversation"
+    assert observation["native_session_id"] == "session"
+    assert observation["baseline_count"] == 1
+    assert observation["public_baseline_count"] == 0
+    assert observation["reason"] == "native_assistant_not_successful"
+    predicates = json.loads((run.evidence / "outage-native-predicates.json").read_text())
+    assert predicates["observation_state"] == "previous_poll"
+    run.session_id = None

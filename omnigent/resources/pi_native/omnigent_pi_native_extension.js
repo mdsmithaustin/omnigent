@@ -1865,7 +1865,9 @@ module.exports = function (pi) {
         additionalProperties: false,
       },
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        if (!admitsContext(ctx)) return unavailableTool();
+        if (!admitsContext(ctx)) {
+          throw new Error(textFromContent(unavailableTool().content));
+        }
         if (params && params.operation === "read") {
           return {
             content: [
