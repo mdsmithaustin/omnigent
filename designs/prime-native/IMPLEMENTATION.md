@@ -1,5 +1,7 @@
 # Prime-native implementation plan
 
+**Historical proposal.** The active [no-fork design](NO_FORK.md) supersedes this document. The Prime fork, Prime-side bridge, global controller promise, and P1-Prime sequence below are historical proposal context. Do not execute this plan or treat its capabilities as qualified.
+
 Build a first-class `prime-native` route for operators who need Prime roots and declared Omnigent roles to keep their own identities and policy bindings. The program enforces a Prime-owned worker with a versioned bridge, a distinct Omnigent native contribution, and optional Kit delivery. P1-Prime runs in a future Prime repository. P1-Omni and P2 form one Omnigent fork stack. P3 and P4 form one Kit stack. Cross-repository dependencies use exact merged revisions, never a shared GitHub PR stack. The reviewed snapshots are Omnigent `7752eef36d1c2a1148a42dd3afccc16c3b08bcbd`, Prime `2d24ad4e6b2d1ee8e6919af6f108e980a14d550e`, and Kit `c8cdf6c2180acf47a79c64730a7ca3c686b114aa`. These pins are proposal inputs, not qualified releases.
 
 ## How to read this

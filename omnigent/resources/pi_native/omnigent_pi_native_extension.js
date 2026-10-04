@@ -1058,11 +1058,11 @@ async function postModelChangeError(config, message) {
   });
 }
 
-function modelReference(model) {
+function modelReference(model, primeNative = false) {
   const modelId = model && typeof model.id === "string" ? model.id : "";
   if (!modelId) return "";
   const provider = model && typeof model.provider === "string" ? model.provider : "";
-  if (hasInferenceBinding() && inferenceProviderIds.has(provider)) return modelId;
+  if (!primeNative && hasInferenceBinding() && inferenceProviderIds.has(provider)) return modelId;
   return provider ? `${provider}/${modelId}` : modelId;
 }
 
@@ -1091,7 +1091,7 @@ async function postModelOptions(config, ctx) {
   try {
     if (typeof registry.getAvailable === "function") {
       models = registry.getAvailable();
-    } else if (typeof registry.getAll === "function") {
+    } else if (!config?.primeControlsDir && typeof registry.getAll === "function") {
       models = registry.getAll();
     } else {
       return;
@@ -1099,20 +1099,20 @@ async function postModelOptions(config, ctx) {
   } catch (_err) {
     return;
   }
-  if (!Array.isArray(models) || models.length === 0) return;
+  if (!Array.isArray(models) || (models.length === 0 && !config?.primeControlsDir)) return;
   const options = [];
   const seen = new Set();
   for (const model of models) {
-    if (hasInferenceBinding() && (!model || !inferenceProviderIds.has(model.provider))) continue;
+    if (!config?.primeControlsDir && hasInferenceBinding() && (!model || !inferenceProviderIds.has(model.provider))) continue;
     const modelId = model && typeof model.id === "string" ? model.id : "";
-    const id = modelReference(model);
+    const id = modelReference(model, Boolean(config?.primeControlsDir));
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const name =
       model && typeof model.name === "string" && model.name ? model.name : modelId;
     options.push({ id, model: id, displayName: name });
   }
-  if (options.length === 0) return;
+  if (options.length === 0 && !config?.primeControlsDir) return;
   await postEvent(config, {
     type: "external_model_options",
     data: { models: options },
@@ -1127,6 +1127,7 @@ function startInboxPoller(
   handleModelChange,
   handleThinkingLevelChange,
   isTurnActive,
+  isAdmitted = () => true,
 ) {
   if (!config || !config.inboxDir || pi.__omnigentInboxPoller) return;
   // Bound the dedup set (FIFO eviction) — delivered files are unlinked, so a
@@ -1142,6 +1143,7 @@ function startInboxPoller(
   const deliverAttempts = new Map();
   const MAX_DELIVER_ATTEMPTS = 5;
   pi.__omnigentInboxPoller = setInterval(() => {
+    if (!isAdmitted()) return;
     let files = [];
     try {
       files = fs
@@ -1231,6 +1233,10 @@ function startInboxPoller(
         }
         deliverAttempts.delete(id ?? fullPath);
       }
+      if (config.primeControlsDir && payload.type !== "user_message") {
+        try { fs.unlinkSync(fullPath); } catch (_error) {}
+        continue;
+      }
       if (payload.type === "interrupt") {
         // An interrupt is point-in-time: make one delivery attempt, then
         // always consume the file (below). If there is no live turn to abort
@@ -1287,9 +1293,364 @@ function startInboxPoller(
   }, 250);
 }
 
+function startPrimeControls(
+  pi,
+  config,
+  getContext,
+  getActivePrimeLoop,
+  observeStatus,
+  isAdmitted,
+) {
+  if (pi.__omnigentPrimeControls) return pi.__omnigentPrimeControls;
+  const root = config.primeControlsDir;
+  const requests = path.join(root, "requests");
+  const results = path.join(root, "results");
+  fs.mkdirSync(requests, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(results, { recursive: true, mode: 0o700 });
+  const incarnation = crypto.randomUUID();
+  const bindingFile = path.join(root, "binding.json");
+  let stopped = false;
+  let settings = Promise.resolve();
+  let publications = Promise.resolve();
+  let activeAttempt = null;
+  let cancelPublication = null;
+  const atomicWrite = (file, data) => {
+    const temporary = `${file}.${incarnation}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(data), { mode: 0o600 });
+    fs.renameSync(temporary, file);
+  };
+  const ownsBinding = () => {
+    if (stopped) return false;
+    try {
+      return JSON.parse(fs.readFileSync(bindingFile, "utf8")).incarnation === incarnation;
+    } catch (_error) {
+      return false;
+    }
+  };
+  const heartbeat = () =>
+    atomicWrite(bindingFile, {
+      incarnation,
+      pid: process.pid,
+      heartbeat: Date.now(),
+    });
+  const valid = (request) =>
+    isAdmitted() && ownsBinding() &&
+    request.incarnation === incarnation &&
+    Number.isFinite(request.expiresAt) &&
+    request.expiresAt > Date.now();
+  const publish = (event, deadline) => new Promise((resolve) => {
+    if (!isAdmitted() || !ownsBinding() || deadline <= Date.now()) {
+      resolve(false);
+      return;
+    }
+    const controller = new AbortController();
+    let settled = false;
+    const finish = (published) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cancelPublication = null;
+      resolve(published);
+      controller.abort();
+    };
+    const timer = setTimeout(() => finish(false), deadline - Date.now());
+    cancelPublication = () => finish(false);
+    Promise.resolve().then(() => fetch(
+      `${config.serverUrl}/v1/sessions/${encodeURIComponent(config.sessionId)}/events`,
+      { method: "POST", headers: headers(config), body: JSON.stringify(event), signal: controller.signal },
+    )).then(
+      response => finish(
+        Number.isInteger(response?.status) && response.status >= 200 && response.status < 300,
+      ),
+      () => finish(false),
+    );
+  });
+  const beginAttempt = (request) => {
+    let resolve;
+    const attempt = {
+      request,
+      collecting: true,
+      observed: false,
+      selection: null,
+      pending: 0,
+      failed: false,
+      done: new Promise(settle => { resolve = settle; }),
+      settle() {
+        if (!this.collecting && this.pending === 0) resolve(!this.failed && this.selection !== null);
+      },
+      close() {
+        this.collecting = false;
+        clearTimeout(this.timer);
+        if (activeAttempt === this) activeAttempt = null;
+        resolve(false);
+      },
+    };
+    attempt.timer = setTimeout(() => attempt.close(), Math.max(0, request.expiresAt - Date.now()));
+    activeAttempt = attempt;
+    return attempt;
+  };
+  const observeSelection = (selection, origin = "native") => {
+    const attempt = origin === "native" && activeAttempt?.collecting ? activeAttempt : null;
+    if (attempt) {
+      attempt.observed = true;
+      attempt.pending++;
+      if (selection.kind === attempt.request.type) {
+        attempt.selection = selection;
+        attempt.collecting = false;
+      }
+    }
+    const event = selection.kind === "model"
+      ? { type: "external_model_change", data: { model: selection.model } }
+      : { type: "external_reasoning_effort_change", data: { reasoning_effort: selection.effort } };
+    const publication = publications.then(() => publish(
+      event, Math.min(Date.now() + 1000, attempt?.request.expiresAt ?? Infinity),
+    ));
+    publications = publication.then(() => {});
+    return publication.then(published => {
+      if (attempt) {
+        attempt.pending--;
+        attempt.failed ||= !published;
+        attempt.settle();
+      }
+      return published;
+    });
+  };
+  const execute = async (request) => {
+    if (!valid(request))
+      return { status: "rejected", detail: "Expired or stale Prime control" };
+    const ctx = getContext();
+    if (request.type === "model") {
+      if (
+        typeof pi.setModel !== "function" ||
+        typeof ctx?.modelRegistry?.getAvailable !== "function"
+      ) {
+        return { status: "unavailable", detail: "Prime model API unavailable" };
+      }
+      const available = ctx.modelRegistry.getAvailable();
+      if (!Array.isArray(available))
+        return { status: "unavailable", detail: "Prime catalog unavailable" };
+      const matches = available.filter(
+        (model) =>
+          model?.provider === request.provider && model?.id === request.modelId,
+      );
+      if (matches.length !== 1)
+        return {
+          status: "rejected",
+          detail: "Prime model unavailable or ambiguous",
+        };
+      if (!valid(request))
+        return { status: "rejected", detail: "Expired or stale Prime control" };
+      const attempt = beginAttempt(request);
+      try {
+        const applied = await pi.setModel(matches[0]);
+        if (applied === false && !attempt.observed)
+          return { status: "rejected", detail: "Prime rejected model credentials" };
+        if (applied !== true || !await attempt.done || !valid(request) ||
+          attempt.selection.model !== `${request.provider}/${request.modelId}`)
+          return { status: "unknown", detail: "Prime model observation was not confirmed" };
+        return { status: "applied", model: attempt.selection.model };
+      } finally {
+        attempt.close();
+      }
+    }
+    if (request.type === "effort") {
+      if (typeof pi.setThinkingLevel !== "function") {
+        return {
+          status: "unavailable",
+          detail: "Prime thinking API unavailable",
+        };
+      }
+      if (
+        !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
+          request.level,
+        )
+      ) {
+        return { status: "rejected", detail: "Invalid Prime thinking level" };
+      }
+      const attempt = beginAttempt(request);
+      try {
+        await pi.setThinkingLevel(request.level);
+        if (!await attempt.done || !valid(request))
+          return { status: "unknown", detail: "Prime effort observation was not confirmed" };
+        return { status: "applied", effort: attempt.selection.effort };
+      } finally {
+        attempt.close();
+      }
+    }
+    if (request.type === "interrupt") {
+      const loop = getActivePrimeLoop();
+      const signal = ctx?.signal;
+      if (
+        typeof ctx?.abort !== "function" ||
+        !loop ||
+        !signal ||
+        signal !== loop.signal ||
+        signal.aborted
+      ) {
+        return { status: "unavailable", detail: "Prime loop is not abortable" };
+      }
+      ctx.abort();
+      return { status: "interrupt_accepted" };
+    }
+    if (request.type === "compact") {
+      if (typeof ctx?.compact !== "function")
+        return {
+          status: "unavailable",
+          detail: "Prime compaction API unavailable",
+        };
+      await postEvent(config, {
+        type: "external_compaction_status",
+        data: { status: "in_progress" },
+      });
+      if (!valid(request)) {
+        await postEvent(config, {
+          type: "external_compaction_status",
+          data: { status: "failed" },
+        });
+        return { status: "rejected", detail: "Expired or stale Prime control" };
+      }
+      return new Promise((resolve) => {
+        let finished = false;
+        const finish = async (status, detail) => {
+          if (finished) return;
+          finished = true;
+          if (!isAdmitted() || !ownsBinding()) {
+            resolve({ status: "unknown", detail: "Prime binding closed" });
+            return;
+          }
+          await postEvent(config, {
+            type: "external_compaction_status",
+            data: { status: status === "applied" ? "completed" : "failed" },
+          });
+          resolve({ status, detail });
+        };
+        try {
+          ctx.compact({
+            customInstructions: request.customInstructions || undefined,
+            onComplete: (result) => {
+              const completed = typeof result?.summary === "string";
+              finish(
+                completed ? "applied" : "unknown",
+                completed ? "" : "Prime returned no compaction result",
+              );
+            },
+            onError: () => finish("rejected", "Prime compaction failed"),
+          });
+        } catch (_error) {
+          finish("unknown", "Prime compaction threw");
+        }
+      });
+    }
+    return { status: "rejected", detail: "Unsupported Prime control" };
+  };
+  const run = async (request) => {
+    let outcome;
+    try {
+      outcome = await execute(request);
+    } catch (_error) {
+      outcome = {
+        status: "unknown",
+        detail: "Prime control threw; it will not be retried",
+      };
+    }
+    if (!isAdmitted() || !ownsBinding()) return;
+    try {
+      atomicWrite(path.join(results, `${request.id}.json`), {
+        id: request.id,
+        incarnation: request.incarnation,
+        ...outcome,
+      });
+    } catch (_error) {}
+  };
+  heartbeat();
+  const timer = setInterval(() => {
+    if (!isAdmitted() || !ownsBinding()) return;
+    try {
+      heartbeat();
+      observeStatus();
+      for (const file of fs.readdirSync(results)) {
+        const filename = path.join(results, file);
+        if (Date.now() - fs.statSync(filename).mtimeMs > 60_000)
+          fs.unlinkSync(filename);
+      }
+      for (const file of fs
+        .readdirSync(requests)
+        .filter((name) => /^[a-f0-9]{32}\.json$/.test(name))
+        .sort()) {
+        const filename = path.join(requests, file);
+        let request;
+        try {
+          request = JSON.parse(fs.readFileSync(filename, "utf8"));
+          fs.unlinkSync(filename);
+        } catch (_error) {
+          continue;
+        }
+        if (request?.id !== file.slice(0, -5)) continue;
+        if (request.type === "model" || request.type === "effort") {
+          settings = settings.then(() => run(request));
+        } else {
+          void run(request);
+        }
+      }
+    } catch (_error) {}
+  }, 250);
+  pi.__omnigentPrimeControls = {
+    isCurrent: ownsBinding,
+    observeSelection,
+    stop() {
+      if (ownsBinding()) {
+        try { fs.unlinkSync(bindingFile); } catch (_error) {}
+      }
+      stopped = true;
+      activeAttempt?.close();
+      cancelPublication?.();
+      clearInterval(timer);
+      clearInterval(pi.__omnigentInboxPoller);
+      delete pi.__omnigentPrimeControls;
+      delete pi.__omnigentInboxPoller;
+    },
+  };
+  return pi.__omnigentPrimeControls;
+}
+
+function primeSessionOwnership(ctx) {
+  try {
+    const header = ctx.sessionManager.getHeader();
+    if (!header || typeof header !== "object" || Array.isArray(header)) return "unknown";
+    const depth = header.rlmDepth;
+    if (!Number.isInteger(depth) || depth < 0) return "unknown";
+    return depth === 0 ? "root" : "child";
+  } catch (_error) {
+    return "unknown";
+  }
+}
+
 module.exports = function (pi) {
   const config = readConfig();
   const agentLabel = config?.agentLabel || "Pi";
+  const primeNative = Boolean(config?.primeControlsDir);
+  let ownership = "unknown";
+  let primeBinding = null;
+  const admitsContext = (ctx) => !primeNative || (
+    ownership === "root" && primeSessionOwnership(ctx) === "root" &&
+    primeBinding?.isCurrent()
+  );
+  const unavailableTool = () => ({
+    content: [{ type: "text", text: "Omnigent tools require a live Prime root binding" }],
+    isError: true,
+  });
+  let observations = Promise.resolve();
+  let pendingIdleResponse = null;
+  const observe = (event) => {
+    observations = observations.then(() => {
+      if (admitsContext(latestContext)) return postEvent(config, event);
+    });
+    return observations;
+  };
+  const observeEffort = (level, origin = "native") => {
+    if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) return;
+    return primeBinding.observeSelection({ kind: "effort", effort: level === "off" ? "none" : level }, origin);
+  };
   let sequence = 0;
   let turnOrdinal = 0;
   let activeResponseId = null;
@@ -1301,6 +1662,7 @@ module.exports = function (pi) {
   // Must be separate from activeResponseId — turn_start overwrites that with a
   // turn-level id between agent_start and agent_end.
   let turnStatusResponseId = null;
+  let activePrimeLoop = null;
   // Dedicated loop-state flag, set on agent_start / cleared on agent_end. Used
   // as the no-isIdle() fallback for requestInterrupt instead of
   // !activeResponseId: agent_start resets activeResponseId to null and only
@@ -1378,7 +1740,8 @@ module.exports = function (pi) {
           description,
           promptSnippet: description ? description.slice(0, 120) : name,
           parameters,
-          async execute(_toolCallId, params) {
+          async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+            if (!admitsContext(ctx)) return unavailableTool();
             return callOmnigentTool(config, name, params || {});
           },
         });
@@ -1496,7 +1859,8 @@ module.exports = function (pi) {
         required: ["operation"],
         additionalProperties: false,
       },
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        if (!admitsContext(ctx)) return unavailableTool();
         if (params && params.operation === "read") {
           return {
             content: [
@@ -1850,6 +2214,7 @@ module.exports = function (pi) {
   pi.registerCommand("omnigent", {
     description: "Show the Omnigent conversation URL",
     async handler(_args, ctx) {
+      if (!admitsContext(ctx)) return;
       setOmnigentStatus(config, ctx, "linked");
       if (ctx && ctx.ui && config && config.conversationUrl) {
         ctx.ui.notify(`Omnigent: ${config.conversationUrl}`, "info");
@@ -1858,7 +2223,29 @@ module.exports = function (pi) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    if (primeNative) {
+      ownership = primeSessionOwnership(ctx);
+      if (ownership !== "root") return;
+    }
     rememberContext(ctx);
+    if (primeNative) {
+      primeBinding = startPrimeControls(
+        pi,
+        config,
+        () => latestContext,
+        () => activePrimeLoop,
+        () => {
+          if (pendingIdleResponse !== null && safeIsIdle(latestContext) === true) {
+            const response_id = pendingIdleResponse;
+            pendingIdleResponse = null;
+            setOmnigentStatus(config, latestContext, "idle");
+            void observe({ type: "external_session_status", data: { status: "idle", response_id } });
+          }
+        },
+        () => admitsContext(latestContext),
+      );
+      if (typeof pi.getThinkingLevel === "function") await observeEffort(pi.getThinkingLevel(), "startup");
+    }
     registerTaskToolIfMissing();
     restoreTaskList(ctx);
     if (taskList.length) await publishTaskList();
@@ -1878,6 +2265,7 @@ module.exports = function (pi) {
         const idle = safeIsIdle(latestContext);
         return idle === null ? agentRunning : !idle;
       },
+      () => admitsContext(latestContext),
     );
     const nativeSessionId =
       ctx && ctx.sessionManager && ctx.sessionManager.getSessionId
@@ -1892,44 +2280,60 @@ module.exports = function (pi) {
     // ``/login`` session (no Omnigent ``model_override``, no ``llm_model``)
     // shows no active model until the user switches. Mirrors the
     // ``model_select`` handler, but for the startup value ``ctx.model``.
-    const startupModel = modelReference(ctx ? ctx.model : undefined);
+    const startupModel = modelReference(ctx ? ctx.model : undefined, primeNative);
     if (startupModel) {
-      await postEvent(config, {
-        type: "external_model_change",
-        data: { model: startupModel },
-      });
+      const observation = { type: "external_model_change", data: { model: startupModel } };
+      if (primeNative) await primeBinding.observeSelection({ kind: "model", model: startupModel }, "startup");
+      else await postEvent(config, observation);
     }
     // Readiness is not turn completion: a queued prompt may already be running.
     // Only agent_end publishes idle so startup cannot complete a child task.
   });
 
+  if (primeNative) {
+    pi.on("session_shutdown", async (_event, ctx) => {
+      if (ownership !== "root" || primeSessionOwnership(ctx) !== "root") return;
+      activePrimeLoop = null;
+      turnStatusResponseId = null;
+      pendingIdleResponse = null;
+      ownership = "unknown";
+      primeBinding?.stop();
+    });
+  }
+
   pi.on("session_tree", async (_event, ctx) => {
+    if (!admitsContext(ctx)) return;
     restoreTaskList(ctx);
     await publishTaskList();
   });
 
   pi.on("model_select", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
-    // Mirror a model switch made inside the Pi TUI (the ``/model`` command or
-    // Ctrl+P cycling) back to Omnigent so the web picker reflects it. Skip
-    // ``restore`` — that is Pi re-applying the session's saved model at
-    // startup, not a user switch, and posting it could clobber a pending
-    // web-side override. The server dedups against ``model_override``, so a
-    // web-initiated switch (which already persisted the value before queuing
-    // the inbox ``model_change``) round-trips here as a no-op.
     const source =
       event && typeof event.source === "string" ? event.source : "";
-    if (source === "restore") return;
+    if (source === "restore" && !primeNative) return;
     const model = event && event.model ? event.model : undefined;
-    const selectedModel = modelReference(model);
+    const selectedModel = modelReference(model, primeNative);
     if (!selectedModel) return;
-    await postEvent(config, {
-      type: "external_model_change",
-      data: { model: selectedModel },
-    });
+    const observation = { type: "external_model_change", data: { model: selectedModel } };
+    if (primeNative) {
+      await primeBinding.observeSelection({ kind: "model", model: selectedModel });
+      await postModelOptions(config, ctx);
+    } else await postEvent(config, observation);
   });
 
+  if (primeNative) {
+    pi.on("thinking_level_select", async (event, ctx) => {
+      if (!admitsContext(ctx)) return;
+      rememberContext(ctx);
+      await observeEffort(event?.level);
+    });
+  }
+
   pi.on("agent_start", async (_event, ctx) => {
+    if (!admitsContext(ctx)) return;
+    pendingIdleResponse = null;
     rememberContext(ctx);
     // A brand-new agent loop must never inherit a replay window armed before it
     // began (e.g. a spuriously-armed window from an interrupt that landed while
@@ -1954,20 +2358,32 @@ module.exports = function (pi) {
     // the "streaming" status — which unblocks queued follow-up messages.
     // Use a dedicated variable: activeResponseId is overwritten by turn_start.
     turnStatusResponseId = `pi-${Date.now()}-${++sequence}`;
-    await postEvent(config, {
+    if (primeNative) {
+      activePrimeLoop = {
+        responseId: turnStatusResponseId,
+        signal: ctx?.signal,
+      };
+    }
+    const observation = {
       type: "external_session_status",
-      data: {
-        status: "running",
-        response_id: turnStatusResponseId,
-      },
-    });
+      data: { status: "running", response_id: turnStatusResponseId },
+    };
+    if (primeNative) await observe(observation);
+    else await postEvent(config, observation);
   });
 
   pi.on("agent_end", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
+    const loop = primeNative ? activePrimeLoop : null;
+    if (primeNative) activePrimeLoop = null;
+    const endResponseId =
+      turnStatusResponseId ?? `pi-${Date.now()}-${++sequence}`;
+    turnStatusResponseId = null;
+    if (primeNative && loop === null) return;
     rememberContext(ctx);
     clearPendingInterrupt();
     agentRunning = false;
-    setOmnigentStatus(config, ctx, "idle");
+    if (!primeNative) setOmnigentStatus(config, ctx, "idle");
     activeResponseId = null;
     // Last-chance usage capture from the agent loop's final message set, in
     // case neither ``message_end`` nor ``turn_end`` carried usage for some
@@ -1976,23 +2392,40 @@ module.exports = function (pi) {
     // so a plain forward-scan is safe (no overcount).
     const messages =
       event && Array.isArray(event.messages) ? event.messages : [];
+    const lastAssistant = primeNative
+      ? messages.findLast((message) => message?.role === "assistant")
+      : undefined;
+    const reason = lastAssistant?.stopReason;
+    const interrupted = primeNative && (
+      reason === "aborted" ||
+      (loop.responseId === endResponseId && loop.signal?.aborted === true)
+    );
+    const failed = primeNative && (reason === "error" || interrupted);
+    if (failed) pendingIdleResponse = null;
     let changed = false;
     for (const message of messages) {
       if (accumulateUsage(message)) changed = true;
     }
     if (changed) await postSessionUsage();
-    // Reuse the agent_start response_id so the web client matches the idle
-    // edge and clears the "streaming" status, unblocking queued follow-ups.
-    const endResponseId =
-      turnStatusResponseId ?? `pi-${Date.now()}-${++sequence}`;
-    turnStatusResponseId = null;
-    await postEvent(config, {
-      type: "external_session_status",
-      data: { status: "idle", response_id: endResponseId },
-    });
+    if (primeNative) {
+      if (interrupted) {
+        await observe({ type: "external_session_interrupted", data: { response_id: endResponseId } });
+      }
+      const waiting = !failed && safeIsIdle(ctx) === false;
+      if (waiting) pendingIdleResponse = endResponseId;
+      const status = failed ? "failed" : waiting ? "waiting" : "idle";
+      setOmnigentStatus(config, ctx, status);
+      await observe({ type: "external_session_status", data: { status, response_id: endResponseId } });
+    } else {
+      await postEvent(config, {
+        type: "external_session_status",
+        data: { status: "idle", response_id: endResponseId },
+      });
+    }
   });
 
   pi.on("turn_start", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     const index =
@@ -2004,6 +2437,7 @@ module.exports = function (pi) {
   });
 
   pi.on("message_update", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     const responseId = currentResponseId();
@@ -2034,11 +2468,13 @@ module.exports = function (pi) {
   });
 
   pi.on("tool_execution_start", async (_event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
   });
 
   pi.on("tool_call", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     const blocked = replayPendingInterrupt(ctx);
     const responseId = currentResponseId();
@@ -2080,6 +2516,7 @@ module.exports = function (pi) {
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     await syncTaskListFromResult(event);
@@ -2087,12 +2524,14 @@ module.exports = function (pi) {
   });
 
   pi.on("tool_execution_end", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     await postToolResult(event, currentResponseId());
   });
 
   pi.on("input", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     setOmnigentStatus(config, ctx, "running");
     const text = event && typeof event.text === "string" ? event.text : "";
@@ -2111,6 +2550,7 @@ module.exports = function (pi) {
   });
 
   pi.on("message_end", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     setOmnigentStatus(config, ctx, undefined);
@@ -2177,6 +2617,7 @@ module.exports = function (pi) {
   });
 
   pi.on("turn_end", async (event, ctx) => {
+    if (!admitsContext(ctx)) return;
     rememberContext(ctx);
     replayPendingInterrupt(ctx);
     const responseId = currentResponseId();

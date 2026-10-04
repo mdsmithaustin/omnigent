@@ -41,6 +41,7 @@ from omnigent.entities import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
+from omnigent.harnesses.prime_native.controls import ControlStatus, SetEffort, SetModel
 from omnigent.models.model_override import validate_model_override
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -126,6 +127,7 @@ from omnigent.server.routes._sessions.helpers import (
     _apply_liveness_to_items,
     _authorize_bundled_parent_and_inherit_runner,
     _codex_plan_mode_enabled,
+    _decode_prime_control_receipt,
     _discovery_key,
     _enforce_filesystem_attachment_policy,
     _filesystem_attachment_in_history,
@@ -135,6 +137,7 @@ from omnigent.server.routes._sessions.helpers import (
     _invalidate_runner_backed_snapshot_state,
     _multipart_missing_detail,
     _native_coding_agent_for_agent,
+    _native_coding_agent_for_session,
     _notify_runner_of_bundled_child,
     _parse_session_create_metadata,
     _permission_level_from_grants,
@@ -2168,6 +2171,15 @@ def register_core_routes(
         conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
         if conv is None or conv.agent_id is None:
             raise _session_not_found()
+        native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
+        if native_agent is not None and native_agent.harness == "prime-native":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "prime_control_unsupported",
+                    "detail": "Prime cannot reset its active model selection",
+                },
+            )
         try:
             validate_model_override(body.expected_model_override)
         except ValueError as exc:
@@ -2645,7 +2657,91 @@ def register_core_routes(
                 code=ErrorCode.INVALID_INPUT,
             )
 
-        live_model_change = not body.silent and (model_override is not None or clear_model)
+        native_agent = (
+            await asyncio.to_thread(_native_coding_agent_for_session, conv)
+            if conv is not None
+            else None
+        )
+        prime_live_settings = native_agent is not None and native_agent.harness == "prime-native"
+        setting_updates: dict[str, Any] = (
+            {}
+            if prime_live_settings
+            else {
+                "model_override": None if clear_model else model_override,
+                "_unset_model_override": clear_model,
+                "reasoning_effort": None if clear_effort else effort,
+                "_unset_reasoning_effort": clear_effort,
+            }
+        )
+        if prime_live_settings:
+            requested_model = "model_override" in body.model_fields_set
+            requested_effort = "reasoning_effort" in body.model_fields_set
+            if body.silent and (requested_model or requested_effort):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "prime_control_unsupported",
+                        "detail": "Prime active settings require a live control acknowledgment",
+                    },
+                )
+            if (requested_model and (model_override is None or clear_model)) or (
+                requested_effort and (effort is None or clear_effort)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "prime_control_unsupported",
+                        "detail": "Prime cannot clear live model or effort settings",
+                    },
+                )
+            changes: list[tuple[str, dict[str, object], SetModel | SetEffort]] = []
+            if requested_model:
+                from omnigent.harnesses.prime_native.catalog import PrimeModelRef
+
+                try:
+                    assert model_override is not None
+                    prime_model = PrimeModelRef.parse(model_override)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "prime_control_rejected",
+                            "detail": str(exc),
+                        },
+                    ) from exc
+                changes.append(
+                    (
+                        "model",
+                        {"type": "model_change", "model": model_override},
+                        SetModel(prime_model),
+                    )
+                )
+            if requested_effort:
+                assert effort is not None
+                changes.append(
+                    ("effort", {"type": "effort_change", "effort": effort}, SetEffort(effort))
+                )
+            outcomes: dict[str, Any] = {}
+            for setting, event, control in changes:
+                result = await _forward_session_change_to_runner(
+                    session_id, runner_router, event, timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S
+                )
+                receipt = _decode_prime_control_receipt(result, expected=control)
+                outcomes[setting] = receipt.outcome.response_body()
+                if receipt.outcome.status != ControlStatus.APPLIED:
+                    raise HTTPException(
+                        status_code=receipt.http_status,
+                        detail={
+                            "error": f"prime_control_{receipt.outcome.status.value}",
+                            "detail": "Prime settings were not fully applied; observed state is retained",
+                            "outcomes": outcomes,
+                        },
+                    )
+        live_model_change = (
+            not prime_live_settings
+            and not body.silent
+            and (model_override is not None or clear_model)
+        )
         wake_for_model_change = (
             live_model_change
             and conv is not None
@@ -2662,10 +2758,7 @@ def register_core_routes(
             conversation_store.update_conversation,
             session_id,
             title=body.title,
-            reasoning_effort=None if clear_effort else effort,
-            _unset_reasoning_effort=clear_effort,
-            model_override=None if clear_model else model_override,
-            _unset_model_override=clear_model,
+            **setting_updates,
             cost_control_mode_override=None if clear_cost_control else cost_control_mode_override,
             _unset_cost_control_mode_override=clear_cost_control,
             subagent_routing_override=(
@@ -2709,7 +2802,7 @@ def register_core_routes(
         # The runner applies native settings live. Silent startup metadata
         # writes skip both recovery and forwarding to avoid recursive launches.
         live_forward = not body.silent
-        if live_forward and (effort is not None or clear_effort):
+        if not prime_live_settings and live_forward and (effort is not None or clear_effort):
             await _forward_session_change_to_runner(
                 session_id,
                 runner_router,

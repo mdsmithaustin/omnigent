@@ -28,4 +28,9 @@ Preconditions are an owned server, ready Prime terminal, and a selected model.
 
 The shared Pi file protocol acknowledges enqueue before Prime finishes. An empty inbox, successful POST, or idle harness process is insufficient proof. Match replies to the submitted action.
 
+Public messages return HTTP 202 for admission. Prime's internal delivery return
+cannot publish `response.completed` or complete a declared child. The extension
+observes the actual native turn. Requests with `stream=true` also retain admission
+semantics for Prime.
+
 The default helper covers HTTP and terminal completion. Empty, loading, provider error, queued follow-up, and long-text states remain gaps until separately driven.

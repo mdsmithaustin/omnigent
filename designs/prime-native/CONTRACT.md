@@ -1,5 +1,7 @@
 # Prime-native feature contract
 
+**Historical proposal.** The active [no-fork design](NO_FORK.md) supersedes this document. The Prime fork, Prime-side bridge, global controller promise, and P1-Prime sequence below are historical proposal context. Do not execute this plan or treat its capabilities as qualified.
+
 ## Contract status
 
 This document specifies proposed behavior and required acceptance evidence.

@@ -7997,3 +7997,28 @@ def test_fs_reader_picks_up_a_repo_created_after_first_request(
 
     assert second.status == "ok", second
     assert [e["path"] for e in second.payload["data"]] == ["zzz/target.jsonnet"], second.payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("models", [[], [{"id": "verify/fixture", "displayName": "Fixture"}]])
+async def test_prime_host_catalog_preserves_real_and_empty_results(monkeypatch, models):
+    monkeypatch.setattr("omnigent.harnesses.prime_native.catalog.model_options", lambda: models)
+    host = _host()
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="prime", harness="prime-native")
+    )
+    assert result.status == "ok"
+    assert [model["id"] for model in result.models] == [model["id"] for model in models]
+
+
+@pytest.mark.asyncio
+async def test_prime_host_catalog_failure_is_not_a_curated_fallback(monkeypatch):
+    def unavailable():
+        raise FileNotFoundError("prime-agent")
+
+    monkeypatch.setattr("omnigent.harnesses.prime_native.catalog.model_options", unavailable)
+    result = await _host()._handle_model_options(
+        HostModelOptionsFrame(request_id="prime", harness="prime-native")
+    )
+    assert result.status == "failed"
+    assert result.error == "failed to resolve Prime model options"

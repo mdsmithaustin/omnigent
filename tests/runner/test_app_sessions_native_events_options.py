@@ -7,6 +7,7 @@ import logging
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -3796,3 +3797,98 @@ async def test_events_compact_on_claude_sdk_buffered_compact_failed_fallback() -
         f"swallowed); got {len(in_progress)} from types {[e.get('type') for e in events]}"
     )
     assert completed == [], "no completed should appear when nothing compacted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preflight_exit", ["malformed", "cancelled"])
+async def test_prime_message_preflight_exit_does_not_start_resource_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    preflight_exit: str,
+) -> None:
+    from omnigent.harnesses.prime_native import bridge
+    from omnigent.harnesses.prime_native.controls import PrimeExtensionBinding
+
+    monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
+    monkeypatch.setattr("omnigent.harnesses.prime_native.main.launch_prime_terminal", AsyncMock())
+    monkeypatch.setattr(PrimeExtensionBinding, "wait_until_ready", AsyncMock(return_value=True))
+
+    class HistoryServer(NullServerClient):
+        mode = preflight_exit
+
+        def __init__(self) -> None:
+            self.awaiting_history = asyncio.Event()
+
+        async def get(self, url: str, **kwargs: Any) -> Any:
+            if url.endswith("/items"):
+                if kwargs.get("params", {}).get("order") == "asc" and self.mode == "cancelled":
+                    self.awaiting_history.set()
+                    await asyncio.Event().wait()
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [None]
+                        if self.mode == "malformed"
+                        and kwargs.get("params", {}).get("order") == "asc"
+                        else []
+                    },
+                )
+            return await super().get(url, **kwargs)
+
+    spec = AgentSpec(
+        spec_version=1,
+        name="prime-test",
+        executor=ExecutorSpec(type="omnigent", config={"harness": "prime-native"}),
+    )
+
+    async def resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        del agent_id, session_id
+        return spec
+
+    harness = _ScriptedHarnessClient(
+        [_sse({"type": "response.completed", "response": {"id": "delivered"}})]
+    )
+    server = HistoryServer()
+    app = create_runner_app(
+        process_manager=_FakeProcessManager(harness),  # type: ignore[arg-type]
+        spec_resolver=resolver,
+        server_client=server,  # type: ignore[arg-type]
+    )
+    session_id = f"prime-preflight-{preflight_exit}"
+    message = {"type": "message", "content": [{"type": "input_text", "text": "hello"}]}
+
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions", json={"session_id": session_id, "agent_id": "agent"}
+        )
+        assert created.status_code == 201, created.text
+
+        if preflight_exit == "malformed":
+            with pytest.raises(AttributeError):
+                await client.post(f"/v1/sessions/{session_id}/events", json=message)
+        else:
+            request = asyncio.create_task(
+                client.post(f"/v1/sessions/{session_id}/events", json=message)
+            )
+            async with asyncio.timeout(2):
+                await server.awaiting_history.wait()
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+
+        registry = app.state.session_resource_registry
+        assert registry.session_turn_is_active(session_id) is False
+        assert session_id not in app.state.active_turns
+        assert harness.posted_bodies == []
+
+        server.mode = "good"
+        retried = await client.post(f"/v1/sessions/{session_id}/events", json=message)
+        assert retried.status_code == 202, retried.text
+        assert registry.session_turn_is_active(session_id) is True
+        async with asyncio.timeout(2):
+            while not harness.posted_bodies:
+                await asyncio.sleep(0.01)
+
+    assert harness.posted_bodies[-1]["content"][-1]["content"] == [
+        {"type": "input_text", "text": "hello"}
+    ]
