@@ -13313,6 +13313,7 @@ def create_runner_app(
                             arguments,
                             input_responses=input_responses,
                             request_state=request_state,
+                            session_id=session_id,
                         )
                     else:
                         output = await mcp_manager.call_tool(

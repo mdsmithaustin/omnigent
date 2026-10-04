@@ -14,11 +14,12 @@ from typing import Any
 
 import httpx
 import pytest
+from mcp.types import CallToolResult, ElicitRequestFormParams
 
 from omnigent.entities.session_resources import SessionResourceView
 from omnigent.harnesses.codex_native.bridge import CODEX_NATIVE_BRIDGE_ID_LABEL_KEY
 from omnigent.native import native_dispatch
-from omnigent.runner import create_runner_app
+from omnigent.runner import create_runner_app, pending_approvals
 from omnigent.runner import tool_dispatch as _tool_dispatch
 from omnigent.runner.app import (
     _RUNNER_DISPATCHED_FIELD,
@@ -26,6 +27,7 @@ from omnigent.runner.app import (
     _resolved_workdir_for_spec,
     _session_labels_for_runner_spawn,
 )
+from omnigent.runner.mcp_manager import RunnerMcpManager
 from omnigent.runner.native import NativeLaunchContext, _resolve_native_spawn_env
 from omnigent.runner.resource_registry import (
     SessionResourceRegistry,
@@ -43,6 +45,7 @@ from tests.runner.conftest import (
     _sse,
 )
 from tests.runner.helpers import NullServerClient
+from tests.tools.test_mcp import controlled_mcp_lifecycle, recovery_config
 
 
 @pytest.mark.asyncio
@@ -2774,3 +2777,166 @@ def test_kimi_auto_create_clears_forwarder_state_before_supervising() -> None:
     assert src.index("clear_kimi_bridge_state(bridge_dir)") < src.rindex(
         "supervise_kimi_forwarder("
     )
+
+
+@pytest.mark.asyncio
+async def test_mcp_execute_mrtr_recovers_with_exact_session_and_opaque_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = "6a09e2c1b63301fc6be99bb645418905"
+    spec = AgentSpec(spec_version=1, name="recovery-agent", mcp_servers=[recovery_config()])
+    responses = {"eid": {"action": "accept", "content": {"nested": [None, False, "yes"]}}}
+    events: list[tuple[str, dict[str, Any]]] = []
+    inline_results: list[dict[str, Any]] = []
+    approval_sessions: list[str] = []
+    input_requests = {"next": {"method": "elicitation/create", "params": {"message": "Again"}}}
+
+    async def resolve(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        return spec
+
+    def receive_event(request: httpx.Request) -> httpx.Response:
+        events.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"elicitation_id": "inline"})
+
+    async def approve(**kwargs: Any) -> pending_approvals.Verdict:
+        approval_sessions.append(kwargs["conversation_id"])
+        return pending_approvals.Verdict(approved=True, content={"decision": "allow"})
+
+    monkeypatch.setattr(pending_approvals, "wait_for_user_verdict", approve)
+    with controlled_mcp_lifecycle() as sdk:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(receive_event), base_url="http://server"
+        ) as event_client:
+            manager = RunnerMcpManager(server_client=event_client)
+            app = create_runner_app(
+                process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),
+                spec_resolver=resolve,
+                server_client=NullServerClient(),  # type: ignore[arg-type]
+                mcp_manager=manager,
+            )
+            try:
+                assert (await manager.schemas_for(spec)).tool_names == {"recovery__echo"}
+                async with _runner_client(app) as client:
+                    seed = await client.post(
+                        "/v1/sessions",
+                        json={
+                            "session_id": session_id,
+                            "agent_id": "0e36e3219954d2deaef06b8e2a936f38",
+                        },
+                    )
+                    assert seed.status_code == 201, seed.text
+                    url = f"/v1/sessions/{session_id}/mcp/execute"
+                    body = {
+                        "method": "tools/call",
+                        "params": {
+                            "name": "recovery__echo",
+                            "arguments": {"nonce": "before"},
+                        },
+                    }
+                    assert (await client.post(url, json=body)).json() == {
+                        "result": {"output": "generation-1"}
+                    }
+                    sdk.online = False
+                    body["params"]["arguments"] = {"nonce": "outage"}
+                    outage = await client.post(url, json=body)
+                    assert outage.status_code == 200
+                    assert outage.json()["error"]["code"] == -32000
+                    assert sdk.starts == 3
+                    sdk.online = True
+                    sdk.generation = 2
+
+                    async def request_more(generation: int, callback: Any) -> CallToolResult:
+                        result = await callback(
+                            None,
+                            ElicitRequestFormParams(
+                                message="Confirm",
+                                requestedSchema={
+                                    "type": "object",
+                                    "properties": {"decision": {"type": "string"}},
+                                    "required": ["decision"],
+                                },
+                            ),
+                        )
+                        inline_results.append(result.model_dump(exclude_none=True))
+                        return CallToolResult.model_validate(
+                            {
+                                "content": [],
+                                "resultType": "input_required",
+                                "inputRequests": input_requests,
+                                "requestState": "next opaque state",
+                            }
+                        )
+
+                    sdk.on_call = request_more
+                    body["params"].update(
+                        {
+                            "arguments": {"nonce": "reply"},
+                            "inputResponses": responses,
+                            "requestState": "opaque / + = \u2603",
+                        }
+                    )
+                    for _ in range(2):
+                        response = await client.post(url, json=body)
+                        assert response.status_code == 200
+                        assert response.json() == {
+                            "result": {
+                                "input_required": {
+                                    "inputRequests": input_requests,
+                                    "requestState": "next opaque state",
+                                }
+                            }
+                        }
+                    sdk.on_call = None
+                    body["params"]["requestState"] = "next opaque state"
+                    response = await client.post(url, json=body)
+                    assert response.json() == {"result": {"output": "generation-2"}}
+                assert approval_sessions == [session_id, session_id]
+                assert (
+                    inline_results == [{"action": "accept", "content": {"decision": "allow"}}] * 2
+                )
+                assert (
+                    events
+                    == [
+                        (
+                            f"/v1/sessions/{session_id}/events",
+                            {
+                                "type": "mcp_elicitation",
+                                "data": {
+                                    "message": "Confirm",
+                                    "requestedSchema": {
+                                        "type": "object",
+                                        "properties": {"decision": {"type": "string"}},
+                                        "required": ["decision"],
+                                    },
+                                },
+                            },
+                        )
+                    ]
+                    * 2
+                )
+                assert sdk.requests == [
+                    (1, "echo", {"nonce": "before"}),
+                    (1, "echo", {"nonce": "outage"}),
+                    *[
+                        (
+                            2,
+                            "echo",
+                            {
+                                "name": "echo",
+                                "arguments": {"nonce": "reply"},
+                                "inputResponses": responses,
+                                "requestState": state,
+                            },
+                        )
+                        for state in [
+                            "opaque / + = \u2603",
+                            "opaque / + = \u2603",
+                            "next opaque state",
+                        ]
+                    ],
+                ]
+                assert sdk.starts == 4
+                assert sdk.peak_active == 1
+            finally:
+                await manager.shutdown()
+            assert sdk.active == 0
