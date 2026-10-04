@@ -36,6 +36,7 @@ jobs:
       run_id: ${{ steps.identity.outputs.run_id }}
       run_attempt: ${{ steps.identity.outputs.run_attempt }}
       tag: ${{ steps.identity.outputs.tag }}
+      python_matrix: ${{ steps.matrix.outputs.python_matrix }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -61,6 +62,27 @@ jobs:
           echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
           python -c 'import json, os; version=json.load(open(".github/fork-release.json"))["version"]; print("tag=fork/v"+version, file=open(os.environ["GITHUB_OUTPUT"], "a"))'
+
+      - uses: ./.github/actions/setup-uv
+      - name: Load immutable canonical Python test shards
+        id: matrix
+        run: |
+          uv run --no-project --with PyYAML==6.0.3 python - <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import yaml
+          pin = json.loads(Path(".github/fork-release.json").read_bytes())
+          raw = subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"])
+          canonical = yaml.safe_load(raw)["jobs"]["pytest"]["strategy"]["matrix"]["include"]
+          assert len(canonical) == 16 and len({row["group"] for row in canonical}) == 16
+          rows = [*canonical, {"group": "codex-default", "paths": "tests/codex_parity"}]
+          assert len(rows) == 17 and len({row["group"] for row in rows}) == 17
+          assert rows[:16] == canonical
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("python_matrix=" + json.dumps({"include": rows}, separators=(",", ":")), file=output)
+          PYCODE
 
   lint:
     needs: source
@@ -108,9 +130,13 @@ jobs:
           echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
   python:
+    name: Fork Python (${{ matrix.group }})
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.source.outputs.python_matrix) }}
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
       run_id: ${{ steps.identity.outputs.run_id }}
@@ -131,17 +157,22 @@ jobs:
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap tmux dbus-daemon gnome-keyring
+          sudo apt-get install -y ripgrep bubblewrap tmux
+          if [[ "${{ matrix.group }}" == inner-rest ]]; then
+            sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring
+          fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          uv sync --locked --extra all --extra slack --group test
-      - name: Run default upstream Python tests and mock integration tests
+          uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+      - name: Run canonical Python shard
         env:
           PYTHONFAULTHANDLER: '1'
           OMNIGENT_TEST_TIMEOUT_SCALE: '4'
         run: |
-          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest -m 'not databricks' -n 8 --dist=worksteal --timeout=300
-          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest tests/integration -m 'not databricks' -n 0 --timeout=300
-          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest integrations/slack/tests -n 4 --timeout=300
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest ${{ matrix.paths }} \
+            -m "${{ matrix.markexpr || 'not databricks' }}" \
+            -n ${{ matrix.workers || '8' }} \
+            --dist=${{ matrix.dist || 'loadfile' }} \
+            --timeout=${{ matrix.timeout || '300' }}
       - name: Record successful source and run
         id: identity
         env:
