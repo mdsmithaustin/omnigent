@@ -507,6 +507,7 @@ def test_backend_schema_semantics_and_lookup(uninitialized_database):
         "incarnation, kind, state, claim_id) VALUES "
         "(7, :session, :operation, 'lookup runner', :incarnation, 1, :state, :claim)"
     )
+    rejected_rows = []
     for state in (1, 2, 3, 4, 5):
         params = {
             "session": SESSION,
@@ -517,24 +518,40 @@ def test_backend_schema_semantics_and_lookup(uninitialized_database):
         }
         with engine.begin() as connection:
             connection.execute(insert, params)
-        invalid = {
-            **params,
-            "operation": (state + 10).to_bytes(16, "big"),
-            "claim": None if params["claim"] is not None else CLAIM,
-        }
-        with pytest.raises(sa.exc.IntegrityError), engine.begin() as connection:
-            connection.execute(insert, invalid)
+        rejected_rows.append(
+            {
+                **params,
+                "operation": (state + 10).to_bytes(16, "big"),
+                "claim": None if params["claim"] is not None else CLAIM,
+            }
+        )
     for state in (0, 6):
-        with pytest.raises(sa.exc.IntegrityError), engine.begin() as connection:
-            connection.execute(
-                insert,
-                {
-                    "session": SESSION,
-                    "operation": state.to_bytes(16, "big"),
-                    "incarnation": INCARNATION,
-                    "state": state,
-                    "claim": CLAIM,
-                },
+        rejected_rows.append(
+            {
+                "session": SESSION,
+                "operation": state.to_bytes(16, "big"),
+                "incarnation": INCARNATION,
+                "state": state,
+                "claim": CLAIM,
+            }
+        )
+    expected_error = sa.exc.DBAPIError if engine.dialect.name == "mysql" else sa.exc.IntegrityError
+    for invalid in rejected_rows:
+        with pytest.raises(expected_error) as rejected, engine.begin() as connection:
+            connection.execute(insert, invalid)
+        if engine.dialect.name == "mysql":
+            assert rejected.value.orig.args[0] == 3819
+            assert "'ck_session_work_claim'" in str(rejected.value.orig)
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    sa.text(
+                        "SELECT count(*) FROM session_work WHERE workspace_id = 7 "
+                        "AND session_id = :session AND operation_id = :operation"
+                    ),
+                    invalid,
+                ).scalar_one()
+                == 0
             )
     with engine.begin() as connection:
         connection.execute(
