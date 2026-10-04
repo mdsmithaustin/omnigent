@@ -1939,7 +1939,11 @@ policy = SandboxPolicy.from_jsonable(
 )
 activate_sandbox(policy)
 libc = ctypes.CDLL(None, use_errno=True)
-NR_CLONE = 56  # x86_64
+libseccomp = ctypes.CDLL("libseccomp.so.2")
+libseccomp.seccomp_syscall_resolve_name.argtypes = [ctypes.c_char_p]
+libseccomp.seccomp_syscall_resolve_name.restype = ctypes.c_int
+NR_CLONE = libseccomp.seccomp_syscall_resolve_name(b"clone")
+assert NR_CLONE >= 0
 CLONE_NEWNET = 0x40000000
 results = {}
 # Block test: clone with CLONE_NEWNET set must return EPERM.
