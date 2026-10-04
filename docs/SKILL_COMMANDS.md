@@ -56,6 +56,10 @@ file. Missing files, conflicting names, unsupported launch configuration,
 and an unverified Codex launch environment keep the paste path.
 
 Claude checks its user and project skill directories and enabled plugins.
+Project discovery stops at the closest repository or worktree root. Skills
+above that boundary, reserved local `synced` and `anthropic-skills` names,
+and nested plain skill folders keep the paste path when native selection
+cannot be proved.
 A personal or project skill disabled by `skillOverrides` keeps the paste path.
 A plain Claude skill whose frontmatter name differs from its directory stays on
 the paste path because Omnigent cannot prove that both names select the same file. Launching Claude
@@ -99,6 +103,10 @@ source identity. The receipt stores no skill content, creates no second visible
 command, and contributes no prompt input. Its durable identity makes a repeated
 echo idempotent after the first receipt commits. Matching an initial echo to its
 pending invocation still depends on the existing process-local pending queue.
+The native request hook uses that pending queue to recognize a structured
+request already approved by the server. Filtering the command from the UI
+snapshot does not trigger another approval. Requests typed directly in the
+native terminal still pass through their own policy gate.
 
 If a process stops before the CLI expansion is persisted, the command alone
 cannot recover the historical instructions. History reconstruction reports a

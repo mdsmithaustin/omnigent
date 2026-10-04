@@ -44,10 +44,25 @@ def native_skill_invocation(
         roots: set[Path] = {_claude_user_dir(ctx) / "skills"}
         if ctx.roots:
             cwd = ctx.roots[0].resolve()
-            roots.update(parent / ".claude" / "skills" for parent in (cwd, *cwd.parents))
+            for parent in (cwd, *cwd.parents):
+                roots.add(parent / ".claude" / "skills")
+                if (parent / ".git").exists():
+                    break
         for root in roots:
             for skill in _discover_skills(root, skipped=[]):
                 if skill.skill_dir is not None and skill.user_invocable:
+                    if skill.skill_dir.parent != root:
+                        continue
+                    name = skill.skill_dir.name.casefold()
+                    if name in {"synced", "anthropic-skills"} or name.startswith(
+                        "anthropic-skills:"
+                    ):
+                        continue
+                    declared_name = skill.name.casefold()
+                    if declared_name == "anthropic-skills" or declared_name.startswith(
+                        "anthropic-skills:"
+                    ):
+                        continue
                     candidates.append((skill.skill_dir.name, skill.skill_dir / "SKILL.md"))
 
     plugins = list(_plugin_install_paths(ctx, _enabled_plugin_keys(ctx)).values())
@@ -78,6 +93,8 @@ def native_skill_invocation(
     if len(commands) != 1:
         return None
     command = commands.pop()
+    if command.casefold().startswith("anthropic-skills:"):
+        return None
     if ":" not in command:
         overrides: dict[str, object] = {}
         for settings in _enabled_plugin_settings_files(ctx):

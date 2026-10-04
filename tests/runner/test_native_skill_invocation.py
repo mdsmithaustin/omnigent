@@ -120,6 +120,92 @@ def test_claude_bundle_uses_manifest_namespace_and_rejects_wrong_root(tmp_path):
     assert claude_command(selected, ctx) is None
 
 
+@pytest.mark.parametrize("git_marker", ["directory", "worktree-file"])
+def test_claude_native_skills_stop_at_closest_repository_root(tmp_path, git_marker):
+    outer = tmp_path / "outer"
+    repo = outer / "nested-repo"
+    cwd = repo / "src"
+    cwd.mkdir(parents=True)
+    if git_marker == "directory":
+        (repo / ".git").mkdir()
+    else:
+        (repo / ".git").write_text("gitdir: ../git/worktrees/nested-repo\n")
+    home = tmp_path / "home"
+    outside = _skill(outer / ".claude" / "skills", "outside", "outside")
+    root = _skill(repo / ".claude" / "skills", "root", "root")
+    inside = _skill(cwd / ".claude" / "skills", "inside", "inside")
+    personal = _skill(home / ".claude" / "skills", "personal", "personal")
+    ctx = SkillSourceContext(roots=(cwd,), home=home, skills_filter="all", bundle_dir=None)
+
+    assert claude_command(root, ctx) == "/root"
+    assert claude_command(inside, ctx) == "/inside"
+    assert claude_command(personal, ctx) == "/personal"
+    assert claude_command(outside, ctx) is None
+
+    _skill(outer / ".claude" / "skills", "inside", "inside")
+    assert claude_command(inside, ctx) == "/inside"
+
+
+@pytest.mark.parametrize("location", ["personal", "project"])
+@pytest.mark.parametrize(
+    "name", ["synced", "SyNcEd", "anthropic-skills", "ANTHROPIC-SKILLS", "anthropic-skills:pdf"]
+)
+def test_claude_reserved_local_skill_names_keep_paste_fallback(tmp_path, location, name):
+    home = tmp_path / "home"
+    cwd = tmp_path / "workspace"
+    root = (home if location == "personal" else cwd) / ".claude" / "skills"
+    selected = _skill(root, name, name)
+    ordinary = _skill(root)
+    ctx = SkillSourceContext(roots=(cwd,), home=home, skills_filter="all", bundle_dir=None)
+
+    assert claude_command(ordinary, ctx) == "/review"
+    assert claude_command(selected, ctx) is None
+
+
+@pytest.mark.parametrize("location", ["personal", "project"])
+@pytest.mark.parametrize("namespace", ["synced", "grouped"])
+def test_claude_nested_directory_skills_keep_paste_fallback(tmp_path, location, namespace):
+    home = tmp_path / "home"
+    cwd = tmp_path / "workspace"
+    root = (home if location == "personal" else cwd) / ".claude" / "skills"
+    selected = _skill(root / namespace, "nested-skill", "nested-skill")
+    ordinary = _skill(root)
+    ctx = SkillSourceContext(roots=(cwd,), home=home, skills_filter="all", bundle_dir=None)
+
+    assert claude_command(ordinary, ctx) == "/review"
+    assert claude_command(selected, ctx) is None
+
+
+def test_claude_reserved_frontmatter_name_keeps_paste_fallback(tmp_path):
+    cwd = tmp_path / "workspace"
+    selected = _skill(cwd / ".claude" / "skills", "local", "anthropic-skills:pdf")
+    ordinary = _skill(cwd / ".claude" / "skills")
+    ctx = SkillSourceContext(
+        roots=(cwd,), home=tmp_path / "home", skills_filter="all", bundle_dir=None
+    )
+
+    assert claude_command(ordinary, ctx) == "/review"
+    assert claude_command(selected, ctx) is None
+
+
+@pytest.mark.parametrize(
+    "namespace,expected", [("ordinary", "/ordinary:synced"), ("anthropic-skills", None)]
+)
+def test_claude_plugin_synced_skill_uses_unreserved_namespace(tmp_path, namespace, expected):
+    bundle = tmp_path / "bundle"
+    selected = _skill(bundle / "skills", "synced", "synced")
+    manifest = bundle / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir()
+    manifest.write_text('{"name": "' + namespace + '"}')
+    ctx = SkillSourceContext(
+        roots=(tmp_path / "workspace",),
+        home=tmp_path / "home",
+        skills_filter="none",
+        bundle_dir=bundle,
+    )
+    assert claude_command(selected, ctx) == expected
+
+
 def test_codex_requires_materialized_bundle_and_enabled_name(tmp_path):
     selected = _skill(tmp_path / "bundle" / "skills", folder="different-folder")
     codex_home = tmp_path / "codex-home"

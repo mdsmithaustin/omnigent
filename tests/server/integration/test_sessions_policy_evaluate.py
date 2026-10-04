@@ -24,6 +24,7 @@ Uses the shared ``client`` fixture from ``tests/server/conftest.py``
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -169,6 +170,12 @@ def _ask_for_bash(event: dict[str, Any]) -> dict[str, Any]:
     tool = data.get("name", "") if isinstance(data, dict) else ""
     if tool == "Bash":
         return {"result": "ASK", "reason": "Approve running Bash?"}
+    return {"result": "ALLOW"}
+
+
+def _ask_for_request(event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("type") == "request":
+        return {"result": "ASK", "reason": "Approve this request?"}
     return {"result": "ALLOW"}
 
 
@@ -773,6 +780,115 @@ def _patch_default_policies(monkeypatch: pytest.MonkeyPatch, fn_path: str) -> No
         "omnigent.server.routes.sessions.get_caps",
         lambda: patched_caps,
     )
+
+
+async def test_routed_native_skill_request_asks_once_before_hook(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.runtime import pending_inputs
+    from omnigent.server.feature_flags import resolve_feature_flags
+
+    _patch_default_policies(monkeypatch, f"{__name__}._ask_for_request")
+    app.state.feature_flags = resolve_feature_flags({"OMNIGENT_FEATURES": "native_skill_routing"})
+    approvals: list[dict[str, Any]] = []
+    forwarded: list[dict[str, Any]] = []
+
+    async def approve_once(_request: Any, **kwargs: Any) -> bool:
+        approvals.append(kwargs["data"])
+        return len(approvals) == 1
+
+    monkeypatch.setattr(sessions_routes, "_hold_native_ask_gate", approve_once)
+
+    def runner_response(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/skills/resolve"):
+            return httpx.Response(200, json={"native_invocation": "/bundle:review rollout"})
+        if request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(runner_response), base_url="http://runner"
+    ) as runner:
+
+        async def route_to_runner(*_args: Any, **_kwargs: Any) -> httpx.AsyncClient:
+            return runner
+
+        monkeypatch.setattr(sessions_routes, "_get_runner_client", route_to_runner)
+        agent = await create_test_agent(client)
+        session_id = await _create_session(client, agent["id"])
+        try:
+            posted = await client.post(
+                f"/v1/sessions/{session_id}/events",
+                json={
+                    "type": "slash_command",
+                    "data": {"kind": "skill", "name": "review", "arguments": "rollout"},
+                },
+            )
+            assert posted.status_code == 202, posted.text
+            assert len(approvals) == 1
+            assert approvals[0]["content"] == [{"type": "input_text", "text": "/review rollout"}]
+            assert forwarded[0]["content"] == [
+                {"type": "input_text", "text": "/bundle:review rollout"}
+            ]
+            items = (await client.get(f"/v1/sessions/{session_id}/items")).json()["data"]
+            assert [item["type"] for item in items] == ["slash_command"]
+            assert items[0]["native_invocation"] == "/bundle:review rollout"
+            snapshot = (await client.get(f"/v1/sessions/{session_id}")).json()
+            assert snapshot["pending_inputs"] == []
+
+            hook = await client.post(
+                f"/v1/sessions/{session_id}/policies/evaluate",
+                json={
+                    "event": {
+                        "type": "PHASE_REQUEST",
+                        "data": {"user_content": "/bundle:review rollout"},
+                    }
+                },
+            )
+            assert hook.status_code == 200, hook.text
+            assert hook.json()["result"] == "POLICY_ACTION_ALLOW"
+            assert len(approvals) == 1
+        finally:
+            pending_inputs.resolve_oldest(session_id)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+async def test_native_request_hook_requires_approval_without_pending_input(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    pending: bool,
+) -> None:
+    from omnigent.runtime import pending_inputs
+
+    _patch_default_policies(monkeypatch, f"{__name__}._ask_for_request")
+    approvals: list[dict[str, Any]] = []
+
+    async def decline(_request: Any, **kwargs: Any) -> bool:
+        approvals.append(kwargs["data"])
+        return False
+
+    monkeypatch.setattr(sessions_routes, "_hold_native_ask_gate", decline)
+    agent = await create_test_agent(client)
+    session_id = await _create_session(client, agent["id"])
+    if pending:
+        pending_inputs.record(session_id, [{"type": "input_text", "text": "review rollout"}])
+    try:
+        hook = await client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json={"event": {"type": "PHASE_REQUEST", "data": {"user_content": "review rollout"}}},
+        )
+        assert hook.status_code == 200, hook.text
+        if pending:
+            assert hook.json()["result"] == "POLICY_ACTION_ALLOW"
+            assert approvals == []
+        else:
+            assert hook.json()["result"] == "POLICY_ACTION_DENY"
+            assert "Approve this request?" in hook.json()["reason"]
+            assert approvals == [{"user_content": "review rollout"}]
+    finally:
+        pending_inputs.resolve_oldest(session_id)
 
 
 async def test_tool_call_ask_holds_gate_and_returns_allow_on_accept(
