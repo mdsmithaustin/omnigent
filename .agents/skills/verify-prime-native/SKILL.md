@@ -113,11 +113,17 @@ match each clock profile.
 
 Supply the admitted full Prime 0.9.6 macOS arm64 bundle, the managed kernel's
 `bin/python` entry, and your xAI auth file. Replace the absolute paths below.
-Install the documented optional runtime dependencies first.
+Install the documented optional runtime dependencies first. Use
+`--cooperative-cleanup` only in a controlled namespace with no hostile concurrent
+namespace writer and with every recorded owned writer settled before removal.
+The acknowledgement admits this precondition. Permissions and watches do not
+exclude hostile same-UID writers, including the final check/syscall window.
+That threat remains BLOCKED. If you cannot admit the precondition, do not run
+this cleanup qualification.
 
 ```sh
 uv sync --locked --extra all --group dev
-PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/provider_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /tmp --case waits
+PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/provider_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /tmp --case waits --cooperative-cleanup
 ```
 
 A nonzero setup exit means prerequisites failed. Require probe exit zero,
@@ -132,7 +138,8 @@ native session, subscription generation, and original attachment baseline. Its
 original receive time must precede the actual tool end, with an absent adjacent
 end marker. After completion, require the tool result, exact queued user entry,
 and successful native final in that order. The public conversation must contain
-the matching literal reply and complete ordered tool evidence.
+the exact fresh public user prompt, matching literal reply, and complete ordered
+tool evidence.
 
 Prime writes the queued user entry after the tool finishes. Earlier runs failed
 the journal-before-end requirement; preserve those FAILED receipts. The queue
@@ -167,28 +174,82 @@ alone. Those limits have separate `NOT VERIFIED` observations and do not become
 required passing claims. MCP reconnect is a separate qualification.
 
 The provider probe uses one immutable reply baseline and fixed operation
-deadline for seed, steering, terminal, and memory checks. Native user, tool,
-and final identities must agree with the ordered public projection. An idle
-snapshot or completed carrier alone cannot prove the reply. Malformed current
-messages, an interrupted current final, or an incomplete public page fail the
-operation. Each HTTP request, response body, and close has a bounded budget.
+deadline for seed, steering, terminal, and memory checks. Require exactly one
+fresh public `message` with role `user` after that baseline and before the
+selected public final. Concatenate its `input_text` blocks without trimming or
+normalizing whitespace. The text must equal the owned prompt. Reject a baseline
+match, duplicate match, match after the final, or another user message between
+the match and final. Earlier different wait input is allowed. Missing or wrong
+text remains pending until the fixed deadline. Malformed content rejects.
+
+Inspect the captured match counts, IDs, absolute positions, freshness, prompt
+equality, and final position. Keep `native_user_id`, `public_user_id`,
+`native_reply_id`, and `public_reply_id` separate. User response IDs need not
+equal final response IDs. Require the existing ordered native tool and public
+projection checks too. An idle snapshot or completed carrier cannot prove the
+reply. An interrupted final or incomplete public page fails the operation.
+Each HTTP request, response body, and close has a bounded budget.
 
 Inspect `cleanup.json` in every child. Require empty errors, no exact owned
 survivors or private sockets, `forced_native_fallback: false`,
-`credential_copies_absent: true`, and unchanged source and deployment evidence.
+`credential_copies_absent: true`, `runtime_removed: true`, and unchanged source
+and deployment evidence. Also require `runtime-settlement.json`,
+`runtime-removal.json`, and `runtime-owner.json` for the same allocation.
+The owner receipt must record removal, `closed: true`, and no errors. A cleanup
+receipt alone cannot establish completed owner closure.
+
+Scratch belongs to an external owner allocated before fallible run construction.
+Its guard covers context entry and partial construction. Unknown construction
+or settlement cannot invent an empty process census. Before recursive removal,
+require settled processes, readers, handles, sockets, sanitized captures, source
+checks, and explicit allocation-bound fixture settlement. Provider-only cases
+supply `no_fixture`. A fixture caller must supply `settled_fixture` with retained
+closure evidence, or `failed_fixture` with errors. Omitting settlement is invalid.
+External compact roots require their own retirement receipts.
+
 When session DELETE removes the owned Prime directory, `retired_owned_trees`
 binds its original root and surviving parent identities to the exact session,
-DELETE step, successful HTTP status, and Darwin deletion event. HTTP success
-or path absence alone cannot prove removal. Recreated copies, roots, or changed
-ancestors fail ownership checks. A surviving original directory follows the
-ordinary cleanup path and needs no retirement record.
+DELETE step, successful HTTP status, and Darwin deletion event. The outer scratch
+removal instead records its checked descriptor-relative `rmdir` and held original
+vnode proof. HTTP success or path absence alone proves neither removal.
+See the [ownership and completion contract](../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
+for the Darwin predicate and its namespace-removal limits.
 
-The retained `provider-waits-m4g99h4o` run passed all five cases on the admitted
-Prime artifact with configured Grok 4.7. Its driver SHA256 is
-`a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
-The earlier `provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
-Changes to the probe, imported application source, or admitted runtime require
-fresh qualification.
+Keep failures and their receipts. Errors remain sticky even if a later check
+succeeds. A failure before removal retains uncertain scratch. A failure after
+removal retains removed-object provenance and blocks success. Retired credential
+retries inspect only known witnessed targets. They do not rediscover or delete
+recreated names, and they reject new descendants. Receipt or pin/watch closure
+failure cannot become successful cleanup.
+
+Require each child's `completion.json`. Its `result_sha256` and
+`manifest_sha256` must match that child's retained files, and `passed` must agree
+with its qualified observations. `qualified` in `result.json` or `manifest.json`
+is provisional. Owner exit, receipts, and pin/watch closure precede publication.
+Publication prepares, hashes, flushes, and closes artifacts before the final
+completion rename. Missing completion or mismatched hashes blocks child, CLI,
+and aggregate success. The expected wrong-memory child must have a committed
+`passed: false` result at the named mismatch with verified cleanup. It is not a
+successful normal case.
+
+The retained `provider-waits-m4g99h4o` run passed all five cases under its original
+checks on the admitted Prime artifact with configured Grok 4.7. Its driver SHA256
+is `a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
+That observer did not require the exact fresh public user prompt. Its cleanup
+could report success while outer scratch remained, and its result publication
+could precede mandatory finalization. Preserve the receipt as evidence for those
+bytes, not proof of the repaired contract. The earlier
+`provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
+
+The prompt and ownership repair at `ecf1bb4824a28913377109cefc3107f018fdb21a`
+has an independent scoped source verdict of PASS+NOTES and synthetic controls.
+Its provider SHA256 is
+`e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
+PR6's MCP caller, fixture settlement, publisher, and owner pin still need
+migration and independent review. Fresh live WAIT and MCP qualification on final
+integrated bytes remains pending. Changes to the probe, imported application
+source, or admitted runtime require fresh qualification. Full S01-S04 and the
+31-requirement program remain incomplete.
 
 ## Disposable daemon qualification
 

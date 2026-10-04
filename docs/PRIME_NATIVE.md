@@ -213,17 +213,42 @@ not a prerequisite for public use. This broader probe pins the tested macOS
 arm64 artifact. See the [full probe workflow](../.agents/skills/verify-prime-native/SKILL.md#full-adapter-probe)
 for the runtime prerequisites, negative controls, and evidence inventory.
 The [authenticated finite-wait workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
-uses configured xAI credentials and Grok 4.7. The five-case qualification passed
-with actual 60-second and 300-second Python tools, matched runner and pane idle
-controls, HTTP steering, and reattachment to the same living kernel. Its receipt distinguishes finite native
-`running` from unqualified genuine `waiting` and status-only protection during
-silence. The workflow requires copied-auth removal and exact owned-process
-absence. It does not inspect unrelated terminal input.
-HTTP 202 proves admission only. Require the exact native queue receipt before
-the tool ends, followed by its result, queued user entry, and successful native
-reply. The public conversation must contain the matching reply and ordered tool
-evidence. Earlier journal and pane cleanup failures remain FAILED. The fresh
-passing run also verified the wrong-memory control and clean cleanup in all
-five cases. See the workflow for the source hashes and cleanup receipts.
+uses configured xAI credentials and Grok 4.7. Its historical five-case run on
+`c22045ea9` passed its original checks with actual 60-second and 300-second Python
+tools, matched idle controls, HTTP steering, and reattachment to the same living
+kernel. The driver SHA256 was
+`a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
+Those bytes did not require exact public prompt ownership and could report
+cleanup success while outer scratch remained. Their result publication could
+also precede mandatory finalization. Preserve the historical receipts and their
+limits. Earlier journal and pane cleanup failures remain FAILED.
+
+Current verification requires the exact native queue receipt before the tool
+ends, followed by the tool result, queued user entry, and successful native reply.
+HTTP 202 proves admission only. The public conversation must contain exactly one
+fresh user message whose concatenated `input_text` equals the prompt, before the
+selected final and with no intervening user. Native and public user and final
+IDs remain independent. Require the ordered tool evidence and literal reply too.
+
+The provider command now requires `--cooperative-cleanup`. Admit that flag only
+for a controlled namespace with settled owned writers and no hostile concurrent
+namespace writer. The flag, private permissions, and watches do not exclude
+hostile same-UID interference in the final check/syscall window. That gap remains
+BLOCKED. Cleanup proves scoped namespace removal, not physical erasure or
+snapshot destruction.
+
+Require each child's settlement, removal, and owner-closure receipts, plus
+`completion.json` with matching result and manifest hashes. A provisional
+`qualified` value is insufficient. The external scratch owner covers fallible
+construction and requires explicit fixture settlement before removal. Errors
+remain sticky, including failures after removal or during receipt and handle
+closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
+for the command, required receipt fields, and retained-failure checks.
+
+The repaired helper has independent source review and synthetic verification.
+PR6's MCP ownership and publication migration remains pending. Fresh live WAIT
+and MCP receipts on final integrated bytes are still required. Genuine native
+`waiting`, status-only protection during complete output silence, one-hour and
+indefinite waits, and the full S01-S04 guarantees remain unqualified.
 The separate daemon probe is a qualification gate and currently exits nonzero
 for the published runtime's known gaps.

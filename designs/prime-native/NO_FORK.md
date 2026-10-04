@@ -102,9 +102,9 @@ A separate authenticated xAI run on revision `5001626a` verified launch, HTTP in
 
 All eight required checks passed. Cleanup recorded no fatal errors, owned survivors, remaining credential copies, cleanup errors, or forced native fallback. This historical run predates the `c22045ea9` pane-reaper selector change. It does not qualify finite waits, MCP reconnect, or the current observer. The retained `prior-provider-run-ltiscmii/result.json` and `manifest.json` identify the run. The driver hash is `860c55abe0b2c4120019ebdc01c22851fc89ffed8b7f9680734f2395a4413909`.
 
-The fresh authenticated finite-wait run `provider-waits-m4g99h4o` passed all five
-cases on the same admitted Prime 0.9.6 artifact with configured Grok 4.7. It ran
-on `c22045ea9` with provider driver SHA256
+The historical authenticated finite-wait run `provider-waits-m4g99h4o` passed all five
+cases under its original checks on the same admitted Prime 0.9.6 artifact with
+configured Grok 4.7. It ran on `c22045ea9` with provider driver SHA256
 `a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
 The [finite-wait workflow](../../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 provides the command and required evidence.
@@ -121,14 +121,107 @@ fallback. The independent audit passed 1,920 checks against the retained receipt
 
 Earlier journal failures and `provider-waits-ug3ppd91` remain FAILED. That run's
 pane cleanup failed after session deletion removed its owned credential tree.
-The current driver records the original directory deletion and rejects recreated
-copies or changed ownership. Finite native `running` is qualified. Genuine native
-`waiting`, status-only protection during complete output silence, one-hour and
-indefinite waits, and MCP reconnect remain unqualified.
+The passing finite-wait driver recorded session-directory deletion and rejected
+recreated copies or
+changed ownership. Its finite native `running` result is evidence for the recorded
+source bytes only. It did not require the exact fresh public user prompt, could
+report cleanup success with retained outer scratch, and could publish a passing
+result before later mandatory finalization failed. The historical receipt and
+its audit do not qualify the repaired contract. Genuine native `waiting`,
+status-only protection during complete output silence, one-hour and indefinite
+waits, and MCP reconnect remain unqualified.
+
+## Provider probe ownership and completion
+
+The combined repair at `ecf1bb4824a28913377109cefc3107f018fdb21a` has an independent
+scoped source verdict of PASS+NOTES and 143 passing synthetic tests. Its provider
+SHA256 is `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
+This source verdict does not qualify a live provider or complete the roadmap.
+PR6 still needs its MCP constructor, fixture settlement, publisher, readers, and
+owner pin migrated to these APIs and independently reviewed. Fresh live WAIT
+and MCP receipts are required on the final integrated bytes. Independent review
+of these maintained documentation changes also remains required.
+
+A reply operation retains an immutable baseline and fixed deadline. Exactly one
+fresh public user message must concatenate valid `input_text` blocks to the
+owned prompt without whitespace normalization. The match must follow the
+baseline and precede the selected final, with no intervening public user.
+A stale, duplicate, late, or malformed match rejects. Earlier different wait
+input is allowed. Missing or wrong text stays pending until the fixed deadline.
+Captures retain counts, positions, freshness, equality, and the selected final
+position. Native user, public user, native final, and public final have separate
+IDs. A user's response ID need not equal the final's response ID. Native tool
+ordering and the complete ordered public projection remain required.
+
+`_RuntimeOwner.allocate(request, evidence)` owns scratch before `_OwnedRun`
+construction. The owner guard covers entry and partial subclass construction.
+Unknown construction cannot manufacture settlement. `cleanup(external_settlement)`
+requires an allocation-bound `_ExternalSettlement`. Provider-only cases use
+`no_fixture`. Fixture callers must record all generations, processes, readers,
+handles, threads, and endpoints closed before supplying `settled_fixture` with
+retained evidence. Failure or uncertainty requires `failed_fixture` with errors.
+PR6 has not yet supplied that real fixture lifecycle proof.
+
+Process census, sanitized capture completion, closed readers and sockets, source
+checks, and explicit fixture settlement precede recursive scratch mutation.
+External compact roots need independent retirement receipts. No-follow
+descriptor-relative traversal checks identity and rejects unsafe descendants
+and observed substitution. There is no pathname deletion fallback or parent
+sweep. Failures before removal retain uncertain scratch. Once removal is proved,
+the owner retains removed provenance before receipt I/O or closure. Later errors
+remain sticky and block success. Retired credential retries inspect only known
+witnessed targets without rediscovery or deletion of recreated names. New
+registrations beneath retired roots reject.
+
+The CLI caller must explicitly admit `--cooperative-cleanup`. A programmatic
+caller must pass `cooperative_cleanup=True` with the other required `Request`
+arguments. This precondition means a controlled namespace with all recorded
+owned writers settled and no hostile
+concurrent namespace writer. Permissions, mutexes, and watches do not enforce
+exclusion of arbitrary hostile same-UID writers. Interference between the final
+check and syscall remains BLOCKED, not a passing substitution control.
+
+On the admitted Darwin/APFS host, the removal predicate continuously holds the
+original directory and parent descriptors with device, inode, type, ancestor,
+and permitted-alias witnesses. It requires a registered and validated original
+vnode watch, an empty prior-event admission poll, and successful checked
+descriptor-relative final `rmdir`. The original must report `NOTE_DELETE` and
+unchanged held device, inode, and directory type. Surviving parents, ancestors,
+and aliases must still match, and the original name must be absent under a
+no-follow lookup. Observed rename/revoke, watch errors, missing events,
+substitution, and recreated names reject qualification.
+
+Link count and `NOTE_LINK` are diagnostic only. Genuine removal on the grounded
+APFS host retained `st_nlink == 2`. The earlier zero-link predicate and its failed
+receipts remain historical evidence, not the current admission requirement.
+Name absence alone accepts rename-away. `NOTE_DELETE` alone can describe
+rename-over while a replacement remains. The combined predicate proves original
+vnode namespace removal under the cooperative precondition. It does not prove
+physical reclamation, secure erasure, snapshot destruction, hostile exclusion,
+or exhaustive event history. Kqueue flags can coalesce.
+
+`runtime-settlement.json` records the settled run. `runtime-removal.json` binds
+the allocation to the original root, parent, deletion event, and namespace-removal
+precondition. `runtime-owner.json` must record that allocation removed, the owner
+closed, and no errors. Session `retired_owned_trees` records retain their separate
+session DELETE operation and HTTP status. Outer scratch proof uses its actual
+`rmdir`, with no invented session operation.
+
+The guarded run returns an unpublished `_CaseDraft`. Owner exit, required
+receipts, credential finalization, and pin/watch closure finish before
+`_publish_case`. Result and manifest `qualified` values are provisional.
+Publication inventories, hashes, flushes, and closes artifacts before the final
+rename commits `completion.json`. Its `result_sha256` and `manifest_sha256` bind
+success to exact retained bytes. No mandatory owner operation follows that
+successful rename. `CaseResult.passed`, wrong-memory control acceptance, CLI,
+and aggregate results require committed matching hashes. The wrong-memory child
+must commit a false result at its named mismatch with verified cleanup.
+Missing completion, failed preparation, or mismatched hashes cannot authorize
+success. Never rewrite historical receipts to meet this new contract.
 
 ## Original acceptance criteria
 
-Every original ID remains visible. A narrower passing observation does not qualify a stronger original guarantee.
+Every original ID remains visible. The [literal acceptance requirements](CONTRACT.md#acceptance-matrix) remain unchanged. A narrower passing observation does not qualify a stronger original guarantee.
 
 | ID | Current disposition |
 | --- | --- |
@@ -148,7 +241,7 @@ Every original ID remains visible. A narrower passing observation does not quali
 | N14 | A real Prime RLM child executed a nonce write without replacing the root's native identity, control incarnation, or transcript. Prime recursive lineage remains separate from Omnigent declared roles. Full descendant visibility is unqualified. |
 | N15 | Mixed declared-role compositions and completion-dependent Prime children remain unsupported. |
 | N16 | Prime's native long-running controls remain available in its terminal. Omnigent goals, heartbeat, and schedule controls need separate qualification. |
-| N17 | Actual 60-second and 300-second native Python tools passed with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
+| N17 | Historical source-bound evidence only. Fresh final-byte WAIT qualification remains pending. Actual 60-second and 300-second native Python tools passed with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
 | N18 | Inbox delivery is admission, not completion. Root quiescence is observed. Whole-descendant settlement remains unqualified. |
 | N19 | A declared MCP tool executed through Omnigent's relay with its literal result. The wrong-result control failed at that assertion with clean cleanup. Reconnect availability is unqualified. |
 | N20 | Root relayed write denial verified through HTTP and terminal input with absent marker files. The opposite side-effect control failed at its named assertion. Universal allow, deny, approval, native-client, and descendant coverage remains unmet. |
@@ -160,7 +253,7 @@ Every original ID remains visible. A narrower passing observation does not quali
 | S01 | Whole-tree filesystem confinement is unqualified. A root tool veto cannot establish it. |
 | S02 | Whole-tree network confinement is unqualified. |
 | S03 | Private runtime ownership does not qualify endpoint isolation from a contained process. |
-| S04 | Owned runtime cleanup is verified locally. Whole external-boundary teardown remains unqualified. |
+| S04 | Historical local cleanup receipts are source-bound and do not prove outer scratch removal. The repaired owner has synthetic namespace-removal evidence under a cooperative precondition. Fresh live WAIT/MCP qualification, hostile final-window safety, and whole external-boundary teardown remain unqualified. |
 | M01 | Published 0.9.6 is the admitted release. The failed daemon proof prevents stronger compatibility claims. |
 | M02 | Vendor patches are excluded. The adapter uses public extension APIs and explicit unsupported outcomes. |
 
