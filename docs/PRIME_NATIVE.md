@@ -245,9 +245,24 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The repaired helper has independent source review and synthetic verification.
-PR6's MCP ownership and publication migration remains pending. Fresh live WAIT
-and MCP receipts on final integrated bytes are still required. Genuine native
+The current provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+Its source unit passed independent review in the private cumulative context at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the current PR5
+context and documentation remains pending. PR6 integration and review remain
+separate. Fresh live WAIT and MCP receipts on final integrated bytes are required.
+
+For a failed reply, inspect the current `<operation>-native-failure.json`.
+The separate predicates receipt marks stale state as `previous_poll`. Missing,
+null, and empty-string errors are absent; non-string errors are malformed and
+present. The bounded failure observation contains no native error text, sample,
+or hash. Its coarse class does not establish provider authentication or cause.
+The owner captures the expected CLI log alias as metadata only, then removes
+it only after writer settlement and matching identity checks. See the
+[ownership and failure contract](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
+for exact receipt requirements and the retained failed WAIT record.
+
+Genuine native
 `waiting`, status-only protection during complete output silence, one-hour and
 indefinite waits, and the full S01-S04 guarantees remain unqualified.
 The separate daemon probe is a qualification gate and currently exits nonzero

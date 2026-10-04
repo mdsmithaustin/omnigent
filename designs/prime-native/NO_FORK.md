@@ -142,6 +142,50 @@ owner pin migrated to these APIs and independently reviewed. Fresh live WAIT
 and MCP receipts are required on the final integrated bytes. Independent review
 of these maintained documentation changes also remains required.
 
+The current PR5 provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+Its failure-observation and CLI-alias source unit has independent PASS in the
+private cumulative review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`.
+That review also passed its private documentation context. Independent review
+of the current PR5 context and these documentation changes remains pending.
+Fresh live WAIT qualification on the final integrated bytes remains pending.
+
+Historical MCP source review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
+returned PASS+NOTES for MCP SHA256
+`b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
+That private historical record does not establish MCP implementation or admission
+on PR5. The actual PR6 branch needs separate integration, independent review,
+and fresh live MCP qualification.
+
+The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
+remains FAILED. All five seed cases have false completion records and retained
+allocations. Their native cause and first rejected filesystem entry remain
+unknown. The later absence of 69 recorded PIDs proves only those identities
+absent, not writer settlement or scratch removal. Do not retrospectively remove
+those allocations using current metadata or rewrite their historical receipts.
+
+For the current rejected entry, inspect `<operation>-native-failure.json`.
+`<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.
+The failure receipt contains bounded validated IDs, baseline counts, positions,
+an allowlisted stop reason, error presence, and a coarse error class. Missing,
+null, and empty-string errors are absent. Non-string errors are present and
+malformed, including empty lists, empty objects, false, and zero. Classification
+reads at most 4096 characters and records unknown or truncated state explicitly.
+No native error sample, content, or hash enters this observation. A coarse class
+does not attest a backend cause, provider authentication, or availability.
+The fixed failure reason remains `native_assistant_not_successful`.
+
+Only `data/logs/cli/latest-cli.log` is an admitted metadata-only CLI alias.
+Capture and removal receipts bind the allocation, exact path, checked parent,
+and full no-follow leaf identity. Capture reads neither the alias nor its target
+value. Canonical single-link regular logs are captured once. Settled writers and
+matching removal-time identity permit descriptor-relative unlink of that alias.
+Unknown aliases, hardlinks, replaced ancestors, and wrong allocations reject.
+Traversal permits at most 32 levels, 10000 visits, and 30 seconds. Capture also
+limits source bytes to 64 MiB. Exhaustion and receipt or closure errors remain
+sticky. These witnesses require a cooperative namespace and do not prove
+hostile same-UID exclusion in the final check/syscall window.
+
 A reply operation retains an immutable baseline and fixed deadline. Exactly one
 fresh public user message must concatenate valid `input_text` blocks to the
 owned prompt without whitespace normalization. The match must follow the
@@ -160,7 +204,8 @@ requires an allocation-bound `_ExternalSettlement`. Provider-only cases use
 `no_fixture`. Fixture callers must record all generations, processes, readers,
 handles, threads, and endpoints closed before supplying `settled_fixture` with
 retained evidence. Failure or uncertainty requires `failed_fixture` with errors.
-PR6 has not yet supplied that real fixture lifecycle proof.
+The actual PR6 branch still needs independent review of its integrated fixture
+lifecycle proof. Historical private MCP review does not admit that branch.
 
 Process census, sanitized capture completion, closed readers and sockets, source
 checks, and explicit fixture settlement precede recursive scratch mutation.

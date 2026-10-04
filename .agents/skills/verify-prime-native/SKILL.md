@@ -251,6 +251,57 @@ integrated bytes remains pending. Changes to the probe, imported application
 source, or admitted runtime require fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
 
+The current PR5 provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+Its failure-observation and CLI-alias source unit has independent PASS in the
+private cumulative review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`.
+That review also passed its private documentation context. Independent review
+of the current PR5 context and these documentation changes remains pending.
+Fresh live WAIT qualification on the final integrated bytes remains pending.
+
+Historical MCP source review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
+returned PASS+NOTES for MCP SHA256
+`b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
+That private historical record does not establish MCP implementation or admission
+on PR5. The actual PR6 branch needs separate integration, independent review,
+and fresh live MCP qualification.
+
+The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
+remains FAILED. All five seed cases have false completion records and retained
+allocations. Their native cause and first rejected filesystem entry remain
+unknown. The later absence of 69 recorded PIDs proves only those identities
+absent, not writer settlement or scratch removal. Do not retrospectively remove
+those allocations using current metadata or rewrite their historical receipts.
+
+For a failed native reply, inspect `<operation>-native-failure.json` separately
+from `<operation>-native-predicates.json`. The latter records
+`observation_state: previous_poll`. Its predicates may be stale and do not
+describe the current rejected entry. The failure observation binds the session,
+baseline, native positions,
+and validated IDs to the rejected entry. It records an allowlisted stop reason,
+error presence, coarse error class, and explicit truncation or unknown state.
+Missing, null, and empty-string errors are absent. Every other non-string error
+is present and malformed, including empty lists, empty objects, false, and zero.
+Invalid or overlong IDs are omitted. Classification examines at most 4096
+characters and publishes no native error text, sample, or hash. A class does
+not attest provider authentication or availability. A native failure still
+rejects with `native_assistant_not_successful`. A completed publication records
+`passed: false`. Missing publication cannot authorize success.
+
+The owner admits only `data/logs/cli/latest-cli.log` as a metadata-only alias.
+Inspect `runtime-cli-alias-capture.json` and `runtime-cli-alias-remove.json`.
+Both bind the allocation, checked parent, exact relative path, and no-follow
+leaf identity, including device, inode, mode, UID, link count, and ctime.
+Capture never reads the alias or its target value. Removal
+requires settled writers and the matching identity before descriptor-relative
+unlink. Canonical single-link regular logs are captured once. Unknown aliases,
+hardlinks, replaced ancestors, and wrong allocations still reject.
+`runtime-traversal-rejection.json` records the first rejection with unknown
+paths redacted. Each traversal permits at most 32 directory levels, 10000
+visits, and 30 seconds. Capture also limits total source bytes to 64 MiB.
+Exhaustion is a sticky failure. Cooperative namespace ownership remains required.
+These bounds and witnesses do not exclude a hostile same-user syscall race.
+
 ## Disposable daemon qualification
 
 `scripts/daemon_probe.py` uses the real public supervisor socket and native terminal alongside an isolated model fixture. It exercises actual Python execution, command deduplication, a lost reply, supervisor adoption, replacement, replay classification, worker recovery, and scoped shutdown. It never changes Prime's source or the production adapter transport.
