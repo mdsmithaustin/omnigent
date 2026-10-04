@@ -1,0 +1,488 @@
+{
+  "source_head": "12aef436e087fe74193cd9e52f4b14fbfd45e52e",
+  "migration_sha256": "f7093301582c75af6a16db03bc27f4806d0447d3867f85899dfc4431638830b6",
+  "backend": "mysql",
+  "independent_operator_qualified": false,
+  "tables": {
+    "session_work_admission": {
+      "columns": [
+        {
+          "name": "workspace_id",
+          "type": "BIGINT",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "autoincrement": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.BIGINT",
+          "type_sql": "BIGINT"
+        },
+        {
+          "name": "session_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "agent_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": true,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "runner_id",
+          "type": "VARCHAR(64)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.VARCHAR",
+          "type_sql": "VARCHAR(64)"
+        },
+        {
+          "name": "incarnation",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "reservation_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": true,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        }
+      ],
+      "pk": {
+        "constrained_columns": [
+          "workspace_id",
+          "session_id"
+        ],
+        "name": null
+      },
+      "checks": [],
+      "indexes": [],
+      "unique_constraints": [],
+      "foreign_keys": [],
+      "show_create_table": [
+        {
+          "Table": "session_work_admission",
+          "Create Table": "CREATE TABLE `session_work_admission` (\n  `workspace_id` bigint NOT NULL,\n  `session_id` binary(16) NOT NULL,\n  `agent_id` binary(16) DEFAULT NULL,\n  `runner_id` varchar(64) NOT NULL,\n  `incarnation` binary(16) NOT NULL,\n  `reservation_id` binary(16) DEFAULT NULL,\n  PRIMARY KEY (`workspace_id`,`session_id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
+        }
+      ],
+      "show_index": [
+        {
+          "Table": "session_work_admission",
+          "Non_unique": 0,
+          "Key_name": "PRIMARY",
+          "Seq_in_index": 1,
+          "Column_name": "workspace_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work_admission",
+          "Non_unique": 0,
+          "Key_name": "PRIMARY",
+          "Seq_in_index": 2,
+          "Column_name": "session_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        }
+      ],
+      "information_schema_columns": [
+        {
+          "COLUMN_NAME": "workspace_id",
+          "COLUMN_TYPE": "bigint",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "session_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "agent_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "YES",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "runner_id",
+          "COLUMN_TYPE": "varchar(64)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "COLUMN_NAME": "incarnation",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "reservation_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "YES",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        }
+      ]
+    },
+    "session_work": {
+      "columns": [
+        {
+          "name": "workspace_id",
+          "type": "BIGINT",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "autoincrement": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.BIGINT",
+          "type_sql": "BIGINT"
+        },
+        {
+          "name": "session_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "operation_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "agent_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": true,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "runner_id",
+          "type": "VARCHAR(64)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.VARCHAR",
+          "type_sql": "VARCHAR(64)"
+        },
+        {
+          "name": "incarnation",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        },
+        {
+          "name": "kind",
+          "type": "SMALLINT",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "autoincrement": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.SMALLINT",
+          "type_sql": "SMALLINT"
+        },
+        {
+          "name": "state",
+          "type": "SMALLINT",
+          "default": null,
+          "comment": null,
+          "nullable": false,
+          "autoincrement": false,
+          "type_class": "sqlalchemy.dialects.mysql.types.SMALLINT",
+          "type_sql": "SMALLINT"
+        },
+        {
+          "name": "claim_id",
+          "type": "BINARY(16)",
+          "default": null,
+          "comment": null,
+          "nullable": true,
+          "type_class": "sqlalchemy.sql.sqltypes.BINARY",
+          "type_sql": "BINARY(16)"
+        }
+      ],
+      "pk": {
+        "constrained_columns": [
+          "workspace_id",
+          "session_id",
+          "operation_id"
+        ],
+        "name": null
+      },
+      "checks": [
+        {
+          "name": "ck_session_work_claim",
+          "sqltext": "(((`state` in (1,5)) and (`claim_id` is null)) or ((`state` in (2,3,4)) and (`claim_id` is not null)))"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "ix_session_work_unfinished",
+          "column_names": [
+            "workspace_id",
+            "session_id",
+            "state",
+            "operation_id"
+          ],
+          "unique": false
+        }
+      ],
+      "unique_constraints": [],
+      "foreign_keys": [],
+      "show_create_table": [
+        {
+          "Table": "session_work",
+          "Create Table": "CREATE TABLE `session_work` (\n  `workspace_id` bigint NOT NULL,\n  `session_id` binary(16) NOT NULL,\n  `operation_id` binary(16) NOT NULL,\n  `agent_id` binary(16) DEFAULT NULL,\n  `runner_id` varchar(64) NOT NULL,\n  `incarnation` binary(16) NOT NULL,\n  `kind` smallint NOT NULL,\n  `state` smallint NOT NULL,\n  `claim_id` binary(16) DEFAULT NULL,\n  PRIMARY KEY (`workspace_id`,`session_id`,`operation_id`),\n  KEY `ix_session_work_unfinished` (`workspace_id`,`session_id`,`state`,`operation_id`),\n  CONSTRAINT `ck_session_work_claim` CHECK ((((`state` in (1,5)) and (`claim_id` is null)) or ((`state` in (2,3,4)) and (`claim_id` is not null))))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
+        }
+      ],
+      "show_index": [
+        {
+          "Table": "session_work",
+          "Non_unique": 0,
+          "Key_name": "PRIMARY",
+          "Seq_in_index": 1,
+          "Column_name": "workspace_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 0,
+          "Key_name": "PRIMARY",
+          "Seq_in_index": 2,
+          "Column_name": "session_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 0,
+          "Key_name": "PRIMARY",
+          "Seq_in_index": 3,
+          "Column_name": "operation_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 1,
+          "Key_name": "ix_session_work_unfinished",
+          "Seq_in_index": 1,
+          "Column_name": "workspace_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 1,
+          "Key_name": "ix_session_work_unfinished",
+          "Seq_in_index": 2,
+          "Column_name": "session_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 1,
+          "Key_name": "ix_session_work_unfinished",
+          "Seq_in_index": 3,
+          "Column_name": "state",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        },
+        {
+          "Table": "session_work",
+          "Non_unique": 1,
+          "Key_name": "ix_session_work_unfinished",
+          "Seq_in_index": 4,
+          "Column_name": "operation_id",
+          "Collation": "A",
+          "Cardinality": 0,
+          "Sub_part": null,
+          "Packed": null,
+          "Null": "",
+          "Index_type": "BTREE",
+          "Comment": "",
+          "Index_comment": "",
+          "Visible": "YES",
+          "Expression": null
+        }
+      ],
+      "information_schema_columns": [
+        {
+          "COLUMN_NAME": "workspace_id",
+          "COLUMN_TYPE": "bigint",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "session_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "operation_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "agent_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "YES",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "runner_id",
+          "COLUMN_TYPE": "varchar(64)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": "utf8mb4_0900_ai_ci"
+        },
+        {
+          "COLUMN_NAME": "incarnation",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "kind",
+          "COLUMN_TYPE": "smallint",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "state",
+          "COLUMN_TYPE": "smallint",
+          "IS_NULLABLE": "NO",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        },
+        {
+          "COLUMN_NAME": "claim_id",
+          "COLUMN_TYPE": "binary(16)",
+          "IS_NULLABLE": "YES",
+          "COLUMN_DEFAULT": null,
+          "EXTRA": "",
+          "COLLATION_NAME": null
+        }
+      ]
+    }
+  },
+  "server_version": "8.0.46"
+}
