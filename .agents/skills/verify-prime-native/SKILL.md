@@ -263,6 +263,55 @@ Changes to the probe, imported application source, or admitted runtime require
 fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
 
+The current provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+The current MCP helper SHA256 is
+`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
+Its `OWNER_SHA256` admits that exact provider helper. Both source units and their
+private documentation context passed independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The historical ecf1bb and ad945
+verdicts above apply only to their named revisions and hashes.
+Independent review of the current combined PR6 context and these documentation
+changes remains pending. Fresh live WAIT and MCP qualification on the final
+integrated bytes remains required. Earlier context passes do not qualify these
+new source bytes or replace that live proof.
+
+The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
+remains FAILED. All five seed cases have false completion records and retained
+allocations. Their native cause and first rejected filesystem entry remain
+unknown. The later absence of 69 recorded PIDs proves only those identities
+absent, not writer settlement or scratch removal. Do not retrospectively remove
+those allocations using current metadata or rewrite their historical receipts.
+
+For a failed native reply, inspect `<operation>-native-failure.json` separately
+from `<operation>-native-predicates.json`. The latter records
+`observation_state: previous_poll`. Its predicates may be stale and do not
+describe the current rejected entry. The failure observation binds the session,
+baseline, native positions,
+and validated IDs to the rejected entry. It records an allowlisted stop reason,
+error presence, coarse error class, and explicit truncation or unknown state.
+Missing, null, and empty-string errors are absent. Every other non-string error
+is present and malformed, including empty lists, empty objects, false, and zero.
+Invalid or overlong IDs are omitted. Classification examines at most 4096
+characters and publishes no native error text, sample, or hash. A class does
+not attest provider authentication or availability. A native failure still
+rejects with `native_assistant_not_successful`. A completed publication records
+`passed: false`. Missing publication cannot authorize success.
+
+The owner admits only `data/logs/cli/latest-cli.log` as a metadata-only alias.
+Inspect `runtime-cli-alias-capture.json` and `runtime-cli-alias-remove.json`.
+Both bind the allocation, checked parent, exact relative path, and no-follow
+leaf identity, including device, inode, mode, UID, link count, and ctime.
+Capture never reads the alias or its target value. Removal
+requires settled writers and the matching identity before descriptor-relative
+unlink. Canonical single-link regular logs are captured once. Unknown aliases,
+hardlinks, replaced ancestors, and wrong allocations still reject.
+`runtime-traversal-rejection.json` records the first rejection with unknown
+paths redacted. Each traversal permits at most 32 directory levels, 10000
+visits, and 30 seconds. Capture also limits total source bytes to 64 MiB.
+Exhaustion is a sticky failure. Cooperative namespace ownership remains required.
+These bounds and witnesses do not exclude a hostile same-user syscall race.
+
 ## Qualify regular HTTP MCP reconnect
 
 `scripts/mcp_probe.py` drives one declared regular HTTP MCP tool through the
@@ -359,9 +408,13 @@ Its hashes identify the executed bytes, not a subsequently created commit.
 The three earlier actual MCP receipts remain FAILED. This historical case
 qualifies regular HTTP native error transport and recovery on those bytes only.
 It predates allocation-bound settlement and completion publication. It cannot
-qualify the migrated owner contract. The exact provider and MCP hashes above
-have completed independent scoped source review with PASS+NOTES. Fresh live
-WAIT and MCP qualification on final integrated bytes remains pending.
+qualify the migrated owner contract. Historical independent source review returned
+PASS+NOTES for provider revision `ecf1bb4824a28913377109cefc3107f018fdb21a`
+and MCP revision `ad945096ed6da2c1ffe866a33841188f77770b4f`, with their older
+hashes recorded above. Current source admission is the separate cumulative
+review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent combined-context
+and documentation review, and fresh live WAIT and MCP qualification on final
+integrated bytes, remain pending.
 The historical case does not qualify real MRTR callbacks or approval-state recovery, stdio, all servers or providers, or
 the whole N19 requirement. See [the acceptance record](../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
 for the remaining matrix.

@@ -206,6 +206,48 @@ bytes do not inherit historical qualification. Fresh live WAIT and MCP receipts
 are required on the final integrated bytes. Independent review of these
 maintained documentation changes also remains required.
 
+The current provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+The current MCP helper SHA256 is
+`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
+Its `OWNER_SHA256` admits that exact provider helper. Both source units and their
+private documentation context passed independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The historical ecf1bb and ad945
+verdicts above apply only to their named revisions and hashes.
+Independent review of the current combined PR6 context and these documentation
+changes remains pending. Fresh live WAIT and MCP qualification on the final
+integrated bytes remains required. Earlier context passes do not qualify these
+new source bytes or replace that live proof.
+
+The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
+remains FAILED. All five seed cases have false completion records and retained
+allocations. Their native cause and first rejected filesystem entry remain
+unknown. The later absence of 69 recorded PIDs proves only those identities
+absent, not writer settlement or scratch removal. Do not retrospectively remove
+those allocations using current metadata or rewrite their historical receipts.
+
+For the current rejected entry, inspect `<operation>-native-failure.json`.
+`<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.
+The failure receipt contains bounded validated IDs, baseline counts, positions,
+an allowlisted stop reason, error presence, and a coarse error class. Missing,
+null, and empty-string errors are absent. Non-string errors are present and
+malformed, including empty lists, empty objects, false, and zero. Classification
+reads at most 4096 characters and records unknown or truncated state explicitly.
+No native error sample, content, or hash enters this observation. A coarse class
+does not attest a backend cause, provider authentication, or availability.
+The fixed failure reason remains `native_assistant_not_successful`.
+
+Only `data/logs/cli/latest-cli.log` is an admitted metadata-only CLI alias.
+Capture and removal receipts bind the allocation, exact path, checked parent,
+and full no-follow leaf identity. Capture reads neither the alias nor its target
+value. Canonical single-link regular logs are captured once. Settled writers and
+matching removal-time identity permit descriptor-relative unlink of that alias.
+Unknown aliases, hardlinks, replaced ancestors, and wrong allocations reject.
+Traversal permits at most 32 levels, 10000 visits, and 30 seconds. Capture also
+limits source bytes to 64 MiB. Exhaustion and receipt or closure errors remain
+sticky. These witnesses require a cooperative namespace and do not prove
+hostile same-UID exclusion in the final check/syscall window.
+
 A reply operation retains an immutable baseline and fixed deadline. Exactly one
 fresh public user message must concatenate valid `input_text` blocks to the
 owned prompt without whitespace normalization. The match must follow the
@@ -232,8 +274,9 @@ Only a written `fixture-cleanup.json` can support `settled_fixture`. Startup,
 stop, close, endpoint, or receipt failure yields `failed_fixture` with sticky
 errors. MCP rejects `no_fixture`, missing settlement, and another allocation's
 settlement. Failed settlement prevents runtime removal and retains scratch.
-Independent scoped source review is complete with PASS+NOTES on the hashes
-above. Fresh final-byte live proof remains pending.
+The current fixture source unit passed the cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the combined
+PR6 context and documentation, and fresh final-byte live proof, remain pending.
 
 Process census, sanitized capture completion, closed readers and sockets, source
 checks, and explicit fixture settlement precede recursive scratch mutation.

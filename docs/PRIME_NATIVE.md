@@ -186,9 +186,11 @@ passed on parent revision `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
 The later MCP working-tree repair passed one declared regular HTTP reconnect
 case with configured xAI credentials and Grok 4.7. Finite waits have not been
 rerun on those changed MCP and extension bytes. Each receipt identifies its
-source, so neither result qualifies an untested final commit. The MCP owner
-migration has completed independent scoped source review with PASS+NOTES.
-The verification workflow records the exact reviewed provider and MCP hashes.
+source, so neither result qualifies an untested final commit. The current provider
+and MCP source units passed independent cumulative review
+at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the combined
+PR6 context and documentation remains pending. The verification workflow records
+the current hashes separately from historical PASS+NOTES verdicts.
 Fresh live WAIT and MCP receipts on final integrated bytes remain pending.
 
 The next qualification priorities follow the gaps in the
@@ -294,11 +296,27 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The repaired provider helper and PR6's MCP ownership and publication migration
-have independent scoped source verdicts of PASS+NOTES and synthetic verification.
-The [ownership contract](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
-records their exact reviewed hashes. Fresh live WAIT and MCP receipts on final
-integrated bytes are still required. Genuine native
+The current provider helper SHA256 is
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+The current MCP helper SHA256 is
+`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
+Its owner pin matches that provider helper. Both source units passed independent
+review in the private cumulative context at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the current
+combined PR6 context and documentation remains pending. Fresh live WAIT and MCP
+receipts on final integrated bytes are required.
+
+For a failed reply, inspect the current `<operation>-native-failure.json`.
+The separate predicates receipt marks stale state as `previous_poll`. Missing,
+null, and empty-string errors are absent; non-string errors are malformed and
+present. The bounded failure observation contains no native error text, sample,
+or hash. Its coarse class does not establish provider authentication or cause.
+The owner captures the expected CLI log alias as metadata only, then removes
+it only after writer settlement and matching identity checks. See the
+[ownership and failure contract](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
+for exact receipt requirements and the retained failed WAIT record.
+
+Genuine native
 `waiting`, status-only protection during complete output silence, one-hour and
 indefinite waits, and the full S01-S04 guarantees remain unqualified.
 The separate daemon probe is a qualification gate and currently exits nonzero
