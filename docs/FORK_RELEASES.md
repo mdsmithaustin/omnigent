@@ -8,7 +8,7 @@ The certificate records source and artifact integrity under the reviewed workflo
 
 ## Check the source
 
-Use a clean checkout of the authoritative release branch with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
+Use a clean checkout of the authoritative permanent branch `release/v0.16.0-mdsmithaustin.1` with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
 
 Run these commands from the repository root. Any nonzero exit means the check failed.
 
@@ -39,10 +39,12 @@ The workflow runs source validation, all-files lint and type checks, default ups
 
 Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main`, `release/**`, and `codex/fork-release-*`. A development `main` history that violates the pin cannot certify.
 
-Run a manual check from a pushed, reviewed release branch with publication disabled. Replace `RELEASE_BRANCH` with that branch. A nonzero dispatch exit means the request failed. The run must later show every required job and `certificate` as successful.
+GitHub requires the workflow file on the repository default branch before it accepts [manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Push the reviewed source to permanent branch `release/v0.16.0-mdsmithaustin.1` and let its push workflow pass every required check. After independent review and those checks succeed, select that release branch as the fork default. This keeps the default pinned to released source while retaining development `main` and its history.
+
+Then run a manual check with publication disabled. A nonzero dispatch exit means the request failed. The run must later show every required job and `certificate` as successful.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref RELEASE_BRANCH -f publish=false
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.16.0-mdsmithaustin.1 -f publish=false
 ```
 
 The `fork-certified-RUN_ID-RUN_ATTEMPT` artifact contains `dist/` with eight distributions and `evidence/` with `certificate.json`, `ui-inventory.json`, and `SHA256SUMS`. The certificate binds the final source SHA, tree, payload anchor, upstream release identity, addon inventory, manifest digest, workflow, run, checks, UI inventory, and artifact hashes.
@@ -76,7 +78,7 @@ Install future fork updates from their verified fork assets. `omni upgrade` for 
 Publication requires an explicit manual dispatch with `publish=true` on the reviewed release branch. It is disabled by default. This command authorizes a new run and its final publication job. A nonzero dispatch exit or any failed required job prevents publication.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref RELEASE_BRANCH -f publish=true
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.16.0-mdsmithaustin.1 -f publish=true
 ```
 
 Only the final publisher has release-write permission. It validates repository, dispatch intent, workflow, run, source, tag, certificate, checksums, UI evidence, and downloaded artifact bytes. It promotes those bytes to `mdsmithaustin/omnigent` GitHub Releases without rebuilding. A tag pointing elsewhere or existing different assets fail without overwrite. An existing identical release succeeds without changing it.
@@ -94,3 +96,5 @@ Replay the original addons in order with `git cherry-pick -n FULL_SOURCE_SHA`. R
 Run all changed addon unit and server tests on the integrated result. Then stamp the selected stable version plus the next fork revision with `scripts/update_versions.py pre-release --new-version VERSION`. Run `uv lock`, normalize with `scripts/normalize_uv_lock_registry.py uv.lock`, check versions and frozen resolution, and retain upstream third-party lock entries. Inventory every repair and the version commit. Finish any measured release-gate repairs, rerun their checks, and use the last inventoried payload commit as the anchor. All four package versions must still match.
 
 Copy the reviewed release tooling after the anchor and regenerate `.github/fork-release.json` with the new stable identity, exact ordered commit inventory, anchor, and version. Review both the payload and tooling tail. Run `check-source` on the final committed SHA and let the workflow check that same source. Preserve the recorded chain when pushing the release branch. Publication creates the fork tag from that chain.
+
+For the next stable update, push the new permanent release branch with its reviewed inventory and let its push workflow certify that exact source. After all checks and independent review succeed, select the new branch as the fork default, then dispatch its publication explicitly. Retain prior release branches and tags unchanged so their certificates remain verifiable.
