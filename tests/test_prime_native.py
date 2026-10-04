@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
