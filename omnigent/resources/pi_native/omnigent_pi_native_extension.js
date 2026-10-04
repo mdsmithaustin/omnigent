@@ -1741,8 +1741,13 @@ module.exports = function (pi) {
           promptSnippet: description ? description.slice(0, 120) : name,
           parameters,
           async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-            if (!admitsContext(ctx)) return unavailableTool();
-            return callOmnigentTool(config, name, params || {});
+            const mapped = admitsContext(ctx)
+              ? await callOmnigentTool(config, name, params || {})
+              : unavailableTool();
+            if (mapped.isError === true) {
+              throw new Error(textFromContent(mapped.content));
+            }
+            return mapped;
           },
         });
       }
