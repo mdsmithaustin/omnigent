@@ -13,7 +13,7 @@ import tempfile
 import time
 import traceback
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import IO, Literal
 
@@ -31,7 +31,7 @@ from adapter_probe import (
 )
 from verify import wait_for
 
-OWNER_SHA256 = "a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb"
+OWNER_SHA256 = "e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a"
 ERROR_PREFIX = "Request failed on the runner; see the runner log for details: "
 REQUIRED = (
     "actual_provider",
@@ -51,6 +51,7 @@ class Request:
     kernel_entry: Path
     auth_source: Path
     evidence_parent: Path
+    cooperative_cleanup: bool = False
 
 
 @dataclass(frozen=True)
@@ -493,6 +494,8 @@ class OwnedMcpFixture:
         self.run = run
         self.declaration = declaration
         self.handles: list[GenerationHandle] = []
+        self.outputs: list[IO[str]] = []
+        self.errors: list[str] = []
 
     def refused(self) -> bool:
         with socket.socket() as connection:
@@ -504,137 +507,168 @@ class OwnedMcpFixture:
         return False
 
     def start(self, generation: Literal[1, 2]) -> GenerationHandle:
-        if generation != len(self.handles) + 1 or not self.refused():
-            raise RuntimeError("mcp_generation_order_or_endpoint_not_free")
-        directory = self.run.evidence / f"generation-{generation}"
-        directory.mkdir(mode=0o700)
-        calls, startup, log = (
-            directory / name for name in ("calls.jsonl", "startup.json", "stdout.log")
-        )
-        calls.touch(mode=0o600)
-        config = {
-            **asdict(self.declaration),
-            "generation": generation,
-            "calls_log": str(calls),
-            "startup_path": str(startup),
-        }
-        source = directory / "fixture.py"
-        source.write_text(FIXTURE_SOURCE.replace("CONFIG_JSON", repr(json.dumps(config))))
-        source.chmod(0o600)
-        stdout = log.open("w")
         try:
-            process = subprocess.Popen(
-                [str(owner.REPO / ".venv/bin/python"), str(source)],
-                cwd=self.run.workspace,
-                env=self.run.env(),
-                stdout=stdout,
-                stderr=subprocess.STDOUT,
+            if generation != len(self.handles) + 1 or not self.refused():
+                raise RuntimeError("mcp_generation_order_or_endpoint_not_free")
+            directory = self.run.evidence / f"generation-{generation}"
+            directory.mkdir(mode=0o700)
+            calls, startup, log = (
+                directory / name for name in ("calls.jsonl", "startup.json", "stdout.log")
             )
-        except owner.FINALIZATION_ERRORS:
-            stdout.close()
+            calls.touch(mode=0o600)
+            config = {
+                **asdict(self.declaration),
+                "generation": generation,
+                "calls_log": str(calls),
+                "startup_path": str(startup),
+            }
+            source = directory / "fixture.py"
+            source.write_text(FIXTURE_SOURCE.replace("CONFIG_JSON", repr(json.dumps(config))))
+            source.chmod(0o600)
+            stdout = log.open("w")
+            self.outputs.append(stdout)
+            try:
+                process = subprocess.Popen(
+                    [str(owner.REPO / ".venv/bin/python"), str(source)],
+                    cwd=self.run.workspace,
+                    env=self.run.env(),
+                    stdout=stdout,
+                    stderr=subprocess.STDOUT,
+                )
+            except owner.FINALIZATION_ERRORS:
+                stdout.close()
+                raise
+            handle = GenerationHandle(
+                generation, process, stdout, calls, log, startup, time.monotonic()
+            )
+            self.handles.append(handle)
+            record = self.run.own(psutil.Process(process.pid))
+            handle.identity = ProcessIdentity(
+                record["pid"], record["started"], tuple(record["argv"])
+            )
+            owner.write_json(directory / "launch.json", handle.record())
+
+            def ready() -> bool:
+                if process.poll() is not None:
+                    raise RuntimeError("mcp_fixture_exited_before_readiness")
+                if not startup.is_file():
+                    return False
+                witness = json.loads(startup.read_text())
+                if (
+                    witness.get("pid") != handle.identity.pid
+                    or witness.get("started") != handle.identity.started
+                    or witness.get("generation") != generation
+                    or witness.get("stateful") is not True
+                    or witness.get("run_nonce") != self.declaration.run_nonce
+                    or witness.get("tool") != self.declaration.bare_tool_name
+                    or not re.fullmatch(r"[0-9a-f]{32}", witness.get("startup_nonce", ""))
+                ):
+                    raise RuntimeError("mcp_fixture_startup_identity_mismatch")
+                if not any(
+                    item.status == psutil.CONN_LISTEN
+                    and item.laddr.ip == "127.0.0.1"
+                    and item.laddr.port == self.declaration.port
+                    for item in psutil.Process(process.pid).net_connections(kind="tcp")
+                ):
+                    return False
+                handle.startup_nonce = witness["startup_nonce"]
+                return True
+
+            wait_for(ready, "exact-owned stateful MCP listener", 30)
+            if generation == 2 and handle.startup_nonce == self.handles[0].startup_nonce:
+                raise RuntimeError("mcp_restart_startup_nonce_not_fresh")
+            owner.write_json(directory / "ready.json", handle.record())
+            return handle
+        except owner.FINALIZATION_ERRORS as exc:
+            self.errors.append("fixture start: " + owner.sanitize(str(exc)))
             raise
-        handle = GenerationHandle(
-            generation, process, stdout, calls, log, startup, time.monotonic()
-        )
-        self.handles.append(handle)
-        record = self.run.own(psutil.Process(process.pid))
-        handle.identity = ProcessIdentity(record["pid"], record["started"], tuple(record["argv"]))
-        owner.write_json(directory / "launch.json", handle.record())
-
-        def ready() -> bool:
-            if process.poll() is not None:
-                raise RuntimeError("mcp_fixture_exited_before_readiness")
-            if not startup.is_file():
-                return False
-            witness = json.loads(startup.read_text())
-            if (
-                witness.get("pid") != handle.identity.pid
-                or witness.get("started") != handle.identity.started
-                or witness.get("generation") != generation
-                or witness.get("stateful") is not True
-                or witness.get("run_nonce") != self.declaration.run_nonce
-                or witness.get("tool") != self.declaration.bare_tool_name
-                or not re.fullmatch(r"[0-9a-f]{32}", witness.get("startup_nonce", ""))
-            ):
-                raise RuntimeError("mcp_fixture_startup_identity_mismatch")
-            if not any(
-                item.status == psutil.CONN_LISTEN
-                and item.laddr.ip == "127.0.0.1"
-                and item.laddr.port == self.declaration.port
-                for item in psutil.Process(process.pid).net_connections(kind="tcp")
-            ):
-                return False
-            handle.startup_nonce = witness["startup_nonce"]
-            return True
-
-        wait_for(ready, "exact-owned stateful MCP listener", 30)
-        if generation == 2 and handle.startup_nonce == self.handles[0].startup_nonce:
-            raise RuntimeError("mcp_restart_startup_nonce_not_fresh")
-        owner.write_json(directory / "ready.json", handle.record())
-        return handle
 
     def stop(self, handle: GenerationHandle) -> None:
-        if handle.process.poll() is None:
-            if handle.identity is None or not owner.identity_alive(handle.identity):
-                raise RuntimeError("mcp_exact_generation_identity_missing")
-            handle.process.terminate()
-            handle.process.wait(timeout=10)
-        handle.stdout.close()
-        if handle.identity and owner.identity_alive(handle.identity):
-            raise RuntimeError("mcp_generation_survives_stop")
-        owner.write_json(handle.startup_path.parent / "stopped.json", handle.record())
+        try:
+            if handle.process.poll() is None:
+                if handle.identity is None or not owner.identity_alive(handle.identity):
+                    raise RuntimeError("mcp_exact_generation_identity_missing")
+                handle.process.terminate()
+                handle.process.wait(timeout=10)
+            handle.stdout.close()
+            if handle.identity and owner.identity_alive(handle.identity):
+                raise RuntimeError("mcp_generation_survives_stop")
+            owner.write_json(handle.startup_path.parent / "stopped.json", handle.record())
+        except owner.FINALIZATION_ERRORS as exc:
+            self.errors.append("generation stop: " + owner.sanitize(str(exc)))
+            raise
 
-    def close(self) -> dict:
-        errors = []
+    def close(self) -> owner._ExternalSettlement:
+        records = []
         for handle in self.handles:
             try:
                 self.stop(handle)
             except owner.FINALIZATION_ERRORS as exc:
-                errors.append(owner.sanitize(str(exc)))
+                self.errors.append("fixture stop: " + owner.sanitize(str(exc)))
                 try:
                     if handle.identity and owner.identity_alive(handle.identity):
                         handle.process.kill()
                         handle.process.wait(timeout=5)
                 except owner.FINALIZATION_ERRORS as kill_error:
-                    errors.append(owner.sanitize(str(kill_error)))
-            finally:
-                try:
-                    handle.stdout.close()
-                except owner.FINALIZATION_ERRORS as log_error:
-                    errors.append(owner.sanitize(str(log_error)))
+                    self.errors.append("fixture kill: " + owner.sanitize(str(kill_error)))
+            try:
+                streams = (handle.process.stdin, handle.process.stdout, handle.process.stderr)
+                if any(stream is not None for stream in streams):
+                    raise RuntimeError("mcp_unexpected_process_pipe")
+                if handle.process.poll() is None or (
+                    handle.identity and owner.identity_alive(handle.identity)
+                ):
+                    raise RuntimeError("mcp_generation_survives_close")
+                records.append(handle.record())
+            except owner.FINALIZATION_ERRORS as exc:
+                self.errors.append("fixture process check: " + owner.sanitize(str(exc)))
+        for output in self.outputs:
+            try:
+                output.close()
+                if not output.closed:
+                    raise RuntimeError("mcp_fixture_output_still_open")
+            except owner.FINALIZATION_ERRORS as exc:
+                self.errors.append("fixture output close: " + owner.sanitize(str(exc)))
+        refused = False
         try:
             refused = self.refused()
+            if not refused:
+                raise RuntimeError("mcp_fixture_endpoint_still_available")
         except owner.FINALIZATION_ERRORS as exc:
-            errors.append(owner.sanitize(str(exc)))
-            refused = False
-        result = {
-            "errors": errors,
-            "endpoint_refused": refused,
-            "generations": [handle.record() for handle in self.handles],
-        }
-        result["passed"] = (
-            not errors
-            and refused
-            and all(
-                handle.process.poll() is not None and handle.stdout.closed
-                for handle in self.handles
+            self.errors.append("fixture endpoint check: " + owner.sanitize(str(exc)))
+        evidence = ()
+        try:
+            owner.write_json(
+                self.run.evidence / "fixture-cleanup.json",
+                {
+                    "allocation_id": self.run.runtime_owner.allocation_id,
+                    "errors": self.errors,
+                    "endpoint_refused": refused,
+                    "generations": records,
+                    "outputs_closed": [output.closed for output in self.outputs],
+                    "capture_mode": "child_direct_to_file",
+                    "parent_readers": [],
+                    "parent_threads": [],
+                    "passed": not self.errors,
+                },
             )
+            evidence = ("fixture-cleanup.json",)
+        except owner.FINALIZATION_ERRORS as exc:
+            self.errors.append("fixture cleanup receipt: " + owner.sanitize(str(exc)))
+        return owner._ExternalSettlement(
+            self.run.runtime_owner.allocation_id,
+            "failed_fixture" if self.errors else "settled_fixture",
+            evidence,
+            tuple(self.errors),
         )
-        owner.write_json(self.run.evidence / "fixture-cleanup.json", result)
-        return result
 
 
 class _McpRun(owner._OwnedRun):
-    def __init__(self, request: Request, parent: Path):
-        provider_request = owner.Request(
-            request.prime_path,
-            request.kernel_entry,
-            request.auth_source,
-            request.evidence_parent,
-            "selector",
-        )
+    def __init__(
+        self, request: Request, provider_request: owner.Request, runtime_owner: owner._RuntimeOwner
+    ):
         super().__init__(
-            provider_request, owner.ClockProfile("runner", 0, 0, 0, 0, 180), "mcp", parent
+            provider_request, owner.ClockProfile("runner", 0, 0, 0, 0, 180), "mcp", runtime_owner
         )
         nonce = uuid.uuid4().hex
         self.declaration = FixtureDeclaration(
@@ -645,6 +679,11 @@ class _McpRun(owner._OwnedRun):
         self.driver_hash = sha256(Path(__file__))
         self.continuity_roots = []
         self.scenario_request = request
+
+    def cleanup(self, external_settlement: owner._ExternalSettlement) -> owner.Observation:
+        if external_settlement.status == "no_fixture":
+            raise RuntimeError("mcp_fixture_settlement_required")
+        return super().cleanup(external_settlement)
 
     def preflight(self) -> None:
         if sha256(Path(owner.__file__)) != OWNER_SHA256:
@@ -895,7 +934,7 @@ class _McpRun(owner._OwnedRun):
             "memory-read.json",
         )
 
-    def qualify_mcp(self) -> tuple[bool, Path]:
+    def qualify_mcp(self) -> owner._CaseDraft:
         failure = None
         cleanup_errors = []
         try:
@@ -1028,7 +1067,9 @@ class _McpRun(owner._OwnedRun):
             except owner.FINALIZATION_ERRORS as write_error:
                 cleanup_errors.append("failure receipt: " + owner.sanitize(str(write_error)))
         finally:
-            fixture_cleanup = {"passed": False}
+            settlement = owner._ExternalSettlement(
+                self.runtime_owner.allocation_id, "failed_fixture", (), ("fixture_not_settled",)
+            )
             cleanup = owner.Observation(
                 "owned_cleanup", "FAILED", (), "cleanup_finalization_failed"
             )
@@ -1066,43 +1107,31 @@ class _McpRun(owner._OwnedRun):
                 cleanup_errors.append("continuity finalization: " + owner.sanitize(str(exc)))
             finally:
                 try:
-                    fixture_cleanup = self.fixture.close()
+                    settlement = self.fixture.close()
+                    if (
+                        settlement.allocation_id != self.runtime_owner.allocation_id
+                        or settlement.status != "settled_fixture"
+                        or not settlement.evidence
+                        or settlement.errors
+                    ):
+                        raise RuntimeError("mcp_fixture_settlement_failed: " + repr(settlement))
                 except owner.FINALIZATION_ERRORS as exc:
-                    cleanup_errors.append("fixture cleanup: " + owner.sanitize(str(exc)))
-                    fixture_cleanup = {"passed": False, "error": owner.sanitize(str(exc))}
-                    try:
-                        owner.write_json(self.evidence / "fixture-cleanup.json", fixture_cleanup)
-                    except owner.FINALIZATION_ERRORS as write_error:
-                        cleanup_errors.append(
-                            "fixture cleanup receipt: " + owner.sanitize(str(write_error))
-                        )
+                    error = "fixture cleanup: " + owner.sanitize(str(exc))
+                    cleanup_errors.append(error)
+                    settlement = owner._ExternalSettlement(
+                        self.runtime_owner.allocation_id, "failed_fixture", (), (error,)
+                    )
                 finally:
                     try:
-                        cleanup = self.cleanup()
+                        cleanup = self.cleanup(settlement)
                     except owner.FINALIZATION_ERRORS as exc:
                         cleanup_errors.append("owner cleanup: " + owner.sanitize(str(exc)))
                     finally:
-                        if self.session_id or (
-                            self.server and self.server.poll() is None and self.terminal
-                        ):
-                            try:
-                                self.recover_owned_session()
-                            except owner.FINALIZATION_ERRORS as exc:
-                                cleanup_errors.append(
-                                    "recover owned session: " + owner.sanitize(str(exc))
-                                )
-                        if self.session_id:
-                            try:
-                                self.own_session(self.session_id)
-                            except owner.FINALIZATION_ERRORS as exc:
-                                cleanup_errors.append(
-                                    "exact credential root: " + owner.sanitize(str(exc))
-                                )
                         try:
-                            self.remove_owned_credentials(cleanup_errors)
+                            self.finalize_owned_credentials(cleanup_errors)
                         except owner.FINALIZATION_ERRORS as exc:
                             cleanup_errors.append(
-                                "remove owned credentials: " + owner.sanitize(str(exc))
+                                "finalize owned credentials: " + owner.sanitize(str(exc))
                             )
             if cleanup_errors:
                 try:
@@ -1120,7 +1149,7 @@ class _McpRun(owner._OwnedRun):
                     "cleanup_finalization_failed",
                 )
             if (
-                not fixture_cleanup["passed"]
+                settlement.status != "settled_fixture"
                 or sha256(Path(__file__)) != self.driver_hash
                 or sha256(Path(owner.__file__)) != OWNER_SHA256
             ):
@@ -1139,94 +1168,117 @@ class _McpRun(owner._OwnedRun):
                     "required_claim_not_observed",
                     "failure.json" if failure else "progress.json",
                 )
-        passed = (
-            not failure
-            and not cleanup_errors
-            and all(
-                next(item for item in self.observations if item.claim == name).status == "VERIFIED"
-                for name in REQUIRED
-            )
+        if failure:
+            self.claim("failure", "FAILED", failure, "failure.json")
+        required = (*REQUIRED, "failure") if failure else REQUIRED
+        result = owner.CaseResult(
+            self.evidence / "result.json", required, tuple(self.observations), cleanup
         )
-        receipt = self.evidence / "result.json"
-        owner.write_json(
-            receipt,
+        return owner._CaseDraft(
+            result,
             {
                 "request": asdict(self.scenario_request),
                 "declaration": asdict(self.declaration),
-                "required_claims": REQUIRED,
+                "required_claims": required,
                 "observations": [asdict(item) for item in self.observations],
                 "generations": [handle.record() for handle in self.fixture.handles],
                 "cleanup": asdict(cleanup),
                 "failure": failure,
                 "finalization_errors": cleanup_errors,
-                "passed": passed,
             },
-            immutable=True,
-        )
-        artifacts = []
-        for path in sorted(self.evidence.rglob("*")):
-            if path.is_file() and not path.is_symlink():
-                path.chmod(0o400)
-                artifacts.append(
-                    {
-                        "path": str(path.relative_to(self.evidence)),
-                        "sha256": sha256(path),
-                        "bytes": path.stat().st_size,
-                    }
-                )
-        owner.write_json(
-            self.evidence / "manifest.json",
             {
-                "receipt": receipt.name,
+                "receipt": result.receipt.name,
                 "driver_sha256": self.driver_hash,
                 "provider_owner_sha256": OWNER_SHA256,
-                "artifacts": artifacts,
-                "passed": passed,
             },
-            immutable=True,
         )
-        print(
-            json.dumps({"result": "VERIFIED" if passed else "FAILED", "receipt": str(receipt)}),
-            flush=True,
-        )
-        return passed, receipt
 
 
 def qualify(request: Request) -> tuple[bool, Path]:
     if request.evidence_parent.resolve().is_relative_to(owner.REPO):
         raise RuntimeError("mcp_evidence_parent_must_be_outside_checkout")
     request.evidence_parent.mkdir(parents=True, exist_ok=True)
-    parent = Path(tempfile.mkdtemp(prefix="provider-mcp-", dir=request.evidence_parent))
-    parent.chmod(0o700)
-    if sha256(request.prime_path) != owner.PRIME_SHA256:
-        receipt = parent / "result.json"
+    evidence = Path(tempfile.mkdtemp(prefix="provider-mcp-", dir=request.evidence_parent))
+    evidence.chmod(0o700)
+    draft = None
+    runtime_owner = None
+    try:
+        if sha256(Path(owner.__file__)) != OWNER_SHA256:
+            raise RuntimeError("mcp_provider_owner_not_admitted")
+        provider_request = owner.Request(
+            request.prime_path,
+            request.kernel_entry,
+            request.auth_source,
+            request.evidence_parent,
+            "selector",
+            cooperative_cleanup=request.cooperative_cleanup,
+        )
+        runtime_owner = owner._RuntimeOwner.allocate(provider_request, evidence)
+        with runtime_owner:
+            run = _McpRun(request, provider_request, runtime_owner)
+            draft = run.qualify_mcp()
+    except owner.FINALIZATION_ERRORS as exc:
+        failure = owner.sanitize(type(exc).__name__ + ": " + str(exc))
         owner.write_json(
-            receipt,
-            {
-                "request": asdict(request),
-                "passed": False,
-                "failure": "prime_artifact_not_admitted",
-                "required_claims": REQUIRED,
-                "observations": [
-                    asdict(owner.Observation(name, "NOT VERIFIED", (), "runtime_not_started"))
-                    for name in REQUIRED
-                ],
-                "cleanup": {"owned_processes_started": False},
-            },
+            evidence / "case-finalization.json",
+            {"error": failure, "runtime": runtime_owner.root if runtime_owner else None},
             immutable=True,
         )
-        print(
-            json.dumps(
-                {
-                    "result": "FAILED",
-                    "failure": "prime_artifact_not_admitted",
-                    "receipt": str(receipt),
-                }
-            ),
-            flush=True,
+        cleanup = owner.Observation(
+            "owned_cleanup", "FAILED", ("case-finalization.json",), failure
         )
-        return False, receipt
-    return _McpRun(request, parent).qualify_mcp()
+        if draft is None:
+            observations = tuple(
+                cleanup
+                if name == "owned_cleanup"
+                else owner.Observation(name, "NOT VERIFIED", (), "case_finalization_failed")
+                for name in REQUIRED
+            )
+            result = owner.CaseResult(evidence / "result.json", REQUIRED, observations, cleanup)
+            draft = owner._CaseDraft(
+                result,
+                {
+                    "failure": failure,
+                    "finalization_errors": [failure],
+                    "request": asdict(request),
+                    "required_claims": REQUIRED,
+                    "observations": [asdict(item) for item in observations],
+                    "cleanup": asdict(cleanup),
+                },
+                {"driver_sha256": sha256(Path(__file__)), "provider_owner_sha256": OWNER_SHA256},
+            )
+        else:
+            result = replace(
+                draft.result,
+                cleanup=cleanup,
+                observations=tuple(
+                    cleanup if item.claim == "owned_cleanup" else item
+                    for item in draft.result.observations
+                ),
+            )
+            draft = replace(
+                draft,
+                result=result,
+                payload={
+                    **draft.payload,
+                    "observations": [asdict(item) for item in result.observations],
+                    "cleanup": asdict(cleanup),
+                    "failure": draft.payload.get("failure") or failure,
+                    "finalization_errors": [
+                        *draft.payload.get("finalization_errors", []),
+                        failure,
+                    ],
+                },
+            )
+    result = owner._publish_case(draft)
+    passed = result.passed
+    if not result.committed:
+        raise RuntimeError("mcp_case_completion_not_committed")
+    print(
+        json.dumps({"result": "VERIFIED" if passed else "FAILED", "receipt": str(result.receipt)}),
+        flush=True,
+    )
+    return passed, result.receipt
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1245,12 +1297,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Actual xai OAuth auth.json. Contents never enter evidence.",
     )
     parser.add_argument("--evidence-parent", type=Path, required=True)
+    parser.add_argument(
+        "--cooperative-cleanup",
+        action="store_true",
+        required=True,
+        help="Acknowledge a cooperative namespace with no hostile same-user writers.",
+    )
     args = parser.parse_args(argv)
     for name in ("prime_path", "kernel_python", "auth_source", "evidence_parent"):
         if not getattr(args, name).is_absolute():
             parser.error("--" + name.replace("_", "-") + " must be absolute")
     os.umask(0o077)
-    request = Request(args.prime_path, args.kernel_python, args.auth_source, args.evidence_parent)
+    request = Request(
+        args.prime_path,
+        args.kernel_python,
+        args.auth_source,
+        args.evidence_parent,
+        cooperative_cleanup=args.cooperative_cleanup,
+    )
     try:
         passed, _ = qualify(request)
         return 0 if passed else 1
