@@ -305,7 +305,10 @@ def _live_sockets(paths: PrimeRuntimePaths) -> list[Path]:
             except OSError as exc:
                 if exc.errno in {errno.ENOENT, errno.ECONNREFUSED}:
                     continue
-                raise RuntimeError(f"Prime private socket could not be observed: {path}") from exc
+                if exc.errno not in {errno.EAGAIN, errno.EWOULDBLOCK}:
+                    raise RuntimeError(
+                        f"Prime private socket could not be observed: {path}"
+                    ) from exc
             live.append(path)
     return live
 

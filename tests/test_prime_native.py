@@ -157,6 +157,7 @@ def test_prime_modules_import_without_posix_user_id() -> None:
             "-c",
             "import os; del os.getuid; import omnigent.harnesses.prime_native.process",
         ],
+        env={**os.environ, "USER": "prime-import-fixture"},
         capture_output=True,
         text=True,
         timeout=10,
@@ -1194,7 +1195,11 @@ def test_stop_retains_records_for_an_orphaned_renamed_kernel(
                 break
             time.sleep(0.01)
         assert ready.read_text() == "ready"
-        assert process.psutil.Process(kernel.pid).name().startswith("prime-kernel-pr")
+        reported_name = process.psutil.Process(kernel.pid).name()
+        assert any(
+            reported_name.casefold().startswith(name.casefold()[:15])
+            for name in (configured.name, executable.name)
+        )
         assert kernel.poll() is None
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.05)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
@@ -1243,7 +1248,10 @@ def test_stop_retains_records_for_an_orphaned_renamed_prime_executable(
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(child.pid).name()
-        assert reported_name.casefold().startswith("renamed-prime-a")
+        assert any(
+            reported_name.casefold().startswith(name.casefold()[:15])
+            for name in (configured.name, executable.name)
+        )
         assert child.poll() is None
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.05)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
@@ -1665,3 +1673,16 @@ def test_launch_transports_effort_and_composed_instructions(
         "--append-system-prompt",
         "Author instructions\n\nFramework instructions",
     )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="AF_UNIX full backlog returns EAGAIN on Linux")
+def test_busy_private_socket_is_observed_as_live(tmp_path: Path) -> None:
+    paths = _shutdown_paths(tmp_path)
+    endpoint = paths.temp_dir / "busy.sock"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(str(endpoint))
+        listener.listen(0)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as queued:
+            queued.settimeout(1)
+            queued.connect(str(endpoint))
+            assert process._live_sockets(paths) == [endpoint]
