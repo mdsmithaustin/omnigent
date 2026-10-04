@@ -21,6 +21,8 @@ existing Alembic history:
 uv run --no-sync alembic -c omnigent/db/alembic.ini upgrade mm1a2b3c4d5e
 ```
 
+A nonzero exit means the upgrade failed.
+
 Split deployments store ownership in the Agent Platform conversation database.
 The metadata database keeps its normal Alembic history. Its copies of these
 tables are unused by the ownership store. The AP database currently uses
@@ -65,6 +67,8 @@ all durable ownership has been reconciled.
 ```sh
 uv run --no-sync pytest -q tests/db/test_migration_session_work.py
 ```
+
+Expect `4 passed`. A nonzero exit or a missing passing summary fails this check.
 
 Confirm that an upgrade from `ll1a2b3c4d5e` preserves an inserted claimed row
 when the upgrade is repeated, and that the isolated AP DDL fixture adds only the
