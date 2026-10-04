@@ -3881,6 +3881,7 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
     )
 
     caplog.set_level("INFO", logger="omnigent.runner.native.orchestration")
+    caplog.set_level("INFO", logger="omnigent.runner.app")
     thread_id = "019e96aa-abcd-7343-8d3b-6f914d60936b"
     workspace = tmp_path / "selected-workspace"
     wait_calls: list[dict[str, object]] = []

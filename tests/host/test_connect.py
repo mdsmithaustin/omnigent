@@ -331,6 +331,10 @@ async def test_handle_model_options_serves_the_claude_catalog(
         )
 
     monkeypatch.setattr(claude_native, "probe_claude_model_options", _fake_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _: {"kind": "subscription", "label": "Subscription", "name": "claude"},
+    )
     host = _make_host_process()
 
     first = await host._handle_model_options(
@@ -412,6 +416,9 @@ async def test_handle_model_options_uses_host_pi_configuration(
                 "displayName": "omnigent-openai/GPT 5.6 Sol",
             }
         ],
+    )
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness", lambda _: None
     )
     host = _make_host_process()
 
@@ -6100,6 +6107,10 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
         ]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _fake_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _: {"kind": "subscription", "label": "Subscription", "name": "codex"},
+    )
     host = _make_host_process()
 
     first = await host._handle_model_options(
@@ -6152,6 +6163,10 @@ async def test_handle_model_options_serves_claude_sdk_endpoint_listing(
         )
 
     monkeypatch.setattr("omnigent.models.model_catalog.list_models_for_worker", _fake_listing)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _: {"kind": "subscription", "label": "Subscription", "name": "claude"},
+    )
     host = _make_host_process()
 
     result = await host._handle_model_options(
@@ -6200,6 +6215,10 @@ async def test_handle_model_options_claude_sdk_rides_the_probe_when_endpoints_li
         )
 
     monkeypatch.setattr("omnigent.models.model_catalog.list_models_for_worker", _fake_listing)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _: {"kind": "subscription", "label": "Subscription", "name": "claude"},
+    )
     host = _make_host_process()
 
     async def _fake_probed() -> ModelOptionsResult:
@@ -6257,6 +6276,10 @@ async def test_model_options_frame_replies_off_the_receive_loop(
         return [{"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"}]
 
     monkeypatch.setattr(codex_native_app_server, "probe_codex_model_options", _slow_probe)
+    monkeypatch.setattr(
+        "omnigent.host.connect._model_configuration_source_for_harness",
+        lambda _: {"kind": "subscription", "label": "Subscription", "name": "codex"},
+    )
     host = _make_host_process()
     ws = _RecordingWS()
     raw = encode_host_frame(HostModelOptionsFrame(request_id="req_slow", harness="codex-native"))

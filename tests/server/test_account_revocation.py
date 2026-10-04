@@ -31,6 +31,7 @@ def create_session(client, *, guardrails=None):
 def setup_app(tmp_path, monkeypatch):
     import omnigent.server.app as app_module
 
+    monkeypatch.setattr(app_module, "_WEB_UI_DIST", tmp_path / "unbuilt-web-ui")
     captured = {}
     original = app_module.create_app
 

@@ -9,7 +9,9 @@ from omnigent_client._timeouts import _SSE_TIMEOUT
 
 
 @pytest.mark.asyncio
-async def test_client_timeout_applies_to_regular_requests_and_preserves_sse_timeout() -> None:
+async def test_client_timeout_applies_to_regular_requests_and_preserves_sse_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: list[dict[str, float]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -18,6 +20,8 @@ async def test_client_timeout_applies_to_regular_requests_and_preserves_sse_time
             return httpx.Response(200, json={"ok": True})
         return httpx.Response(200, content=b"data: [DONE]\n\n")
 
+    monkeypatch.setenv("NO_PROXY", "example.invalid")
+    monkeypatch.setenv("no_proxy", "example.invalid")
     client = OmnigentClient("http://example.invalid", timeout=0.1)
     original_transport = client._http._transport
     mock_transport = httpx.MockTransport(handler)
