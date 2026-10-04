@@ -241,15 +241,126 @@ could precede mandatory finalization. Preserve the receipt as evidence for those
 bytes, not proof of the repaired contract. The earlier
 `provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
 
+The later parent run `provider-waits-gkknmv6b` passed all five cases at revision
+`afe870ce93c9df8bccfa88be13bb54c39d64e5ae`. Its independent audit passed 2,616
+assertions over 309 child artifacts and 897 selected source files, with all 72
+recorded owned process identities absent. It used the same historical provider
+driver hash and shares the prompt, outer-scratch, and publication limits above.
+Earlier failed runs remain FAILED. These finite-wait receipts precede the MCP and extension repair. No finite-wait
+rerun on those changed bytes is claimed. Changes to the probe, imported
+application source, or admitted runtime require fresh qualification.
+
 The prompt and ownership repair at `ecf1bb4824a28913377109cefc3107f018fdb21a`
 has an independent scoped source verdict of PASS+NOTES and synthetic controls.
 Its provider SHA256 is
 `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
-PR6's MCP caller, fixture settlement, publisher, and owner pin still need
-migration and independent review. Fresh live WAIT and MCP qualification on final
-integrated bytes remains pending. Changes to the probe, imported application
+PR6's MCP caller, fixture settlement, publisher, readers, and owner pin are
+migrated. Independent source review remains pending. Fresh live WAIT and MCP
+qualification on final integrated bytes remains pending. Changes to the probe, imported application
 source, or admitted runtime require fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
+
+## Qualify regular HTTP MCP reconnect
+
+`scripts/mcp_probe.py` drives one declared regular HTTP MCP tool through the
+real Prime terminal, Omnigent session proxy, and configured xAI Grok 4.7 provider.
+It owns a disposable two-generation MCP fixture. It does not replace the model
+provider or call the fixture directly to simulate a native tool invocation.
+
+Run from the checkout to qualify with its documented optional runtime dependencies
+installed. Supply the admitted full Prime 0.9.6 macOS arm64 bundle and a kernel
+environment containing the published Python runtime. Pass the environment's
+`bin/python` entry without resolving its symlink. Supply configured xAI
+credentials through `--auth-source` and keep evidence private. Do not copy
+credential contents or raw provider payloads into public reports.
+Use `--cooperative-cleanup` only when you can admit the controlled namespace
+precondition in the finite-wait workflow above. Omission exits 2 before allocation.
+The flag does not exclude hostile same-UID writers in the final check/syscall window.
+
+```sh
+PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
+```
+
+Use the printed receipt path directly. Fresh runs place `result.json`,
+`manifest.json`, and `completion.json` in one `provider-mcp-*` directory under
+`--evidence-parent`, without the historical `runner-mcp-*` child directory.
+Require exit zero and `completion.json` with `passed: true`. Compare its
+`result_sha256` and `manifest_sha256` with SHA256 of the retained result and
+manifest bytes. Require no failure or finalization errors and all eight required
+claims `VERIFIED` in `result.json`. The required claims are `actual_provider`, `declared_tool`, `generation_1_success`,
+`completed_outage_error`, `generation_2_independent_success`,
+`selected_root_continuity`, `kernel_and_memory_continuity`, and `owned_cleanup`.
+A missing claim, non-`VERIFIED` claim, or nonzero exit fails qualification.
+Require empty cleanup errors, no owned survivors, private sockets, or credential
+copies, and `forced_native_fallback: false`. Also require
+`credential_copies_absent: true` and `runtime_removed: true` in `cleanup.json`.
+Result and manifest `qualified` values are provisional. No raw `passed` field
+in a result or fixture receipt authorizes success. Missing completion, false
+completion, or either mismatched hash fails qualification.
+
+Inspect the retained sequence in order:
+
+1. Match the deployed declared schema, generation-1 fixture ledger, native tool
+   result, and provider continuation to the exact expected literal.
+2. Confirm the fixture stopped and the endpoint refused connections. Require a
+   completed native tool result with `isError: true` and the exact prefix
+   `Request failed on the runner; see the runner log for details: `.
+   Require no fixture invocation for the outage call.
+3. Require generation 2 to start only after that native error completed. Match
+   its unchanged endpoint and schema, fresh startup nonce, PID, and start time.
+4. Match a separate declared call to the generation-2 ledger, native result,
+   and provider continuation. Reusing the generation-1 literal fails the case.
+5. Compare selected root and kernel identities before and after recovery.
+   Require the existing memory object to advance from 41 to 42 with its original
+   token and open socket. Recreating the value or socket fails continuity.
+6. Inspect `fixture-cleanup.json`. Require both generation records with exited
+   processes, closed outputs, `endpoint_refused: true`, and empty errors.
+7. Match the fixture allocation ID to `runtime-removal.json` and
+   `runtime-owner.json`. Require removal, `closed: true`, and no owner errors.
+   Inspect `runtime-settlement.json` in that same evidence directory for clean
+   runtime settlement. Require unchanged source and deployed-extension evidence.
+
+Use `declared-schema.json`, `before-witness.json`, `outage-witness.json`,
+`outage-start.json`, `after-witness.json`, the generation startup and call
+records, `continuity.json`, kernel records, `fixture-cleanup.json`, and
+`cleanup.json`. `artifact.json`, `mcp-artifact.json`, the source inventories,
+and `manifest.json` bind the source and runtime used. `completion.json` binds
+that result and manifest to the completed owner lifetime. The selector
+observation is source-inferred eligibility, not a live registry census.
+
+The fixture supplies settlement only after every real generation is reaped,
+its PID/start identity is absent, all output handles are closed, and the endpoint
+refuses connections. Child output goes directly to files. The fixture owns no
+parent reader or capture thread. Exited child processes settle their internal
+threads and descriptors. Unexpected process pipes reject settlement.
+`fixture-cleanup.json` must be written before the allocation-bound
+`settled_fixture` value can authorize runtime removal. Startup, stop, close,
+endpoint, or receipt errors stay sticky and yield `failed_fixture`. A later
+successful check cannot erase an earlier failure. MCP rejects `no_fixture`,
+missing settlement, or settlement from another allocation. Failed or unknown
+settlement retains scratch and fails qualification, even when processes exited.
+
+The scratch owner is allocated before fallible MCP construction. Owner entry,
+partial construction, scenario failure, and owner exit remain guarded. The
+scenario returns an unpublished draft. Credential finalization, owner closure,
+and required receipts finish before publication commits `completion.json`.
+A later owner failure preserves the first scenario failure and records the
+finalization error. Failed committed cases require matching completion hashes
+with `passed: false`. Incomplete publication cannot authorize a committed case.
+Preserve retained scratch and failure evidence for diagnosis. Do not reinterpret
+those receipts as successful cleanup.
+
+The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run reports all eight
+required claims verified on the repaired working tree above `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
+Its hashes identify the executed bytes, not a subsequently created commit.
+The three earlier actual MCP receipts remain FAILED. This historical case
+qualifies regular HTTP native error transport and recovery on those bytes only.
+It predates allocation-bound settlement and completion publication. It cannot
+qualify the migrated owner contract. Independent MCP source review and fresh
+live WAIT and MCP qualification on final integrated bytes remain pending.
+The historical case does not qualify real MRTR callbacks or approval-state recovery, stdio, all servers or providers, or
+the whole N19 requirement. See [the acceptance record](../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+for the remaining matrix.
 
 ## Disposable daemon qualification
 

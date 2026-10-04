@@ -118,6 +118,14 @@ advertises the discovered tools through the shared extension, and the relay
 executes them. Discovery failures appear in the server or runner logs. The
 native terminal still starts when an additive MCP server is unavailable.
 
+After successful discovery, the retained MCP connection can recover on a later
+call even when an earlier call exhausted reconnect attempts. A failed first
+initialization does not enable that recovery. Prime receives a completed native
+tool error when runner dispatch fails. A subsequent eligible call can recover
+the connection after the server returns. The existing ordinary-call circuit breaker
+still applies. See [MCP recovery and retries](AGENT_YAML_SPEC.md#mcp-recovery-and-retries)
+for serialized calls, startup cancellation, teardown timing, and MRTR limits.
+
 Bundled skills use `load_skill` and `read_skill_file`. A Python resource delivered
 by those tools can execute in Prime's native `ipython` kernel. Configure resources
 in an [agent specification](AGENT_YAML_SPEC.md) and start a session with that
@@ -169,6 +177,36 @@ and whole-descendant settlement remain unqualified. Agent Profile Kit is outside
 this implementation. Root policy hooks do not confine arbitrary Python code or
 recursive descendants. [The acceptance matrix](../designs/prime-native/NO_FORK.md)
 records each original requirement and its remaining evidence.
+
+## Remaining roadmap
+
+The supported adapter has measured launch, messages, controls, declared resources,
+root tool denial, and living-kernel reattachment. Finite native `running` waits
+passed on parent revision `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
+The later MCP working-tree repair passed one declared regular HTTP reconnect
+case with configured xAI credentials and Grok 4.7. Finite waits have not been
+rerun on those changed MCP and extension bytes. Each receipt identifies its
+source, so neither result qualifies an untested final commit. The MCP owner
+migration is implemented. Independent MCP source review and fresh live WAIT
+and MCP receipts on final integrated bytes remain pending.
+
+The next qualification priorities follow the gaps in the
+[acceptance matrix](../designs/prime-native/NO_FORK.md#original-acceptance-criteria):
+
+1. Extend N19 beyond regular HTTP. Exercise real MRTR callbacks and opaque
+   approval retries across restart, stdio restart, wider error and cancellation
+   paths, deadlines, server classes, and providers.
+2. Extend N17 beyond finite `running` tools. Prove genuine `waiting`, status-only
+   protection during complete output silence, default one-hour thresholds, and
+   indefinite waits. Qualify gateway retry behavior separately.
+3. Resolve the published daemon replay and worker-recovery failures before
+   claiming N08 or N09. Global control exclusivity, completion-dependent declared
+   children, and whole-descendant settlement remain gaps under N10, N15, and N18.
+4. Qualify the remaining controls, rich output, approvals, descendant visibility,
+   and external containment individually. Kit remains external to this adapter.
+
+The original 31-item program remains incomplete. The workflows below repeat the
+bounded passing cases and retain failures as separate evidence.
 
 ## Verify the adapter
 
@@ -223,6 +261,16 @@ cleanup success while outer scratch remained. Their result publication could
 also precede mandatory finalization. Preserve the historical receipts and their
 limits. Earlier journal and pane cleanup failures remain FAILED.
 
+The later parent run
+`provider-waits-gkknmv6b` passed five cases on revision `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`,
+with actual 60-second and 300-second Python tools, matched runner and pane idle
+controls, HTTP steering, and reattachment to the same living kernel. Its receipt distinguishes finite native
+`running` from unqualified genuine `waiting` and status-only protection during
+silence. The workflow requires copied-auth removal and exact owned-process
+absence. It does not inspect unrelated terminal input. This run used the same
+historical driver hash and shares the prompt, outer-scratch, and publication
+limits above.
+
 Current verification requires the exact native queue receipt before the tool
 ends, followed by the tool result, queued user entry, and successful native reply.
 HTTP 202 proves admission only. The public conversation must contain exactly one
@@ -245,10 +293,38 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The repaired helper has independent source review and synthetic verification.
-PR6's MCP ownership and publication migration remains pending. Fresh live WAIT
-and MCP receipts on final integrated bytes are still required. Genuine native
+The repaired provider helper has independent source review and synthetic verification.
+PR6's MCP ownership and publication migration is implemented, with independent
+source review pending. Fresh live WAIT and MCP receipts on final integrated bytes are still required. Genuine native
 `waiting`, status-only protection during complete output silence, one-hour and
 indefinite waits, and the full S01-S04 guarantees remain unqualified.
 The separate daemon probe is a qualification gate and currently exits nonzero
 for the published runtime's known gaps.
+
+To repeat the declared regular HTTP MCP restart case, run this command from the
+checkout to qualify. Supply the admitted Prime 0.9.6 binary, the kernel
+environment's `bin/python` entry without resolving its symlink, configured xAI
+credentials, and a private evidence directory. Admit `--cooperative-cleanup`
+only under the controlled namespace precondition above.
+
+```sh
+PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
+```
+
+Follow the printed receipt path directly into the fresh `provider-mcp-*`
+directory. Require exit zero and all eight required claims `VERIFIED` in
+`result.json`. Require `completion.json` with `passed: true` and compare its
+`result_sha256` and `manifest_sha256` with the retained files. Missing completion,
+false completion, or either mismatched hash fails. The result's provisional
+`qualified` value and raw `passed` fields are not success authority.
+Require verified cleanup with no errors, survivors,
+private sockets, credential copies, or forced fallback. A nonzero exit, missing
+claim, or non-`VERIFIED` claim fails qualification. Require fixture closure for
+both generations, runtime settlement in the same evidence directory, and
+allocation-matched removal and closed-owner receipts. A failed fixture receipt retains scratch and blocks success.
+Owner exit precedes completion publication. Inspect the completed native
+outage error before generation 2 starts, the new server PID and nonce, matching
+native, provider, and fixture results, and the same root and kernel object after
+recovery. Follow the [MCP verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
+for the exact sequence and evidence files. This case does not qualify MRTR,
+stdio, all servers, or all providers.
