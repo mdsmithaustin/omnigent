@@ -57,7 +57,10 @@ if ! FILES_JSON=$(jq -ces '
     else [.[][]] end
   | if all(.[]; type == "object"
       and (.filename | type == "string" and length > 0)
-      and (.status | type == "string" and length > 0))
+      and (.status | type == "string" and length > 0)
+      and (if .status == "renamed" or has("previous_filename")
+        then (.previous_filename | type == "string" and length > 0)
+        else true end))
     then . else error("invalid file") end
   | if (map(.filename) | unique | length) == length
     then . else error("duplicate filename") end
@@ -74,7 +77,8 @@ if ! jq -es --argjson count "$FILE_COUNT" '
 ' <<< "$PR_JSON" >/dev/null 2>&1; then
   fail "Invalid or incomplete PR changed files; cannot determine e2e_ui coverage."
 fi
-FILES=$(jq -r '.[] | [.status, .filename] | @tsv' <<< "$FILES_JSON")
+FILES=$(jq -r '.[] | .status as $status
+  | (.filename, (.previous_filename // empty)) | [$status, .] | @tsv' <<< "$FILES_JSON")
 
 touches_ui=false
 while IFS=$'\t' read -r fstatus path; do
@@ -115,17 +119,16 @@ MAX_BLOB_BYTES=60000
 # can crowd the other out, listing the test patches first.
 E2E_UI_BUDGET=$((MAX_BLOB_BYTES / 2))
 
-# Emit the truncated "=== status filename ===\n<patch>" block for every file
-# whose path starts with the given prefix.
 patch_blob() {  # $1 = path prefix
   jq -r --argjson max "$MAX_PATCH_LINES" --arg pfx "$1" '.[]
-    | select(.filename | startswith($pfx))
+    | select(any(.filename, (.previous_filename // empty); startswith($pfx)))
     | (.patch // "(no textual patch -- binary or too large)") as $p
     | ($p | split("\n")) as $lines
     | (if ($lines | length) > $max
          then (($lines[:$max] | join("\n")) + "\n... (patch truncated at \($max) lines)")
          else $p end) as $trunc
-    | "=== \(.status) \(.filename) ===\n\($trunc)"' <<< "$FILES_JSON"
+    | "=== \(.status) \(.filename)\(if has("previous_filename")
+        then " (from \(.previous_filename))" else "" end) ===\n\($trunc)"' <<< "$FILES_JSON"
 }
 
 E2E_BLOB=$(patch_blob "tests/e2e_ui/")

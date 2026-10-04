@@ -183,10 +183,15 @@ missing required variables fail or take their existing fail-open path.
 
 The E2E UI Required gate validates all changed-file pages and compares their
 unique filenames with the PR's reported `changed_files` count before classifying
-the change. A complete diff with no `web/**` files passes without judge settings
-or a gateway request. This includes a received empty page with a count of zero.
+the change. Classification checks both `filename` and any `previous_filename`.
+Renames into, out of, or within `web/**` require the judge settings and send the
+renamed patch with both paths to the judge. A complete diff with neither path
+under `web/**` passes without judge settings or a gateway request. This includes
+a received empty page with a count of zero and unrelated renames.
 Missing pages, malformed data, failed requests, duplicate filenames, mismatched
 counts, and counts above the files API's 3,000-file limit block the gate.
+Renamed files must have a nonempty string `previous_filename`. Any supplied
+`previous_filename` must also be a nonempty string, regardless of file status.
 The files and count reads are separate. Concurrent PR edits can cause a mismatch
 that requires a retry. Matching counts do not prove an atomic snapshot.
 
