@@ -1194,7 +1194,10 @@ def test_stop_retains_records_for_an_orphaned_renamed_kernel(
                 break
             time.sleep(0.01)
         assert ready.read_text() == "ready"
-        assert process.psutil.Process(kernel.pid).name().startswith("prime-kernel-pr")
+        reported_name = process.psutil.Process(kernel.pid).name()
+        expected_name = configured.name if sys.platform == "linux" else executable.name
+        truncated_name = expected_name[:15] if sys.platform == "linux" else expected_name[:16]
+        assert reported_name in {expected_name, truncated_name}
         assert kernel.poll() is None
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.05)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
@@ -1243,7 +1246,9 @@ def test_stop_retains_records_for_an_orphaned_renamed_prime_executable(
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(child.pid).name()
-        assert reported_name.casefold().startswith("renamed-prime-a")
+        expected_name = configured.name if sys.platform == "linux" else executable.name
+        truncated_name = expected_name[:15] if sys.platform == "linux" else expected_name[:16]
+        assert reported_name in {expected_name, truncated_name}
         assert child.poll() is None
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.05)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
@@ -1592,6 +1597,23 @@ def test_unqualified_version_fails_before_launch(
     monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
     with pytest.raises(click.ClickException, match=r"requires prime-agent 0\.9\.6"):
         process.resolve_prime_executable()
+
+
+@pytest.mark.parametrize("root_args", [(), ("--profiling",)])
+def test_public_prime_command_help_dispatches(root_args: tuple[str, ...], tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "omnigent", *root_args, "prime-native", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "OMNIGENT_DATA_DIR": str(tmp_path / "data")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Usage: python -m omnigent prime-native [OPTIONS] [PRIME_ARGS]..." in result.stdout
+    assert "Launch Prime Native with Omnigent." in result.stdout
+    assert "--server" in result.stdout
+    assert "--resume" in result.stdout
 
 
 def test_public_command_has_no_prime_alias() -> None:
