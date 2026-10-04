@@ -897,6 +897,87 @@ def _public_reply_content(item: dict) -> None:
         raise RuntimeError("public_message_interrupted_malformed")
 
 
+@dataclass(frozen=True)
+class _NativeFailureObservation:
+    version: int
+    session_id: str | None
+    native_session_id: str | None
+    session_matches_operation: bool
+    baseline_count: int
+    public_baseline_count: int
+    native_user_position: int
+    native_final_position: int
+    native_user_id: str | None
+    native_reply_id: str | None
+    ids_omitted: bool
+    stop_reason: str
+    error_present: bool
+    error_class: str
+    classification_input_truncated: bool
+
+
+class _NativeReplyFailure(RuntimeError):
+    def __init__(self, operation: _ReplyOperation, entries: list[dict], user: int, final: int):
+        super().__init__("native_assistant_not_successful")
+        message = entries[final]["message"]
+        reason = message.get("stopReason")
+        stop = (
+            "missing"
+            if reason is None
+            else "malformed"
+            if not isinstance(reason, str)
+            else reason
+            if reason in {"stop", "error", "aborted", "length", "toolUse"}
+            else "unknown"
+        )
+        error = message.get("errorMessage")
+        absent = error is None or (isinstance(error, str) and error == "")
+        category = "absent" if absent else "unknown"
+        truncated = isinstance(error, str) and len(error) > 4096
+        if not absent and not isinstance(error, str):
+            category = "malformed"
+        elif isinstance(error, str) and error:
+            bounded = error[:4096].lower()
+            for label, needles in (
+                ("authentication", ("unauthorized", "authentication failed", "invalid api key")),
+                ("rate_limit", ("rate limit", "too many requests")),
+                ("timeout", ("timed out", "timeout")),
+                ("transport", ("connection refused", "connection reset")),
+            ):
+                if any(needle in bounded for needle in needles):
+                    category = label
+                    break
+        values = (
+            operation.session_id,
+            operation.external_id,
+            entries[user]["id"],
+            entries[final]["id"],
+        )
+        ids = tuple(
+            value
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value)
+            else None
+            for value in values
+        )
+        self.observation = _NativeFailureObservation(
+            1,
+            ids[0],
+            ids[1],
+            True,
+            len(operation.native_baseline),
+            len(operation.public_baseline),
+            user,
+            final,
+            ids[2],
+            ids[3],
+            any(value is None for value in ids),
+            stop,
+            not absent,
+            category,
+            truncated,
+        )
+
+
 class _PublicPromptError(RuntimeError):
     def __init__(self, reason: str, predicates: dict):
         super().__init__(reason)
@@ -978,7 +1059,7 @@ def _reply_verdict(
             if users and index > users[0]:
                 finals.append(entry)
                 if message.get("stopReason") != "stop" or message.get("errorMessage"):
-                    raise RuntimeError("native_assistant_not_successful")
+                    raise _NativeReplyFailure(operation, entries, users[0], index)
                 if assistant_text(message).strip() != operation.literal:
                     raise RuntimeError("native_assistant_literal_mismatch")
         if role == "assistant" and _reply_text(message):
@@ -1294,6 +1375,56 @@ class _RemovedRuntime:
     descriptor_links: int
 
 
+_CLI_ALIAS = Path("data/logs/cli/latest-cli.log")
+
+
+@dataclass(frozen=True)
+class _LeafIdentity:
+    dev: int
+    ino: int
+    mode: int
+    uid: int
+    nlink: int
+    ctime_ns: int
+
+
+@dataclass(frozen=True)
+class _DiagnosticsAlias:
+    allocation_id: str
+    relative_path: Path
+    parent_identity: tuple[int, int]
+    identity: _LeafIdentity
+
+
+def _leaf_identity(metadata: os.stat_result) -> _LeafIdentity:
+    return _LeafIdentity(
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_ctime_ns,
+    )
+
+
+@dataclass
+class _TraversalBudget:
+    deadline: float
+    nodes: int = 0
+    bytes: int = 0
+
+    def visit(self, depth: int, size: int = 0) -> None:
+        self.nodes += 1
+        self.bytes += size
+        if (
+            depth > 32
+            or self.nodes > 10000
+            or self.bytes > 64 * 1024 * 1024
+            or time.monotonic() > self.deadline
+        ):
+            raise RuntimeError("runtime_traversal_limit")
+
+
 class _RuntimeOwner:
     def __init__(self, evidence: Path):
         self.evidence = evidence
@@ -1307,6 +1438,8 @@ class _RuntimeOwner:
         self.errors: list[str] = []
         self.closed = False
         self.event_flags = 0
+        self.diagnostics_alias: _DiagnosticsAlias | None = None
+        self.rejection_recorded = False
 
     @classmethod
     def allocate(cls, request: Request, evidence: Path) -> _RuntimeOwner:
@@ -1438,8 +1571,105 @@ class _RuntimeOwner:
         finally:
             os.close(checked)
 
-    def _remove_contents(self, descriptor: int, directory: Path) -> None:
-        for name in os.listdir(descriptor):
+    def _rejection(
+        self,
+        phase: str,
+        reason: str,
+        path: Path | None = None,
+        metadata: os.stat_result | None = None,
+    ) -> None:
+        self.errors.append(reason)
+        if self.rejection_recorded:
+            return
+        self.rejection_recorded = True
+        mode = metadata.st_mode if metadata is not None else 0
+        leaf_type = next(
+            (
+                label
+                for check, label in (
+                    (stat.S_ISLNK, "symlink"),
+                    (stat.S_ISREG, "regular"),
+                    (stat.S_ISDIR, "directory"),
+                    (stat.S_ISFIFO, "fifo"),
+                    (stat.S_ISSOCK, "socket"),
+                )
+                if check(mode)
+            ),
+            "unknown",
+        )
+        write_json(
+            self.evidence / "runtime-traversal-rejection.json",
+            {
+                "version": 1,
+                "allocation_id": self.allocation_id,
+                "phase": phase,
+                "reason": reason,
+                "relative_path": str(_CLI_ALIAS)
+                if path == self.root / _CLI_ALIAS
+                else "[redacted]",
+                "leaf_type": leaf_type,
+                "identity": asdict(_leaf_identity(metadata)) if metadata is not None else None,
+                "parent_identity_matches": True if metadata is not None else None,
+                "action": "reject",
+                "target_followed": False,
+            },
+            immutable=True,
+        )
+
+    def _alias(self, descriptor: int, path: Path, metadata: os.stat_result, phase: str) -> Path:
+        self._check_directory(descriptor, path.parent)
+        parent = os.fstat(descriptor)
+        witness = _DiagnosticsAlias(
+            self.allocation_id,
+            path.relative_to(self.root),
+            (parent.st_dev, parent.st_ino),
+            _leaf_identity(metadata),
+        )
+        if (
+            witness.relative_path != _CLI_ALIAS
+            or not stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.getuid()
+            or metadata.st_dev != self.target.directories[self.root][0]
+        ):
+            raise RuntimeError("runtime_diagnostics_alias_invalid")
+        if phase == "capture":
+            if self.diagnostics_alias is not None and self.diagnostics_alias != witness:
+                raise RuntimeError("runtime_diagnostics_alias_replaced")
+        elif self.diagnostics_alias != witness:
+            raise RuntimeError("runtime_diagnostics_alias_unwitnessed_or_replaced")
+        self._check_directory(descriptor, path.parent)
+        current = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
+        if _leaf_identity(current) != witness.identity:
+            raise RuntimeError("runtime_diagnostics_alias_replaced")
+        receipt = self.evidence / f"runtime-cli-alias-{phase}.json"
+        if phase == "remove":
+            os.unlink(path.name, dir_fd=descriptor)
+        write_json(
+            receipt,
+            {
+                **asdict(witness),
+                "version": 1,
+                "phase": phase,
+                "leaf_type": "symlink",
+                "parent_identity_matches": True,
+                "action": "skip_payload" if phase == "capture" else "unlink_alias",
+                "target_followed": False,
+            },
+            immutable=True,
+        )
+        if phase == "capture":
+            self.diagnostics_alias = witness
+        return receipt
+
+    def _remove_contents(self, descriptor: int, directory: Path, budget: _TraversalBudget) -> None:
+        budget.visit(len(directory.relative_to(self.root).parts))
+        with os.scandir(descriptor) as children:
+            names = []
+            for entry in children:
+                budget.visit(len(directory.relative_to(self.root).parts) + 1)
+                names.append(entry.name)
+        for name in names:
             self._check_directory(descriptor, directory)
             metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             if (
@@ -1448,7 +1678,9 @@ class _RuntimeOwner:
             ):
                 raise RuntimeError("runtime_descendant_not_owned")
             identity = (metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode))
-            if stat.S_ISDIR(metadata.st_mode):
+            if directory / name == self.root / _CLI_ALIAS:
+                self._alias(descriptor, directory / name, metadata, "remove")
+            elif stat.S_ISDIR(metadata.st_mode):
                 child = os.open(
                     name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
                 )
@@ -1456,8 +1688,9 @@ class _RuntimeOwner:
                     held = os.fstat(child)
                     if (held.st_dev, held.st_ino, stat.S_IFMT(held.st_mode)) != identity:
                         raise RuntimeError("runtime_descendant_replaced")
-                    self.target.directories[directory / name] = identity[:2]
-                    self._remove_contents(child, directory / name)
+                    self.target.directories.setdefault(directory / name, identity[:2])
+                    self._check_directory(child, directory / name)
+                    self._remove_contents(child, directory / name, budget)
                     self._check_directory(descriptor, directory)
                     current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
                     if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode)) != identity:
@@ -1468,10 +1701,11 @@ class _RuntimeOwner:
             elif stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
                 self._check_directory(descriptor, directory)
                 current = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-                if (current.st_dev, current.st_ino, stat.S_IFMT(current.st_mode)) != identity:
+                if _leaf_identity(current) != _leaf_identity(metadata):
                     raise RuntimeError("runtime_descendant_replaced")
                 os.unlink(name, dir_fd=descriptor)
             else:
+                self._rejection("remove", "runtime_unsafe_descendant", directory / name, metadata)
                 raise RuntimeError("runtime_unsafe_descendant")
 
     def finish(self, settlement: _ExternalSettlement, captures: tuple[Path, ...]) -> None:
@@ -1505,7 +1739,24 @@ class _RuntimeOwner:
                 with path.open("rb") as handle:
                     os.fsync(handle.fileno())
             self.check_live()
-            self._remove_contents(self.root_fd, self.root)
+            if self.diagnostics_alias is not None:
+                alias = self.root / _CLI_ALIAS
+                parent = _open_witnessed_directory(self.target, alias.parent)
+                if parent is None:
+                    raise RuntimeError("runtime_diagnostics_alias_parent_missing")
+                try:
+                    metadata = os.stat(alias.name, dir_fd=parent, follow_symlinks=False)
+                    held = os.fstat(parent)
+                    if self.diagnostics_alias != _DiagnosticsAlias(
+                        self.allocation_id,
+                        _CLI_ALIAS,
+                        (held.st_dev, held.st_ino),
+                        _leaf_identity(metadata),
+                    ):
+                        raise RuntimeError("runtime_diagnostics_alias_replaced")
+                finally:
+                    os.close(parent)
+            self._remove_contents(self.root_fd, self.root, _TraversalBudget(time.monotonic() + 30))
             self.check_live()
             os.rmdir(self.root.name, dir_fd=self.parent_fd)
             self._events()
@@ -1536,6 +1787,7 @@ class _RuntimeOwner:
                 immutable=True,
             )
         except BaseException as exc:
+            self._rejection("remove", "runtime_removal_failed")
             self.errors.append(type(exc).__name__ + ": " + sanitize(str(exc)))
             raise
 
@@ -2514,6 +2766,25 @@ class _OwnedRun:
                     return verdict
                 time.sleep(min(0.1, self.remaining(operation.deadline)))
         except FINALIZATION_ERRORS as exc:
+            if isinstance(exc, _NativeReplyFailure):
+                observation = asdict(exc.observation)
+                observation["operation"] = (
+                    name
+                    if name
+                    in {
+                        "kernel-seed",
+                        "steering-consumed",
+                        "terminal-followup",
+                        "memory-read",
+                        "before",
+                        "outage",
+                        "after",
+                    }
+                    else "unknown"
+                )
+                observation["reason"] = "native_assistant_not_successful"
+                write_json(self.evidence / f"{name}-native-failure.json", observation)
+                predicates = {**predicates, "observation_state": "previous_poll"}
             if isinstance(exc, _PublicPromptError):
                 predicates = exc.predicates
             predicates["reason"] = (
@@ -3864,40 +4135,59 @@ class _OwnedRun:
         owner = self.runtime_owner
         captures = []
         logs = self.runtime / "data/logs"
-        descriptor = _open_witnessed_directory(owner.target, logs)
-        if descriptor is None:
-            return ()
+        budget = _TraversalBudget(time.monotonic() + 30)
 
         def capture(directory: Path, fd: int) -> None:
             owner._check_directory(fd, directory)
-            for name in os.listdir(fd):
+            budget.visit(len(directory.relative_to(logs).parts))
+            with os.scandir(fd) as children:
+                names = []
+                for entry in children:
+                    budget.visit(len(directory.relative_to(logs).parts) + 1)
+                    names.append(entry.name)
+            for name in names:
+                owner._check_directory(fd, directory)
                 metadata = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 if (
                     metadata.st_uid != os.getuid()
                     or metadata.st_dev != owner.target.directories[self.runtime][0]
                 ):
+                    owner._rejection(
+                        "capture", "runtime_capture_not_owned", directory / name, metadata
+                    )
                     raise RuntimeError("runtime_capture_not_owned")
+                if directory / name == self.runtime / _CLI_ALIAS:
+                    captures.append(owner._alias(fd, directory / name, metadata, "capture"))
+                    continue
                 flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
                 if stat.S_ISDIR(metadata.st_mode):
                     flags |= os.O_DIRECTORY
                 elif not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    owner._rejection(
+                        "capture", "runtime_capture_unsafe_file", directory / name, metadata
+                    )
                     raise RuntimeError("runtime_capture_unsafe_file")
+                else:
+                    budget.visit(len(directory.relative_to(logs).parts) + 1, metadata.st_size)
                 child = os.open(name, flags, dir_fd=fd)
                 try:
                     held = os.fstat(child)
-                    if (held.st_dev, held.st_ino, held.st_mode) != (
-                        metadata.st_dev,
-                        metadata.st_ino,
-                        metadata.st_mode,
-                    ):
+                    if _leaf_identity(held) != _leaf_identity(metadata):
                         raise RuntimeError("runtime_capture_replaced")
                     if stat.S_ISDIR(held.st_mode):
-                        owner.target.directories[directory / name] = (held.st_dev, held.st_ino)
+                        owner.target.directories.setdefault(
+                            directory / name, (held.st_dev, held.st_ino)
+                        )
                         capture(directory / name, child)
                     else:
                         owner._check_directory(fd, directory)
-                        with os.fdopen(os.dup(child), "r", errors="replace") as handle:
-                            text = sanitize(handle.read())
+                        with os.fdopen(os.dup(child), "rb") as handle:
+                            payload = handle.read(metadata.st_size + 1)
+                        if len(payload) != metadata.st_size or _leaf_identity(
+                            os.fstat(child)
+                        ) != _leaf_identity(metadata):
+                            raise RuntimeError("runtime_capture_changed")
+                        text = sanitize(payload.decode(errors="replace"))
                         destination = (
                             self.evidence / "owned-logs" / (directory / name).relative_to(logs)
                         )
@@ -3909,9 +4199,16 @@ class _OwnedRun:
                     os.close(child)
 
         try:
-            capture(logs, descriptor)
-        finally:
-            os.close(descriptor)
+            descriptor = _open_witnessed_directory(owner.target, logs)
+            if descriptor is None:
+                return ()
+            try:
+                capture(logs, descriptor)
+            finally:
+                os.close(descriptor)
+        except BaseException:
+            owner._rejection("capture", "runtime_capture_failed")
+            raise
         return tuple(captures)
 
     def finalize_owned_credentials(self, errors: list[str]) -> None:

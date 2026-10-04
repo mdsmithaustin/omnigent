@@ -1985,3 +1985,409 @@ def test_provider_partial_subclass_retains_allocation_without_fabricated_settlem
     assert not (evidence / "runtime-settlement.json").exists()
     assert not (evidence / "completion.json").exists()
     assert source.read_text() == "SYNTHETIC SOURCE"
+
+
+@pytest.mark.parametrize("poll_pass", [1, 2])
+@pytest.mark.parametrize(
+    "reason,error,expected_reason,expected_class,truncated",
+    [
+        ("error", "401 unauthorized SYNTHETIC_SECRET", "error", "authentication", False),
+        ("aborted", None, "aborted", "absent", False),
+        ("stop", "rate limit SYNTHETIC_SECRET", "stop", "rate_limit", False),
+        (None, None, "missing", "absent", False),
+        (
+            {"bad": "SYNTHETIC_SECRET"},
+            {"bad": "SYNTHETIC_SECRET"},
+            "malformed",
+            "malformed",
+            False,
+        ),
+        ("SYNTHETIC_SECRET", "https://SYNTHETIC_SECRET", "unknown", "unknown", False),
+        ("error", "Authorization: Bearer SYNTHETIC_SECRET", "error", "unknown", False),
+        ("error", "SYNTHETIC_SECRET" * 1000, "error", "unknown", True),
+        ("error", [], "error", "malformed", False),
+        ("error", {}, "error", "malformed", False),
+        ("error", False, "error", "malformed", False),
+        ("error", 0, "error", "malformed", False),
+    ],
+    ids=[
+        "error",
+        "aborted",
+        "stop-error",
+        "missing",
+        "malformed",
+        "unknown",
+        "header",
+        "overlong",
+        "empty-list",
+        "empty-dict",
+        "false",
+        "zero",
+    ],
+)
+def test_native_failure_observation_survives_completed_reply(
+    tmp_path, poll_pass, reason, error, expected_reason, expected_class, truncated
+):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    entries[-1]["message"].update(stopReason=reason, errorMessage=error)
+    run = _provider_capture_run(probe, operation, entries, tmp_path)
+    pages = iter([entries[:2], entries] if poll_pass == 2 else [entries])
+    run.journal = lambda: next(pages)
+    run.items = lambda **kwargs: items
+    with pytest.raises(RuntimeError, match=r"^native_assistant_not_successful$") as caught:
+        run.completed_reply(operation, "kernel-seed")
+    receipt_path = tmp_path / "kernel-seed-native-failure.json"
+    assert receipt_path.is_file(), "current native failure observation was discarded"
+    encoded = receipt_path.read_text()
+    observation = json.loads(encoded)
+    assert len(encoded.encode()) <= 4096
+    assert "SYNTHETIC_SECRET" not in encoded + str(caught.value)
+    assert observation["stop_reason"] == expected_reason
+    assert observation["error_class"] == expected_class
+    assert observation["error_present"] is (expected_class != "absent")
+    assert observation["classification_input_truncated"] is truncated
+    assert observation["native_user_id"] == "native-user"
+    assert observation["native_reply_id"] == "native-final"
+    assert observation["baseline_count"] == 1
+    assert observation["native_user_position"] == 1
+    assert observation["native_final_position"] == 2
+    assert observation["session_matches_operation"] is True
+    assert observation["operation"] == "kernel-seed"
+    assert observation["public_baseline_count"] == 0
+    assert observation["session_id"] == "conversation"
+    assert observation["native_session_id"] == "session"
+    assert observation["reason"] == "native_assistant_not_successful"
+    assert observation["ids_omitted"] is False
+    assert set(observation) == {
+        "version",
+        "session_id",
+        "native_session_id",
+        "session_matches_operation",
+        "baseline_count",
+        "public_baseline_count",
+        "native_user_position",
+        "native_final_position",
+        "native_user_id",
+        "native_reply_id",
+        "ids_omitted",
+        "stop_reason",
+        "error_present",
+        "error_class",
+        "classification_input_truncated",
+        "operation",
+        "reason",
+    }
+    predicates = json.loads((tmp_path / "kernel-seed-native-predicates.json").read_text())
+    assert predicates["observation_state"] == "previous_poll"
+    draft = _synthetic_draft(probe, tmp_path)
+    failed = dataclasses.replace(
+        draft.result,
+        observations=(
+            probe.Observation("synthetic", "FAILED", (receipt_path.name,), str(caught.value)),
+        ),
+    )
+    result = probe._publish_case(dataclasses.replace(draft, result=failed))
+    assert result.passed is False
+    assert json.loads((tmp_path / "completion.json").read_text())["passed"] is False
+
+
+@pytest.mark.parametrize("poll_pass", [1, 2])
+@pytest.mark.parametrize("error_state", ["missing", "null", "empty"])
+def test_native_absent_error_failure_and_success_controls(tmp_path, poll_pass, error_state):
+    probe = _provider_probe()
+    for reason in ("error", "stop"):
+        evidence = tmp_path / reason
+        evidence.mkdir()
+        operation, entries, items = _provider_reply(probe)
+        entries[-1]["message"]["stopReason"] = reason
+        if error_state != "missing":
+            entries[-1]["message"]["errorMessage"] = None if error_state == "null" else ""
+        run = _provider_capture_run(probe, operation, entries, evidence)
+        pages = iter([entries[:2], entries] if poll_pass == 2 else [entries, entries])
+        run.journal = lambda pages=pages: next(pages)
+        run.items = lambda items=items, **kwargs: items
+        receipt = evidence / "kernel-seed-native-failure.json"
+        if reason == "error":
+            with pytest.raises(RuntimeError, match=r"^native_assistant_not_successful$"):
+                run.completed_reply(operation, "kernel-seed")
+            observation = json.loads(receipt.read_text())
+            assert observation["error_class"] == "absent"
+            assert observation["error_present"] is False
+            assert observation["native_reply_id"] == "native-final"
+            assert observation["native_final_position"] == 2
+        else:
+            result = run.completed_reply(operation, "kernel-seed")
+            assert result["complete"] is True
+            assert result["native_reply_id"] == "native-final"
+            assert result["public_reply_id"] == "public-final"
+            assert not receipt.exists()
+            published = probe._publish_case(_synthetic_draft(probe, evidence))
+            assert published.passed is True
+            assert json.loads((evidence / "completion.json").read_text())["passed"] is True
+
+
+def _produce_cli_log(run):
+    import os
+    import subprocess
+
+    produced = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from omnigent.cli_diagnostics import setup_cli_logging; import logging; "
+            "setup_cli_logging(['synthetic-owner-test']); "
+            "logging.getLogger('omnigent').warning('SYNTHETIC_CLI_LOG'); logging.shutdown()",
+        ],
+        env={**os.environ, "OMNIGENT_DATA_DIR": str(run.runtime / "data")},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert produced.returncode == 0, produced.stderr
+    alias = run.runtime / "data/logs/cli/latest-cli.log"
+    assert alias.is_symlink()
+    return alias
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_real_cli_alias_capture_and_removal(tmp_path):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    _produce_cli_log(run)
+    try:
+        with owner:
+            cleanup = run.cleanup(probe._ExternalSettlement(owner.allocation_id, "no_fixture", ()))
+            assert cleanup.status == "VERIFIED"
+        alias_receipt = json.loads((run.evidence / "runtime-cli-alias-capture.json").read_text())
+        assert alias_receipt["action"] == "skip_payload"
+        assert alias_receipt["target_followed"] is False
+        assert alias_receipt["allocation_id"] == owner.allocation_id
+        assert not (run.evidence / "owned-logs/cli/latest-cli.log").exists()
+        canonical = list((run.evidence / "owned-logs/cli").glob("cli-*.log"))
+        assert len(canonical) == 1
+        assert "SYNTHETIC_CLI_LOG" in canonical[0].read_text()
+        assert owner.removed.event_flags & probe.select.KQ_NOTE_DELETE
+        assert owner.closed and owner.errors == []
+        assert not run.runtime.exists()
+        probe._publish_case(_synthetic_draft(probe, run.evidence))
+        assert json.loads((run.evidence / "completion.json").read_text())["passed"] is True
+        for receipt in (
+            "runtime-settlement.json",
+            "runtime-removal.json",
+            "runtime-owner.json",
+            "runtime-cli-alias-remove.json",
+        ):
+            assert (run.evidence / receipt).is_file()
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@contextlib.contextmanager
+def _deny_alias_target_access(probe, owner, alias, sentinel, monkeypatch):
+    import builtins
+    import io
+    import os
+
+    accesses = []
+    operations = []
+    descriptors = {owner.root_fd: owner.root, owner.parent_fd: owner.root.parent}
+
+    def checked(operation, path, dir_fd=None):
+        if isinstance(path, int):
+            candidate = descriptors.get(path)
+        else:
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = descriptors.get(dir_fd, Path.cwd()) / candidate
+            candidate = Path(os.path.abspath(candidate))
+        if candidate is not None:
+            operations.append((operation, str(candidate)))
+            if (
+                candidate == sentinel
+                or candidate.is_relative_to(sentinel)
+                or (operation == "open" and candidate == alias)
+            ):
+                accesses.append((operation, str(candidate)))
+                raise AssertionError("subject attempted outside or alias payload access")
+        return candidate
+
+    real_open, real_unlink, real_rmdir = os.open, os.unlink, os.rmdir
+    real_builtin, real_io, real_readlink = builtins.open, io.open, os.readlink
+
+    def open_fd(path, flags, *args, **kwargs):
+        candidate = checked("open", path, kwargs.get("dir_fd"))
+        fd = real_open(path, flags, *args, **kwargs)
+        descriptors[fd] = candidate
+        return fd
+
+    def open_file(real):
+        def opened(path, *args, **kwargs):
+            checked("open", path)
+            return real(path, *args, **kwargs)
+
+        return opened
+
+    def unlink(path, *args, **kwargs):
+        checked("unlink", path, kwargs.get("dir_fd"))
+        return real_unlink(path, *args, **kwargs)
+
+    def rmdir(path, *args, **kwargs):
+        checked("rmdir", path, kwargs.get("dir_fd"))
+        return real_rmdir(path, *args, **kwargs)
+
+    def readlink(path, *args, **kwargs):
+        if Path(path) == alias or str(path) == alias.name:
+            raise AssertionError("subject read alias target value")
+        return real_readlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", open_fd)
+        patch.setattr(builtins, "open", open_file(real_builtin))
+        patch.setattr(io, "open", open_file(real_io))
+        patch.setattr(os, "unlink", unlink)
+        patch.setattr(os, "rmdir", rmdir)
+        patch.setattr(os, "readlink", readlink)
+        yield operations
+    probe.write_json(
+        owner.evidence / "alias-access-trace.json",
+        {
+            "operations": operations,
+            "outside_accesses": accesses,
+            "oracle_reads_outside_subject": True,
+        },
+    )
+    assert accesses == []
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+@pytest.mark.parametrize("target", ["absolute", "relative", "dangling", "loop"])
+def test_cli_alias_never_accesses_its_target(tmp_path, monkeypatch, target):
+    import os
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    alias = _produce_cli_log(run)
+    sentinel = tmp_path / "compact-sibling"
+    alias.unlink()
+    alias.symlink_to(
+        {
+            "absolute": str(sentinel),
+            "relative": os.path.relpath(sentinel, alias.parent),
+            "dangling": str(sentinel / "absent"),
+            "loop": alias.name,
+        }[target]
+    )
+    with _deny_alias_target_access(probe, owner, alias, sentinel, monkeypatch) as operations:
+        with owner:
+            cleanup = run.cleanup(probe._ExternalSettlement(owner.allocation_id, "no_fixture", ()))
+            assert cleanup.status == "VERIFIED"
+    assert ("unlink", str(alias)) in operations
+    assert ("rmdir", str(run.runtime)) in operations
+    assert owner.removed is not None and owner.closed and owner.errors == []
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "replacement",
+        "missing",
+        "unknown",
+        "hardlink",
+        "ancestor",
+        "ancestor_alias",
+        "wrong_allocation",
+        "receipt",
+        "capture_close",
+        "budget",
+        "fifo",
+    ],
+)
+def test_cli_alias_rejections_are_sticky(tmp_path, monkeypatch, failure):
+    import os
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    alias = _produce_cli_log(run)
+    sentinel = tmp_path / "compact-sibling"
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    captures = ()
+    if failure in {"replacement", "missing", "ancestor", "ancestor_alias", "wrong_allocation"}:
+        captures = run._capture_owned_logs()
+    if failure == "replacement":
+        alias.rename(alias.with_name("retired-alias"))
+        alias.symlink_to(sentinel)
+    elif failure == "missing":
+        alias.unlink()
+    elif failure == "unknown":
+        alias.with_name("unknown").symlink_to(sentinel)
+    elif failure == "hardlink":
+        os.link(sentinel, alias.with_name("hardlink"))
+        before[sentinel] = (sentinel.stat().st_dev, sentinel.stat().st_ino, sentinel.read_bytes())
+    elif failure in {"ancestor", "ancestor_alias"}:
+        alias.parent.rename(alias.parent.with_name("moved-cli"))
+        if failure == "ancestor":
+            alias.parent.mkdir()
+            alias.symlink_to(sentinel)
+        else:
+            alias.parent.symlink_to(tmp_path)
+    elif failure == "wrong_allocation":
+        owner.diagnostics_alias = dataclasses.replace(
+            owner.diagnostics_alias, allocation_id="0" * 32
+        )
+    elif failure == "receipt":
+        write = probe.write_json
+
+        def reject_receipt(path, *args, **kwargs):
+            if path.name == "runtime-cli-alias-capture.json":
+                raise OSError("synthetic receipt failure")
+            return write(path, *args, **kwargs)
+
+        monkeypatch.setattr(probe, "write_json", reject_receipt)
+    elif failure == "capture_close":
+        close = probe.os.close
+
+        def reject_close(fd):
+            metadata = os.fstat(fd)
+            close(fd)
+            if metadata.st_ino == (run.runtime / "data/logs/diagnostic.log").stat().st_ino:
+                raise OSError("synthetic capture close failure")
+
+        monkeypatch.setattr(probe.os, "close", reject_close)
+    elif failure == "budget":
+        with (alias.parent / "large.log").open("wb") as handle:
+            handle.truncate(64 * 1024 * 1024 + 1)
+    elif failure == "fifo":
+        os.mkfifo(alias.with_name("fifo"))
+    try:
+        with _deny_alias_target_access(probe, owner, alias, sentinel, monkeypatch):
+            with pytest.raises((RuntimeError, OSError)):
+                if captures:
+                    owner.finish(settlement, captures)
+                else:
+                    run._capture_owned_logs()
+        assert owner.errors
+        assert owner.removed is None
+        assert run.cleanup(settlement).status == "FAILED"
+        with pytest.raises(RuntimeError):
+            owner.__exit__(None, None, None)
+        draft = _synthetic_draft(probe, run.evidence)
+        cleanup = probe.Observation("owned_cleanup", "FAILED", (), "sticky_failure")
+        result = probe._publish_case(
+            dataclasses.replace(draft, result=dataclasses.replace(draft.result, cleanup=cleanup))
+        )
+        assert result.passed is False
+        assert json.loads((run.evidence / "completion.json").read_text())["passed"] is False
+        receipt = (run.evidence / "runtime-traversal-rejection.json").read_text()
+        assert len(receipt.encode()) <= 4096
+        assert "target_value" not in receipt
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
