@@ -7,6 +7,8 @@ by ``omnigent login``.
 from __future__ import annotations
 
 import contextlib
+import os
+import subprocess
 import sys
 import time
 
@@ -1043,42 +1045,32 @@ def test_refresh_rejects_unusable_response_fields(token_dir, monkeypatch) -> Non
     assert entry["expires_at"] < time.time() + 4000
 
 
-def _purge_tui_sdk_modules() -> None:
-    """Drop loaded ``omnigent_ui_sdk`` modules so the no-import assertions
-    below hold regardless of what earlier tests imported."""
-    for mod_name in list(sys.modules):
-        if mod_name == "omnigent_ui_sdk" or mod_name.startswith("omnigent_ui_sdk."):
-            sys.modules.pop(mod_name, None)
+def _check_token_path(expected, environment) -> None:
+    script = (
+        "import sys\nfrom pathlib import Path\n"
+        "from omnigent.cli_auth import _token_file_path\n"
+        f"assert _token_file_path() == Path({str(expected)!r})\n"
+        "assert 'omnigent_ui_sdk.terminal' not in sys.modules\n"
+        "print('TOKEN_PATH_OK')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "TOKEN_PATH_OK\n"
 
 
 def test_token_file_path_honors_data_dir_without_tui_sdk(tmp_path, monkeypatch) -> None:
-    """The token-path lookup must not import the prompt_toolkit-laden TUI SDK.
-
-    Every CLI startup that touches auth calls this; routing it through
-    ``omnigent_ui_sdk.terminal`` (-> prompt_toolkit -> XML parsing ->
-    pyexpat) crashed the CLI outright on interpreters whose ``pyexpat``
-    extension cannot load.
-    """
-    from omnigent.cli_auth import _token_file_path
-
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path))
-    _purge_tui_sdk_modules()
-
-    assert _token_file_path() == tmp_path / "auth_tokens.json"
-    assert "omnigent_ui_sdk.terminal" not in sys.modules, (
-        "computing the auth token path imported the TUI SDK"
-    )
+    _check_token_path(tmp_path / "auth_tokens.json", dict(os.environ))
 
 
 def test_token_file_path_defaults_to_home_state_dir(tmp_path, monkeypatch) -> None:
-    """Without ``OMNIGENT_DATA_DIR`` the token file lives under ``~/.omnigent``."""
-    from omnigent.cli_auth import _token_file_path
-
     monkeypatch.delenv("OMNIGENT_DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
-    _purge_tui_sdk_modules()
-
-    assert _token_file_path() == tmp_path / ".omnigent" / "auth_tokens.json"
-    assert "omnigent_ui_sdk.terminal" not in sys.modules, (
-        "computing the auth token path imported the TUI SDK"
-    )
+    _check_token_path(tmp_path / ".omnigent" / "auth_tokens.json", dict(os.environ))
