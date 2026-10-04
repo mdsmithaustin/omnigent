@@ -14,7 +14,7 @@ Unlike ``test_policies_e2e.py`` (polling API, background=True),
 this test drives the REPL through the actual streaming code
 path — the code path a human types into at the terminal.
 
-All 14 tests run against the mock LLM server: ``OPENAI_BASE_URL``
+The approval tests run against the mock LLM server: ``OPENAI_BASE_URL``
 is injected into the REPL subprocess's environment so the inner
 OpenAI harness routes to the mock server. Each test pre-configures
 the mock's keyed response queue before spawning the subprocess.
