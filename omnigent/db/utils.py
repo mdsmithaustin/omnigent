@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.cockroachdb import (
+    _crdb_revision_is_supported,
     _crdb_server_version,
     _initialize_or_verify_crdb_schema,
     _prepare_crdb_schema_transaction,
@@ -590,18 +591,16 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
     _verify_db_revision_is_supported(db_uri, current, head)
 
     _logger.info("Running database migrations...")
-    config = _build_alembic_config(db_uri)
-    # Pass a shared connection so Alembic operates within the same engine.
-    # Most dialects let Alembic own transaction demarcation. CRDB needs an
-    # externally started SERIALIZABLE transaction for schema changes; on
-    # versions that provide it, autocommit_before_ddl is also enabled.
-    with query_name_scope("omnigent.database.run_migrations"):
-        crdb_version = (
-            _crdb_server_version(engine) if is_cockroachdb(engine.dialect.name) else None
-        )
+    crdb_version = _crdb_server_version(engine) if is_cockroachdb(engine.dialect.name) else None
+
+    def migrate() -> None:
+        config = _build_alembic_config(db_uri)
         with engine.connect() as connection:
             if crdb_version is not None:
                 _prepare_crdb_schema_transaction(connection, crdb_version)
+                if crdb_version.major >= 24:
+                    # DDL and its Alembic revision must share a durable boundary.
+                    connection.execute(text("SET autocommit_before_ddl = false"))
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
             if crdb_version is not None:
@@ -612,10 +611,22 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
                     base.metadata.create_all(bind=connection, checkfirst=True)
                 connection.commit()
             else:
-                # If a future migration is added but a caller forgets to wire
-                # it into the chain, create_all still creates missing tables.
                 for base in (OmnigentBase, ConversationBase):
                     base.metadata.create_all(bind=engine, checkfirst=True)
+
+    with query_name_scope("omnigent.database.run_migrations"):
+        if (
+            crdb_version is None
+            or current is None
+            or not _crdb_revision_is_supported(db_uri, current, head)
+        ):
+            migrate()
+        else:
+            _retry_database_operation(
+                migrate,
+                dialect=engine.dialect.name,
+                qualified_name="omnigent.database.run_migrations",
+            )
 
 
 def run_migrations_with_retry(
@@ -1045,15 +1056,37 @@ def run_write_transaction(
     supplied maker remains responsible for query naming, commit, rollback,
     SQLite write isolation, and session cleanup on every attempt.
     """
+
+    def write() -> _T:
+        with session_maker(operation_name) as session:
+            return callback(session)
+
+    return _retry_database_operation(
+        write,
+        dialect=session_maker.engine.dialect.name,
+        qualified_name=f"{session_maker.query_name_prefix}.{operation_name}",
+        max_retries=max_retries,
+        sleep=sleep,
+        random_value=random_value,
+    )
+
+
+def _retry_database_operation(
+    callback: Callable[[], _T],
+    *,
+    dialect: str,
+    qualified_name: str,
+    max_retries: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
+    random_value: Callable[[], float] = random.random,
+) -> _T:
+    """Retry an operation that owns rollback and durable progress on every attempt."""
     if max_retries < 0:
         raise ValueError("max_retries must be >= 0")
-    dialect = session_maker.engine.dialect.name
-    qualified_name = f"{session_maker.query_name_prefix}.{operation_name}"
 
     for attempt in range(max_retries + 1):
         try:
-            with session_maker(operation_name) as session:
-                return callback(session)
+            return callback()
         except DBAPIError as exc:
             retryable = (is_cockroachdb(dialect) and _is_serialization_failure(exc)) or (
                 dialect == "mysql" and getattr(exc.orig, "args", ())[:1] == (1213,)
