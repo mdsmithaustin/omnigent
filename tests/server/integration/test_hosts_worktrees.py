@@ -10,7 +10,7 @@ worktree picker (branch prefill / start-in-existing-worktree).
 from __future__ import annotations
 
 import asyncio
-import contextlib
+from builtins import ExceptionGroup
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -119,66 +119,128 @@ async def wt_setup(
     app, registry, _hs, _cs = wt_app
     path = f"/v1/hosts/{_HOST_ID}/tunnel"
     comm = ApplicationCommunicator(app, _websocket_scope(path))
-    await comm.send_input({"type": "websocket.connect"})
-    accepted = await comm.receive_output(timeout=1.0)
-    assert accepted["type"] == "websocket.accept"
-    await comm.send_input({"type": "websocket.receive", "text": _hello_text()})
-    while registry.get(_HOST_ID) is None:
-        await asyncio.sleep(0.01)
-
-    replies: dict[str, dict[str, Any]] = {}
-    stop_drain = asyncio.Event()
-
-    async def _drain() -> None:
-        """Drain outbound WS frames and feed back the configured reply."""
-        while not stop_drain.is_set():
-            try:
-                output = await comm.receive_output(timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
-            if output.get("type") != "websocket.send":
-                continue
-            text = output.get("text")
-            if not isinstance(text, str):
-                continue
-            frame = decode_host_frame(text)
-            if not isinstance(frame, HostListWorktreesFrame):
-                continue
-            reply = replies.get(frame.repo_path)
-            if reply is None:
-                reply_frame = HostListWorktreesResultFrame(
-                    request_id=frame.request_id,
-                    status="failed",
-                    error="not a git repository",
-                )
-            else:
-                reply_frame = HostListWorktreesResultFrame(
-                    request_id=frame.request_id,
-                    status=reply.get("status", "ok"),
-                    worktrees=reply.get("worktrees"),
-                    error=reply.get("error"),
-                )
-            await comm.send_input(
-                {"type": "websocket.receive", "text": encode_host_frame(reply_frame)}
-            )
-
-    drain_task = asyncio.create_task(_drain())
+    drain_task: asyncio.Task[None] | None = None
+    setup_error: Exception | asyncio.CancelledError | None = None
     try:
+        await comm.send_input({"type": "websocket.connect"})
+        accepted = await comm.receive_output(timeout=1.0)
+        assert accepted["type"] == "websocket.accept"
+        await comm.send_input({"type": "websocket.receive", "text": _hello_text()})
+        while registry.get(_HOST_ID) is None:
+            await asyncio.sleep(0.01)
+
+        replies: dict[str, dict[str, Any]] = {}
+
+        async def _drain() -> None:
+            """Drain outbound WS frames and feed back the configured reply."""
+            while True:
+                output = await comm.receive_output(timeout=None)
+                if output.get("type") != "websocket.send":
+                    continue
+                text = output.get("text")
+                if not isinstance(text, str):
+                    continue
+                frame = decode_host_frame(text)
+                if not isinstance(frame, HostListWorktreesFrame):
+                    continue
+                reply = replies.get(frame.repo_path)
+                if reply is None:
+                    reply_frame = HostListWorktreesResultFrame(
+                        request_id=frame.request_id,
+                        status="failed",
+                        error="not a git repository",
+                    )
+                else:
+                    reply_frame = HostListWorktreesResultFrame(
+                        request_id=frame.request_id,
+                        status=reply.get("status", "ok"),
+                        worktrees=reply.get("worktrees"),
+                        error=reply.get("error"),
+                    )
+                await comm.send_input(
+                    {"type": "websocket.receive", "text": encode_host_frame(reply_frame)}
+                )
+
+        drain_task = asyncio.create_task(_drain())
         yield app, registry, comm, replies
+    except (Exception, asyncio.CancelledError) as exc:
+        setup_error = exc
+        raise
     finally:
-        stop_drain.set()
-        try:
-            await asyncio.wait_for(drain_task, timeout=1.0)
-        except asyncio.TimeoutError:
-            drain_task.cancel()
-        # Send an explicit disconnect so the tunnel endpoint's finally-block
-        # calls host_store.set_offline() and registry.deregister() before
-        # this fixture returns. Without this, those calls happen whenever the
-        # comm is GC'd — potentially during the next test's setup window.
-        # Swallow CancelledError: the asgiref communicator may already be done
-        # if the event loop cancelled its internal future during teardown.
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await comm.send_input({"type": "websocket.disconnect", "code": 1000})
+
+        async def _finish_mock_host() -> list[Exception]:
+            errors: list[Exception] = []
+            if drain_task is not None:
+                already_cancelled = drain_task.cancelled() or drain_task.cancelling() > 0
+                if not drain_task.done() and not already_cancelled:
+                    drain_task.cancel()
+                try:
+                    await drain_task
+                except asyncio.CancelledError as exc:
+                    if already_cancelled:
+                        error = RuntimeError("Mock-host drain was unexpectedly cancelled")
+                        error.__cause__ = exc
+                        errors.append(error)
+                except Exception as exc:
+                    errors.append(exc)
+
+            app_cancelled = False
+            if not comm.future.done():
+                try:
+                    await comm.send_input({"type": "websocket.disconnect", "code": 1000})
+                except asyncio.CancelledError as exc:
+                    error = RuntimeError("Mock-host application was unexpectedly cancelled")
+                    error.__cause__ = exc
+                    errors.append(error)
+                    app_cancelled = True
+                except Exception as exc:
+                    if all(exc is not error for error in errors):
+                        errors.append(exc)
+
+            stopped_app = False
+            if not comm.future.done():
+                done, _ = await asyncio.wait({comm.future}, timeout=5.0)
+                if not done:
+                    errors.append(
+                        TimeoutError("Mock-host application did not disconnect within 5 seconds")
+                    )
+                    stopped_app = comm.future.cancelling() == 0
+                    if stopped_app:
+                        comm.future.cancel()
+            try:
+                await comm.future
+            except asyncio.CancelledError as exc:
+                if not stopped_app and not app_cancelled:
+                    error = RuntimeError("Mock-host application was unexpectedly cancelled")
+                    error.__cause__ = exc
+                    errors.append(error)
+            except Exception as exc:
+                if all(exc is not error for error in errors):
+                    errors.append(exc)
+            return errors
+
+        cleanup_task = asyncio.create_task(_finish_mock_host())
+        finalizer_cancel: asyncio.CancelledError | None = None
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError as exc:
+                if finalizer_cancel is None:
+                    finalizer_cancel = exc
+        errors = cleanup_task.result()
+        if finalizer_cancel is not None:
+            error = RuntimeError("Mock-host fixture teardown was externally cancelled")
+            error.__cause__ = finalizer_cancel
+            errors.append(error)
+        if setup_error is not None and errors:
+            if isinstance(setup_error, asyncio.CancelledError):
+                raise setup_error from ExceptionGroup("Mock-host cleanup failed", errors)
+            if all(setup_error is not error for error in errors):
+                errors.insert(0, setup_error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("Mock-host fixture failed", errors)
 
 
 @pytest.mark.parametrize("legacy_provider", [False, True])
