@@ -2792,6 +2792,56 @@ async def _persist_external_conversation_item_unlocked(
         if drained is not None:
             cleared_pending_id = drained.pending_id
         held_older = matched.skipped
+    if drained is not None and drained.persisted_item_id is not None:
+        existing = await asyncio.to_thread(
+            conversation_store.get_item, session_id, drained.persisted_item_id
+        )
+        if (
+            existing is not None
+            and isinstance(existing.data, SlashCommandData)
+            and existing.data.native_invocation
+        ):
+            mirrored = (
+                f"/{item.data.name} {item.data.arguments}".strip()
+                if isinstance(item.data, SlashCommandData)
+                else _message_text(item.data.content)
+                if isinstance(item.data, MessageData)
+                else None
+            )
+            if (
+                mirrored is not None
+                and mirrored.split() == existing.data.native_invocation.split()
+            ):
+                if item.stable_id is not None:
+                    receipt = NewConversationItem(
+                        type="message",
+                        stable_id=item.stable_id,
+                        response_id=existing.response_id,
+                        data=MessageData(role="user", content=[], is_meta=True),
+                    )
+                    try:
+                        saved = await asyncio.to_thread(
+                            conversation_store.append, session_id, [receipt]
+                        )
+                    except Exception:
+                        _restore_drained_inputs(
+                            session_id,
+                            [*skipped_pending, *uncertain_pending, *held_older],
+                            drained,
+                        )
+                        raise
+                    if saved[0].deduplicated:
+                        _restore_drained_inputs(
+                            session_id,
+                            [*skipped_pending, *uncertain_pending, *held_older],
+                            drained,
+                        )
+                        return saved[0].id
+                _release_drained_inputs(session_id, [drained])
+                _restore_drained_inputs(
+                    session_id, [*skipped_pending, *uncertain_pending, *held_older], None
+                )
+                return existing.id
     # Build the batch: skipped entries first (their positions must precede
     # the matched item to match broadcast order), then the anchor. Each
     # skipped entry gets a pair of items (user message + error) with stable

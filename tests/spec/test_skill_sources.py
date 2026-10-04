@@ -230,16 +230,9 @@ def test_claude_sdk_keeps_generic_walk_native_matches_terminal(
     assert native == {"claude-dir-skill", "user-cfg-skill"}
 
 
-def test_codex_native_and_sdk_agree_without_a_configured_codex_home(
+def test_codex_native_adds_agents_roots_without_changing_sdk_discovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without a configured ``$CODEX_HOME`` both codex harnesses read ``~/.codex``.
-
-    The Codex provider never scans ``.agents`` and, absent a resolved
-    ``$CODEX_HOME`` (``ctx.codex_home is None``), the native provider falls back
-    to the same ``~/.codex/skills`` the SDK path uses — so the two agree until a
-    custom codex home is in play (see the divergence test below).
-    """
     home = tmp_path / "home"
     monkeypatch.setattr("pathlib.Path.home", lambda: home)
     _write_skill(home / ".codex" / "skills", "codex-host-skill")
@@ -250,7 +243,8 @@ def test_codex_native_and_sdk_agree_without_a_configured_codex_home(
 
     native = {s.name for s in resolve_harness_skills(ctx, "codex-native")}
     sdk = {s.name for s in resolve_harness_skills(ctx, "codex")}
-    assert native == sdk == {"codex-host-skill"}
+    assert native == {"codex-host-skill", "agents-only-skill"}
+    assert sdk == {"codex-host-skill"}
 
 
 def test_codex_native_honors_codex_home_sdk_keeps_home_codex(

@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
 from omnigent.entities import (
     USER_SESSION_TITLE_MAX_CHARS,
@@ -12153,3 +12154,202 @@ async def test_external_info_error_item_publishes_and_persists_level(
     errors = [item for item in items.json()["data"] if item["type"] == "error"]
     assert len(errors) == 1
     assert errors[0]["level"] == "info"
+
+
+def _route_to_runner(monkeypatch: pytest.MonkeyPatch, runner: httpx.AsyncClient) -> None:
+    async def resolve(
+        session_id: str, runner_router: object, *, conversation: Any = None
+    ) -> httpx.AsyncClient:
+        assert conversation is None or conversation.id == session_id
+        return runner
+
+    monkeypatch.setattr("omnigent.server.routes.sessions._get_runner_client", resolve)
+
+
+@pytest.mark.parametrize(
+    "invocation", ["/bundle:grill-me review this rollout", "$grill-me review this rollout"]
+)
+async def test_native_skill_dispatch_persists_only_command_and_suppresses_echo(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    invocation: str,
+) -> None:
+    from omnigent.server.feature_flags import FeatureFlags, resolve_feature_flags
+
+    app.state.feature_flags = resolve_feature_flags({"OMNIGENT_FEATURES": "native_skill_routing"})
+    forwarded: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/skills/resolve"):
+            assert json.loads(request.content)["allow_native"] is True
+            return httpx.Response(200, json={"native_invocation": invocation})
+        if request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        agent = await create_test_agent(client, name="native-skill-agent")
+        session = await _create_session(client, agent["id"])
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {"kind": "skill", "name": "grill-me", "arguments": "review this rollout"},
+            },
+        )
+        assert response.status_code == 202, response.text
+        before = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        assert [item["type"] for item in before] == ["slash_command"]
+        assert before[0]["native_invocation"] == invocation
+        assert before[0]["name"] == "grill-me"
+        snapshot = (await client.get(f"/v1/sessions/{session['id']}")).json()
+        assert snapshot["pending_inputs"] == []
+        assert forwarded[0]["content"] == [{"type": "input_text", "text": invocation}]
+        assert forwarded[0]["persisted_item_id"] == before[0]["id"]
+        if invocation.startswith("/"):
+            item = {
+                "type": "slash_command",
+                "agent": "native-skill-agent",
+                "kind": "skill",
+                "name": "bundle:grill-me",
+                "arguments": "review this rollout",
+            }
+        else:
+            item = {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": invocation}],
+            }
+        echo_body = {
+            "type": "external_conversation_item",
+            "data": {
+                "source_id": "native-command",
+                "item_type": item.pop("type"),
+                "item_data": item,
+            },
+        }
+        echo = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert echo.status_code == 202, echo.text
+        again = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {"kind": "skill", "name": "grill-me", "arguments": "review this rollout"},
+            },
+        )
+        assert again.status_code == 202, again.text
+        app.state.feature_flags = FeatureFlags()
+        retry = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert retry.status_code == 202, retry.text
+        echo_body["data"]["source_id"] = "second-native-command"
+        second_echo = await client.post(f"/v1/sessions/{session['id']}/events", json=echo_body)
+        assert second_echo.status_code == 202, second_echo.text
+        expansion = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "external_conversation_item",
+                "data": {
+                    "source_id": "native-expansion",
+                    "item_type": "message",
+                    "item_data": {
+                        "role": "user",
+                        "is_meta": True,
+                        "content": [{"type": "input_text", "text": "CLI-owned sentinel"}],
+                    },
+                },
+            },
+        )
+        assert expansion.status_code == 202, expansion.text
+        after = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        assert [item["type"] for item in after] == [
+            "slash_command",
+            "message",
+            "slash_command",
+            "message",
+            "message",
+        ]
+        assert after[1]["is_meta"] is True and after[1]["content"] == []
+        assert after[3]["is_meta"] is True and after[3]["content"] == []
+        assert after[4]["is_meta"] is True
+        assert after[4]["content"] == [{"type": "input_text", "text": "CLI-owned sentinel"}]
+
+
+@pytest.mark.parametrize(
+    "enabled,resolution,expected_native,status",
+    [
+        (False, {"meta_text": "legacy skill body"}, False, 202),
+        (True, {"meta_text": "legacy skill body"}, False, 202),
+        (False, {"native_invocation": "$review request"}, False, 500),
+        (
+            False,
+            {"native_invocation": "$review request", "meta_text": "legacy skill body"},
+            False,
+            202,
+        ),
+        (True, {"native_invocation": "$review request"}, True, 202),
+    ],
+)
+async def test_skill_dispatch_obeys_server_feature_snapshot(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+    resolution: dict[str, str],
+    expected_native: bool,
+    status: int,
+) -> None:
+    from omnigent.server.feature_flags import resolve_feature_flags
+
+    app.state.feature_flags = resolve_feature_flags(
+        {"OMNIGENT_FEATURES": "native_skill_routing" if enabled else ""}
+    )
+    forwarded = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/skills/resolve"):
+            assert json.loads(request.content) == {
+                "name": "review",
+                "arguments": "request",
+                "allow_native": enabled,
+            }
+            return httpx.Response(200, json=resolution)
+        if request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        agent = await create_test_agent(client, name="flagged-skill-agent")
+        session = await _create_session(client, agent["id"])
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "slash_command",
+                "data": {
+                    "kind": "skill",
+                    "name": "review",
+                    "arguments": "request",
+                    "allow_native": True,
+                },
+            },
+        )
+        assert response.status_code == status, response.text
+        items = (await client.get(f"/v1/sessions/{session['id']}/items")).json()["data"]
+        if status == 500:
+            assert items == [] and forwarded == []
+        elif expected_native:
+            assert [item["type"] for item in items] == ["slash_command"]
+            assert items[0]["native_invocation"] == "$review request"
+            assert forwarded[0]["content"] == [{"type": "input_text", "text": "$review request"}]
+        else:
+            assert [item["type"] for item in items] == ["slash_command", "message"]
+            assert "native_invocation" not in items[0]
+            assert items[1]["is_meta"] is True
+            assert items[1]["content"] == [{"type": "input_text", "text": "legacy skill body"}]
+            assert forwarded[0]["content"] == items[1]["content"]

@@ -7880,6 +7880,17 @@
             "title": "Name",
             "type": "string"
           },
+          "native_invocation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Invocation"
+          },
           "output": {
             "anyOf": [
               {

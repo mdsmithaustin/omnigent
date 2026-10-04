@@ -343,3 +343,39 @@ def test_load_skill_tool_accepts_namespaced_alias(tmp_path: Path, tool_ctx: Tool
     tool = LoadSkillTool([skill])
     result = tool.invoke(json.dumps({"name": "myplugin:brand-review"}), tool_ctx)
     assert result == "Review the brand."
+
+
+def test_skill_paste_omits_resource_listing_but_tool_keeps_it(
+    skill_with_resources: SkillSpec,
+    tool_ctx: ToolContext,
+) -> None:
+    from omnigent.tools.builtins.load_skill import format_skill_meta_text
+
+    pasted = format_skill_meta_text(skill_with_resources, "review this change")
+    assert pasted == (
+        "<skill>\n<name>code-review</name>\n"
+        f"<path>{skill_with_resources.skill_dir / 'SKILL.md'}</path>\n"
+        "Review the code.\n</skill>\n\n<user_request>\nreview this change\n</user_request>"
+    )
+    loaded = LoadSkillTool([skill_with_resources]).invoke('{"name":"code-review"}', tool_ctx)
+    assert "Review the code." in loaded
+    assert "references/style-guide.md" in loaded
+
+
+def test_repeated_skill_without_arguments_remains_an_invocation() -> None:
+    from omnigent.tools.builtins.load_skill import format_skill_meta_text
+
+    skill = SkillSpec(name="review", description="Review", content="Read every changed file.")
+    first = format_skill_meta_text(skill, "")
+    assert first == "<skill>\n<name>review</name>\nRead every changed file.\n</skill>"
+    second = format_skill_meta_text(
+        skill,
+        "",
+        history=[
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": first}]}
+        ],
+    )
+    assert second == (
+        "<skill_invocation>\n<name>review</name>\n"
+        "Apply the skill instructions already present in this conversation.\n</skill_invocation>"
+    )

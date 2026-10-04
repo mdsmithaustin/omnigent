@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from omnigent.spec.types import SkillSpec
 from omnigent.tools.base import Tool, ToolContext
 from omnigent.tools.builtins._arguments import parse_json_object_arguments
+from omnigent.util.json_types import JsonObject
 
 
 class LoadSkillTool(Tool):
@@ -275,7 +277,12 @@ def find_skill_by_name(skills: list[SkillSpec], name: str) -> SkillSpec | None:
     return None
 
 
-def format_skill_meta_text(skill: SkillSpec, arguments: str) -> str:
+def format_skill_meta_text(
+    skill: SkillSpec,
+    arguments: str,
+    *,
+    history: Sequence[JsonObject] = (),
+) -> str:
     """
     Build the hidden user-message text injected for a skill invocation.
 
@@ -284,24 +291,50 @@ def format_skill_meta_text(skill: SkillSpec, arguments: str) -> str:
     it later, and slash-command arguments are appended in a separate
     ``<user_request>`` block so the agent sees the actual request.
 
-    The embedded ``<path>`` and the resource listing are resolved
-    against ``skill.skill_dir``, so this MUST run on the host where the
-    harness executes (the runner) — the paths are read at runtime by
-    the ``read_skill_file`` tool, which resolves relative to the same
-    ``skill_dir``.
+    The embedded ``<path>`` belongs to the runner filesystem. Resource
+    files remain available through ``read_skill_file`` and ``load_skill``.
 
     :param skill: Skill being invoked, e.g. ``SkillSpec(name="grill-me",
         ...)``.
     :param arguments: Raw arguments typed after the slash command,
         e.g. ``"review this plan"``. Empty string when none.
+    :param history: Active runner input before this invocation is appended.
+        Only identical user instruction blocks permit reuse.
     :returns: Hidden message text for a single ``input_text`` block.
     """
-    resource_files = list_skill_resources(skill)
-    content = format_skill_content(skill, resource_files)
     lines = ["<skill>", f"<name>{skill.name}</name>"]
     if skill.skill_dir is not None:
         lines.append(f"<path>{skill.skill_dir / 'SKILL.md'}</path>")
-    lines.extend([content, "</skill>"])
+    lines.extend([skill.content, "</skill>"])
+    instructions = "\n".join(lines)
+    for item in history:
+        if item.get("type", "message") != "message" or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            texts = [content]
+        elif isinstance(content, list):
+            texts = [block.get("text") for block in content if isinstance(block, dict)]
+        else:
+            continue
+        if any(
+            isinstance(text, str)
+            and (
+                text == instructions
+                or (
+                    text.startswith(instructions + "\n\n<user_request>\n")
+                    and text.endswith("\n</user_request>")
+                )
+            )
+            for text in texts
+        ):
+            lines = [
+                "<skill_invocation>",
+                f"<name>{skill.name}</name>",
+                "Apply the skill instructions already present in this conversation.",
+                "</skill_invocation>",
+            ]
+            break
     if arguments:
         lines.extend(["", "<user_request>", arguments, "</user_request>"])
     return "\n".join(lines)
