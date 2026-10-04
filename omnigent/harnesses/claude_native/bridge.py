@@ -682,6 +682,16 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
             trusted_parent = pi_root.parent.parent
         return _absolute_syntactic_path(trusted_parent)
 
+    from omnigent.harnesses.prime_native.bridge import bridge_roots as prime_bridge_roots
+
+    for root in prime_bridge_roots():
+        prime_root = _absolute_syntactic_path(root)
+        if target.is_relative_to(prime_root):
+            trusted_parent = prime_root.parent
+            if prime_root.parent.name == ".omnigent":
+                trusted_parent = prime_root.parent.parent
+            return _absolute_syntactic_path(trusted_parent)
+
     from omnigent.harnesses.cursor_native.bridge import bridge_root as cursor_bridge_root
 
     cursor_root = _absolute_syntactic_path(cursor_bridge_root())

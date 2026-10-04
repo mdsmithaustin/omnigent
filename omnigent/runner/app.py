@@ -3068,6 +3068,7 @@ def create_runner_app(
 
     _codex_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _pi_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
+    _prime_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _opencode_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _cursor_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _kiro_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
@@ -3525,6 +3526,15 @@ def create_runner_app(
         # app-server turn; the native-terminal ensure path can recreate it.
         if event.lifecycle != TerminalLifecycle.REQUIRED:
             return
+
+        if event.terminal_name == "prime-native":
+            from omnigent.harnesses.prime_native.process import stop_session
+
+            prime_stop_task = asyncio.create_task(
+                asyncio.to_thread(stop_session, event.session_id)
+            )
+            prime_stop_task.add_done_callback(_background_tasks.discard)
+            _background_tasks.add(prime_stop_task)
 
         # A required terminal exit ends the session. Tear down any registered
         # Codex app-server alongside it; this is a no-op for other harnesses.
@@ -4361,6 +4371,7 @@ def create_runner_app(
                     "claude": _claude_terminal_ensure_locks,
                     "codex": _codex_terminal_ensure_locks,
                     "pi": _pi_terminal_ensure_locks,
+                    "prime-native": _prime_terminal_ensure_locks,
                     "cursor": _cursor_terminal_ensure_locks,
                     "kiro": _kiro_terminal_ensure_locks,
                     "antigravity": _antigravity_terminal_ensure_locks,
@@ -4562,7 +4573,7 @@ def create_runner_app(
 
                 _launch_pre = _antigravity_pre_launch
 
-            elif harness_name == "pi-native":
+            elif harness_name in {"pi-native", "prime-native"}:
                 # pi resolves its spec unwrapped — a resolution error surfaces as
                 # a terminal-start error (the resolver does not swallow it).
                 _launch_resolve_spec = lambda: _resolve_session_agent_spec(session_id)  # noqa: E731
@@ -5033,6 +5044,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)
@@ -5880,6 +5892,7 @@ def create_runner_app(
         if status != "failed" and harness in {
             "claude-native",
             "pi-native",
+            "prime-native",
             "cursor-native",
             "kiro-native",
             "goose-native",
@@ -10904,6 +10917,7 @@ def create_runner_app(
                     "claude": _claude_terminal_ensure_locks,
                     "codex": _codex_terminal_ensure_locks,
                     "pi": _pi_terminal_ensure_locks,
+                    "prime-native": _prime_terminal_ensure_locks,
                     "cursor": _cursor_terminal_ensure_locks,
                     "kiro": _kiro_terminal_ensure_locks,
                     "antigravity": _antigravity_terminal_ensure_locks,
@@ -11001,7 +11015,7 @@ def create_runner_app(
                     "and could not be closed."
                 )
 
-            elif terminal_name in ("pi", "opencode"):
+            elif terminal_name in ("pi", "prime-native", "opencode"):
                 # pi/opencode resolve the spec unwrapped — a resolution error
                 # surfaces as a terminal-start error (the resolver does not
                 # swallow it).
@@ -12819,6 +12833,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)
@@ -12847,6 +12862,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)

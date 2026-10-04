@@ -171,6 +171,15 @@ PI_NATIVE_CODING_AGENT = NativeCodingAgent(
     terminal_name="pi",
 )
 
+PRIME_NATIVE_CODING_AGENT = NativeCodingAgent(
+    key="prime-native",
+    display_name="Prime Native",
+    agent_name="prime-native-ui",
+    harness="prime-native",
+    wrapper_label="prime-native-ui",
+    terminal_name="prime-native",
+)
+
 OPENCODE_NATIVE_CODING_AGENT = NativeCodingAgent(
     key="opencode",
     display_name="OpenCode",
@@ -304,22 +313,33 @@ def _builtin_native_provider(key: str) -> NativeHarnessProvider:
 # module stays import-light. See designs/harness-modular-registry-proposal.md
 # (Phase 1). Populated uniformly because every built-in native harness shares
 # the omnigent.<key>_native module layout.
-_BUILTIN_NATIVE_PROVIDERS: tuple[NativeHarnessProvider, ...] = tuple(
-    _builtin_native_provider(agent.key)
-    for agent in (
-        CLAUDE_NATIVE_CODING_AGENT,
-        CODEX_NATIVE_CODING_AGENT,
-        PI_NATIVE_CODING_AGENT,
-        OPENCODE_NATIVE_CODING_AGENT,
-        CURSOR_NATIVE_CODING_AGENT,
-        KIRO_NATIVE_CODING_AGENT,
-        GOOSE_NATIVE_CODING_AGENT,
-        ANTIGRAVITY_NATIVE_CODING_AGENT,
-        QWEN_NATIVE_CODING_AGENT,
-        KIMI_NATIVE_CODING_AGENT,
-        HERMES_NATIVE_CODING_AGENT,
-        DEVIN_NATIVE_CODING_AGENT,
-    )
+_BUILTIN_NATIVE_PROVIDERS: tuple[NativeHarnessProvider, ...] = (
+    *(
+        _builtin_native_provider(agent.key)
+        for agent in (
+            CLAUDE_NATIVE_CODING_AGENT,
+            CODEX_NATIVE_CODING_AGENT,
+            PI_NATIVE_CODING_AGENT,
+            OPENCODE_NATIVE_CODING_AGENT,
+            CURSOR_NATIVE_CODING_AGENT,
+            KIRO_NATIVE_CODING_AGENT,
+            GOOSE_NATIVE_CODING_AGENT,
+            ANTIGRAVITY_NATIVE_CODING_AGENT,
+            QWEN_NATIVE_CODING_AGENT,
+            KIMI_NATIVE_CODING_AGENT,
+            HERMES_NATIVE_CODING_AGENT,
+            DEVIN_NATIVE_CODING_AGENT,
+        )
+    ),
+    NativeHarnessProvider(
+        key="prime-native",
+        run_native="omnigent.harnesses.prime_native.main:run_prime_native",
+        auto_create_terminal="omnigent.harnesses.prime_native.main:launch_prime_terminal",
+        spawn_env_builder="omnigent.harnesses.prime_native.bridge:build_prime_native_spawn_env",
+        stop_handler="omnigent.harnesses.prime_native.process:stop_session",
+        materialize_agent_spec="omnigent.harnesses.prime_native.main:_materialize_prime_agent_spec",
+        bridge_dir="omnigent.harnesses.prime_native.bridge:bridge_dir_for_session_id",
+    ),
 )
 
 
@@ -386,6 +406,20 @@ _BUILTIN_CAPABILITIES: dict[str, HarnessCapabilities] = {
     # grep is NOT sufficient — pi-native has no such delta-posting forwarder yet
     # streams 7 deltas live (by what path was not traced), so the grep-based
     # flip was wrong for it. The rest stay True until live-verified.
+    "prime-native": _C(
+        _IM.NATIVE_TUI,
+        _EL.NONE,
+        _RS.WARM_REATTACH,
+        _EF.NONE,
+        _MF.MULTI,
+        _AU.OWN_AUTH,
+        subagents=False,
+        interrupt=True,
+        streaming=True,
+        instruction_delivery=_ID.AGENT_STARTUP_ADDITIVE,
+        shell_tool_name="ipython",
+        shell_tool_prompt="Use your ipython tool to run: !echo omnigent-bench-ok",
+    ),
     "pi-native": _C(
         _IM.NATIVE_TUI,
         _EL.NONE,
@@ -774,6 +808,7 @@ _BUILTIN_CONTRIBUTION = HarnessContribution(
             "opencode-native",
             "pi",
             "pi-native",
+            "prime-native",
             "qwen",
             "qwen-native",
         }
@@ -806,6 +841,7 @@ _BUILTIN_CONTRIBUTION = HarnessContribution(
         "opencode-native": "omnigent.inner.opencode_native_harness",
         "pi": "omnigent.inner.pi_harness",
         "pi-native": "omnigent.inner.pi_native_harness",
+        "prime-native": "omnigent.inner.prime_native_harness",
         "qwen": "omnigent.inner.qwen_harness",
         "qwen-native": "omnigent.inner.qwen_native_harness",
     },
@@ -868,10 +904,12 @@ _BUILTIN_CONTRIBUTION = HarnessContribution(
             "native-qwen",
             "opencode-native",
             "pi-native",
+            "prime-native",
             "qwen-native",
         }
     ),
     native_agents=(
+        PRIME_NATIVE_CODING_AGENT,
         CLAUDE_NATIVE_CODING_AGENT,
         CODEX_NATIVE_CODING_AGENT,
         PI_NATIVE_CODING_AGENT,
@@ -888,11 +926,24 @@ _BUILTIN_CONTRIBUTION = HarnessContribution(
     native_providers=_BUILTIN_NATIVE_PROVIDERS,
     # Catalog rows gate readiness on their vendor binary; the install spec also
     # feeds setup steps and (for npm rows) the one-click install path.
-    install_specs={name: row.install for name, row in ACP_CLI_HARNESSES.items()},
+    install_specs={
+        **{name: row.install for name, row in ACP_CLI_HARNESSES.items()},
+        "prime-native": HarnessInstallSpec(
+            display="Prime Native",
+            binary="prime-agent",
+            package=None,
+            install_hint="Install Prime Agent 0.9.6 and configure its login or models.json.",
+            min_version="0.9.6",
+            max_version_exclusive="0.9.7",
+        ),
+    },
     harness_install_keys={
-        spelling: name
-        for name, row in ACP_CLI_HARNESSES.items()
-        for spelling in (name, *row.aliases)
+        **{
+            spelling: name
+            for name, row in ACP_CLI_HARNESSES.items()
+            for spelling in (name, *row.aliases)
+        },
+        "prime-native": "prime-native",
     },
     model_env_keys={
         "acp": "HARNESS_ACP_MODEL",

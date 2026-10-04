@@ -63,6 +63,7 @@ export type NativeCodingAgentIconKind =
   | "codex"
   | "opencode"
   | "pi"
+  | "prime-native"
   | "cursor"
   | "kiro"
   | "goose"
@@ -199,6 +200,15 @@ export const NATIVE_CODING_AGENTS = [
     iconKind: "pi",
     sortRank: 40,
     capabilities: ["modelPicker"],
+  },
+  {
+    key: "prime-native",
+    agentName: "prime-native-ui",
+    harness: "prime-native",
+    wrapperLabel: "prime-native-ui",
+    displayName: "Prime Native",
+    iconKind: "prime-native",
+    sortRank: 45,
   },
   {
     key: "kiro",

@@ -76,7 +76,9 @@ function sleep(ms) {
 }
 
 function readConfig() {
-  const configPath = process.env.OMNIGENT_PI_NATIVE_CONFIG;
+  const configPath =
+    process.env.OMNIGENT_EXTENSION_NATIVE_CONFIG ||
+    process.env.OMNIGENT_PI_NATIVE_CONFIG;
   if (!configPath) return null;
   try {
     return JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -1287,6 +1289,7 @@ function startInboxPoller(
 
 module.exports = function (pi) {
   const config = readConfig();
+  const agentLabel = config?.agentLabel || "Pi";
   let sequence = 0;
   let turnOrdinal = 0;
   let activeResponseId = null;
@@ -1693,7 +1696,7 @@ module.exports = function (pi) {
         response_id: responseId,
         item_type: "function_call",
         item_data: {
-          agent: "Pi",
+          agent: agentLabel,
           name,
           arguments: safeJsonStringify(
             toolCall.arguments ?? toolCall.input ?? {},
@@ -1744,7 +1747,7 @@ module.exports = function (pi) {
         response_id: responseId,
         item_type: "reasoning",
         item_data: {
-          agent: "Pi",
+          agent: agentLabel,
           summary: [],
           content: [{ type: "reasoning_text", text }],
         },
@@ -2148,7 +2151,7 @@ module.exports = function (pi) {
           item_data: {
             source: "execution",
             code: "RuntimeError",
-            message: `Pi model error: ${errorMessage}`,
+            message: `${agentLabel} model error: ${errorMessage}`,
           },
         },
       });
@@ -2166,7 +2169,7 @@ module.exports = function (pi) {
         item_type: "message",
         item_data: {
           role: "assistant",
-          agent: "Pi",
+          agent: agentLabel,
           content: [{ type: "output_text", text }],
         },
       },

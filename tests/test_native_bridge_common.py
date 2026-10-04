@@ -174,6 +174,19 @@ def test_reap_invokes_prune_for_every_native_agent(monkeypatch: pytest.MonkeyPat
     assert total == 1 + 2 + 3 + 4
 
 
+def test_reap_uses_registered_bridge_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "omnigent.harness_plugins.native_agents", lambda: (SimpleNamespace(key="prime-native"),)
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.prime_native.bridge.prune_orphaned_bridge_dirs",
+        lambda: 9,
+        raising=False,
+    )
+
+    assert native_bridge_common.reap_orphaned_native_bridge_dirs() == 9
+
+
 def test_reap_skips_agents_without_a_prune_and_bad_modules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -128,6 +128,11 @@ for filename-based limits and their scope.
 
 ### Native harness state
 
+`prime-native/` holds private Prime configuration, temporary daemon state,
+and saved sessions for each conversation. It honors `OMNIGENT_DATA_DIR`.
+Long Unix socket paths use a private directory under
+`/tmp/ogp-<uid>/` instead. See [Prime Native](PRIME_NATIVE.md).
+
 Some native (TUI) harnesses keep resumable session state under `~/.omnigent`:
 `claude-native/`, `codex-native/`, `opencode-native/` (all via `data_dir()`),
 and `pi-native/` **†** and `antigravity-native/` **†** (pinned to
