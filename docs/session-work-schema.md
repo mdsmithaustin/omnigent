@@ -87,6 +87,8 @@ object with the database owner before changing an incompatible schema.
 
 CRDB can publish DDL before a later failure. A retained shared bootstrap marker must
 match both its token and the artifact target before recovery or cleanup.
+An index added to an existing CRDB table becomes visible after commit. Shared upgrades
+verify the committed ownership schema before Alembic records the new revision.
 The initializer also repairs compatible missing ownership objects on an existing `mm`
 database. It refuses incompatible objects and retains the marker on failure.
 Split AP deployment uses no bootstrap marker.
@@ -117,12 +119,13 @@ Schema deployment does not qualify those future writers.
 Run the migration and deployment tests from the repository root:
 
 ```sh
-uv run --no-sync pytest -q tests/db/test_migration_session_work.py tests/db/test_session_work_deployment.py
+uv run --no-sync pytest -q tests/db/test_migration_session_work.py tests/db/test_session_work_deployment.py tests/db/test_session_work_catalog.py
 ```
 
 A nonzero exit, zero collected cases, or an absent passing summary fails this check.
 Without `OMNIGENT_TEST_DB_URI`, the suite uses fresh SQLite files.
-CRDB-only cases explicitly skip. Those skips are missing server coverage.
+CRDB-only and MySQL-only cases explicitly skip. Those skips are missing server coverage.
+Recorded catalog tests exercise verification logic without connecting to a database.
 
 For server qualification, supply `OMNIGENT_TEST_DB_URI` through test secrets and run
 the same command separately against each required backend.
@@ -134,13 +137,17 @@ A backend mismatch, skipped required case, or missing version result fails quali
 
 The local implementation checks cover SQLite deployment, repeat, drift refusal,
 process interruption, and shared upgrades. Offline DDL covers SQLite, PostgreSQL,
-MySQL, and CRDB. Raw PostgreSQL 16.15 and CRDB 23.2.28 catalogs informed verification.
-The MySQL operator currently refuses before ownership DDL because its native index
-catalog has not been qualified. Offline MySQL DDL remains available.
-These checks do not qualify PostgreSQL, MySQL, or any CRDB version for deployment.
-Real operator execution, fault recovery, query plans, and preservation on those servers
-remain separate qualification requirements. The CRDB matrix is 23.2.28, 24.3.20,
-25.2.10, and 25.4.5.
+MySQL, and CRDB. Raw PostgreSQL 16.15, MySQL 8.0.46, and CRDB 23.2.28 catalogs informed
+verification. The MySQL operator accepts the native forms captured with MySQL 8.0.46
+and the locked PyMySQL 1.2.0 driver. It requires a visible, ascending BTREE index with
+complete column keys and an enforced claim check. Native MySQL smoke checks cover
+independent AP deployment, preserved AP and ownership rows, repeat deployment, and
+refusal of invisible indexes, prefix indexes, and disabled checks.
+
+Catalog fixtures and smoke checks do not establish full backend coverage. Qualify
+shared upgrades, fault recovery, query plans, and row preservation with the full suite
+on each intended server and driver combination. Other MySQL versions and drivers
+remain unqualified. The CRDB matrix is 23.2.28, 24.3.20, 25.2.10, and 25.4.5.
 
 For a manual check on a disposable AP database, keep a conversation, item, and label
 with known values. Run the split command, insert a known claimed ownership record,

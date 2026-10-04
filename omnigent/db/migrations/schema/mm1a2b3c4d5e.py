@@ -158,6 +158,51 @@ def _verify_table(connection: Connection, inspector: Inspector, table: sa.Table)
                 _refuse(table.name, "unique index")
             if index["name"] in {i.name for i in table.indexes} and index["name"] not in reflected:
                 _refuse(table.name, "unrecognized index")
+    if dialect.name == "mysql":
+        native_columns = list(
+            connection.execute(
+                sa.text(
+                    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA "
+                    "FROM information_schema.columns "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table "
+                    "ORDER BY ORDINAL_POSITION"
+                ),
+                {"table": table.name},
+            ).mappings()
+        )
+        if [column["COLUMN_NAME"] for column in native_columns] != list(table.c.keys()):
+            _refuse(table.name, "columns")
+        for column, expected in zip(native_columns, table.c, strict=True):
+            if (
+                column["COLUMN_TYPE"] != expected.type.compile(dialect=dialect).lower()
+                or column["IS_NULLABLE"] != ("YES" if expected.nullable else "NO")
+                or column["COLUMN_DEFAULT"] is not None
+                or column["EXTRA"] != ""
+            ):
+                _refuse(table.name, f"column {expected.name}")
+        native_checks = connection.execute(
+            sa.text(
+                "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, ENFORCED "
+                "FROM information_schema.table_constraints "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table"
+            ),
+            {"table": table.name},
+        ).mappings()
+        if {
+            check["CONSTRAINT_NAME"]: check["ENFORCED"]
+            for check in native_checks
+            if check["CONSTRAINT_TYPE"] == "CHECK"
+        } != dict.fromkeys(expected_checks, "YES"):
+            _refuse(table.name, "check enforcement")
+        reflected = {index["name"] for index in inspector.get_indexes(table.name)}
+        for index in connection.execute(sa.text(f"SHOW INDEX FROM {table.name}")).mappings():
+            if index["Non_unique"] == 0 and index["Key_name"] != "PRIMARY":
+                _refuse(table.name, "unique index")
+            if (
+                index["Key_name"] in {i.name for i in table.indexes}
+                and index["Key_name"] not in reflected
+            ):
+                _refuse(table.name, "unrecognized index")
     if dialect.name == "cockroachdb":
         ddl = connection.execute(sa.text(f"SHOW CREATE TABLE {table.name}")).one()[1]
         if re.search(r"\bttl_\w+\s*=", ddl, re.IGNORECASE):
@@ -183,6 +228,26 @@ def _verify_index(
         keys = [(row["name"], row["desc"], row["coll"]) for row in entries if row["key"]]
         if keys != [(column.name, 0, "BINARY") for column in expected.columns]:
             _refuse(table.name, f"index {expected.name} ordering")
+    if connection.dialect.name == "mysql":
+        keys = [
+            (
+                row["Column_name"],
+                row["Seq_in_index"],
+                row["Non_unique"],
+                row["Collation"],
+                row["Sub_part"],
+                row["Index_type"],
+                row["Visible"],
+                row["Expression"],
+            )
+            for row in connection.execute(sa.text(f"SHOW INDEX FROM {table.name}")).mappings()
+            if row["Key_name"] == expected.name
+        ]
+        if keys != [
+            (column.name, position, 1, "A", None, "BTREE", "YES", None)
+            for position, column in enumerate(expected.columns, 1)
+        ]:
+            _refuse(table.name, f"index {expected.name} keys")
     if connection.dialect.name == "cockroachdb":
         keys = [
             row
@@ -225,8 +290,6 @@ def _verify_index(
 
 def preflight(connection: Connection) -> None:
     """Reject all incompatible existing objects before the first schema write."""
-    if connection.dialect.name == "mysql":
-        raise SchemaDriftError("Unverified MySQL session work catalog.")
     metadata = schema()
     inspector = sa.inspect(connection)
     tables = set(inspector.get_table_names())
@@ -302,6 +365,7 @@ def verify(connection: Connection) -> None:
 
 
 def apply(connection: Connection) -> None:
+    """Add compatible missing objects. The transaction owner commits and verifies."""
     preflight(connection)
     inspector = sa.inspect(connection)
     existing = set(inspector.get_table_names())
@@ -313,4 +377,3 @@ def apply(connection: Connection) -> None:
             for index in table.indexes:
                 if index.name not in found:
                     index.create(connection)
-    verify(connection)

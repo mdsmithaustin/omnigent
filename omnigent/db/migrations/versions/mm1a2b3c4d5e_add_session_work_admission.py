@@ -20,7 +20,13 @@ def upgrade() -> None:
             for index in table.indexes:
                 op.execute(sa.schema.CreateIndex(index))
     else:
-        definition.apply(op.get_bind())
+        connection = op.get_bind()
+        definition.apply(connection)
+        if connection.dialect.name == "cockroachdb":
+            # Indexes on existing CRDB tables become visible at commit.
+            connection.commit()
+            connection.execute(sa.text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+        definition.verify(connection)
 
 
 def downgrade() -> None:

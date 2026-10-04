@@ -128,6 +128,8 @@ def seed_ap(engine):
         _ensure_conversation_tables(managed)
     finally:
         managed.dispose()
+    key = engine.dialect.identifier_preparer.quote("key")
+    value = engine.dialect.identifier_preparer.quote("value")
     with engine.begin() as connection:
         connection.execute(
             sa.text(
@@ -149,7 +151,7 @@ def seed_ap(engine):
         connection.execute(
             sa.text(
                 "INSERT INTO conversation_labels "
-                "(workspace_id, conversation_id, key, value, updated_at) "
+                f"(workspace_id, conversation_id, {key}, {value}, updated_at) "
                 "VALUES (7, :id, 'integrity', 'old label', 456)"
             ),
             {"id": SESSION},
