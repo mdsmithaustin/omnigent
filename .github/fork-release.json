@@ -1,0 +1,80 @@
+{
+  "addons": [
+    {
+      "applied_commit": "3257984180266da869633a1988e1c7c1db78bdbc",
+      "name": "Prime native adapter",
+      "reason": "Replay without conflicts on the stable release.",
+      "source_commit": "2ff1f7bad4d9bd02d792e976d820dc9ea6f52bdd"
+    },
+    {
+      "applied_commit": "96b8b5076e4f86087de86df7713287959b96feac",
+      "name": "Prime native controls and cleanup",
+      "reason": "Replay without conflicts on the stable release.",
+      "source_commit": "5001626a5a38d845c39ffea024d11dfa0e3408cd"
+    },
+    {
+      "applied_commit": "8d0a6575d5d598c01ea3791d78136bcb4e4a3af5",
+      "name": "Runtime test stabilization",
+      "reason": "Replay without conflicts on the stable release.",
+      "source_commit": "4afb7affba260c48624a4522a983f962a8fef62f"
+    },
+    {
+      "applied_commit": "92f44199a275f9f01fc2a2adc33cc823a5c24139",
+      "name": "Opt-in proven native skill commands",
+      "reason": "Replay without conflicts. Preserve upstream orchestration and OpenAPI release changes.",
+      "source_commit": "b66935fed72d00d0c62f65f3669e5cc08857d8f7"
+    },
+    {
+      "applied_commit": "b3ced850b2a5f6dd2c4fe3848b881e9380a9efbc",
+      "name": "Stable host catalog expected metadata",
+      "reason": "Repair five test expectations that also fail at the untouched stable base. Preserve upstream subscription source metadata and runtime behavior.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5d96795a7e79db949184e26d965e83ad23723985",
+      "name": "Import-test isolation",
+      "reason": "Use fresh subprocesses for import probes and preserve repository namespace packages during test collection.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "163d6b1baa8a6c28dcedc3c12db68bcba92ea764",
+      "name": "Deterministic test environments",
+      "reason": "Pin provider source, proxy bypass, SPA route isolation, and actual logger capture in test fixtures.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "07ee18ba61f562d2333ce3657515e16260fbd34d",
+      "name": "Busy Prime listeners and CLI registration",
+      "reason": "Treat saturated private Unix listeners as live and register the scoped prime-native CLI command. Preserve retained-runtime checks across platform process names.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "78e8b2453318c23bb736f2bb9f1eea5338e8a755",
+      "name": "Fork install discoverability and Prime seed identity",
+      "reason": "Link verified fork installation and update instructions from README and inventory the Prime native bundled seed.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5a278ad7fb40affb08791cfef62d9fdc555f8e1e",
+      "name": "Fork Python version and sibling pins",
+      "reason": "Canonical four-package and runtime version stamping, regenerated public lockfile, unchanged third-party dependencies.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8e6e1497460c166dc20075d72a018af509668ed1",
+      "name": "Linux busy-listener test import",
+      "reason": "Import socket for the real Linux listener fixture and remove the import-test module narrative docstring.",
+      "source_commit": null
+    }
+  ],
+  "payload_commit": "8e6e1497460c166dc20075d72a018af509668ed1",
+  "profile": "python-distributions-v1",
+  "upstream": {
+    "commit": "82a74473ee4c01163c4269f4296b10a158f0e47e",
+    "published_at": "2026-09-29T20:34:22Z",
+    "release_id": 398751142,
+    "repository": "omnigent-ai/omnigent",
+    "tag": "v0.16.0"
+  },
+  "version": "0.16.0+mdsmithaustin.1"
+}

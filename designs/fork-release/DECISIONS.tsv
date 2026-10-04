@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-10-04T03:46:28Z	source	Pin published upstream v0.16.0 and retain ordered addon replay identities	A stable ancestry check alone permits undeclared development commits	.github/fork-release.json	Implemented exact ordered history validation
+2026-10-04T03:46:28Z	policy	Permit only exact reviewed release-tool paths after the payload anchor	Keep the manifest in the release branch without a self-referential source SHA	scripts/fork_release.py	Every policy-tail commit and file mode is checked
+2026-10-04T03:46:28Z	artifacts	Certify four Python distributions and their bundled UI inventory	Other products need their own runtime and artifact evidence	scripts/build_fork_release.sh	Live Prime desktop mobile and image claims excluded
+2026-10-04T03:46:28Z	publication	Publish only from an explicit manual fork dispatch after all fixed jobs succeed	Promote the checked bytes without upstream registry writes	.github/workflows/fork-release.yml	Publisher disabled by default
+2026-10-04T03:46:28Z	maintenance	Retain the exact release branch rather than squash it into development main	Recorded applied commits must remain the source of the release tag	docs/FORK_RELEASES.md	Stable upgrades use a new worktree and ordered replay
+2026-10-04T03:46:28Z	verification	Exercise the CLI with disposable Git histories and distribution archives	Negative source and byte-integrity checks need observable failures	tests/scripts/test_fork_release.py	Acceptance cases cover history API jobs artifacts and publication
