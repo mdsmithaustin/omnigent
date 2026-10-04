@@ -2075,6 +2075,7 @@ def test_native_failure_observation_survives_completed_reply(
         "error_present",
         "error_class",
         "classification_input_truncated",
+        "diagnostic",
         "operation",
         "reason",
     }
@@ -2391,3 +2392,531 @@ def test_cli_alias_rejections_are_sticky(tmp_path, monkeypatch, failure):
             with contextlib.suppress(RuntimeError, OSError):
                 owner.__exit__(None, None, None)
         _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize("runner_stopped", [False, True])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_delete_routes_teardown_before_stopping_dedicated_runner(
+    tmp_path, monkeypatch, runner_stopped
+):
+    import subprocess
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    runner_script = r"""
+import asyncio, importlib, json, sys
+from pathlib import Path
+from omnigent.harnesses.prime_native import bridge, process
+from omnigent.runner.native.orchestration import _delete_native_bridge_dirs
+root = Path(sys.argv[1])
+for family in (
+    "antigravity", "claude", "codex", "cursor", "goose", "hermes",
+    "kimi", "kiro", "opencode", "pi", "qwen",
+):
+    module = importlib.import_module(f"omnigent.harnesses.{family}_native.bridge")
+    for name in ("bridge_dir_for_bridge_id", "bridge_dir_for_session_id"):
+        if hasattr(module, name):
+            setattr(module, name, lambda *args, family=family: root.parent / ("unused-" + family))
+bridge.runtime_paths = lambda session: bridge.PrimeRuntimePaths(root)
+writer = (root / "writer.log").open("w")
+def stop(paths):
+    writer.close()
+process.stop_prime_runtime = stop
+print("READY", flush=True)
+for command in sys.stdin:
+    if command.strip() == "stop":
+        stop(bridge.PrimeRuntimePaths(root))
+        print("STOPPED_WRITER_CLOSED", flush=True)
+        break
+    if command.strip() == "delete":
+        asyncio.run(_delete_native_bridge_dirs(server_client=None, session_id="synthetic-session"))
+        print(json.dumps({
+            "writer_closed": writer.closed, "root_absent": not root.exists(),
+        }), flush=True)
+"""
+    runner = subprocess.Popen(
+        [sys.executable, "-c", runner_script, str(compact)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    replies = []
+    actions = []
+    try:
+        assert runner.stdout.readline().strip() == "READY"
+        if runner_stopped:
+            runner.stdin.write("stop\n")
+            runner.stdin.flush()
+            assert runner.stdout.readline().strip() == "STOPPED_WRITER_CLOSED"
+            runner.wait(timeout=5)
+        run.server = SimpleNamespace(poll=lambda: None)
+        run.recover_owned_session = lambda: None
+        run.owned_paths = lambda session: paths
+
+        def request(method, route, *args, **kwargs):
+            actions.append(method)
+            if runner.poll() is None:
+                runner.stdin.write("stop\n" if method == "POST" else "delete\n")
+                runner.stdin.flush()
+                replies.append(runner.stdout.readline().strip())
+                if method == "POST":
+                    runner.wait(timeout=5)
+            run.server = None
+            return httpx.Response(200, request=httpx.Request(method, "http://synthetic/session"))
+
+        run.request_http = request
+
+        def stop_before_qualification():
+            raise RuntimeError("synthetic_observation_only")
+
+        run._capture_owned_logs = stop_before_qualification
+        with pytest.raises(RuntimeError, match="synthetic_observation_only"):
+            run._cleanup_live(probe._ExternalSettlement(owner.allocation_id, "no_fixture", ()))
+        records = json.loads((run.evidence / "retirement-attempts.json").read_text())
+        assert records[0]["http_status"] == 200
+        if runner_stopped:
+            assert compact not in run._retired_trees
+            assert compact.is_dir()
+            assert records[0]["branch"] == "retained_original"
+            assert records[0]["name_state"] == "original"
+        else:
+            assert compact in run._retired_trees, (actions, replies, compact.exists())
+            assert not compact.exists()
+            assert json.loads(replies[0]) == {"writer_closed": True, "root_absent": True}
+            assert run._retired_trees[compact].event_flags & probe.select.KQ_NOTE_DELETE
+            assert records[0]["branch"] == "retired"
+        assert not (run.evidence / "runtime-settlement.json").exists()
+        assert owner.removed is None
+        assert actions == ["DELETE"]
+    finally:
+        runner.stdin.close()
+        runner.wait(timeout=5)
+        runner.stdout.close()
+        runner.stderr.close()
+        with contextlib.suppress(RuntimeError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "refusal",
+        "safety",
+        "overloaded",
+        "rate_limit",
+        "server_error",
+        "auth",
+        "permission",
+        "invalid_request",
+        "malformed_response",
+        "unknown",
+    ],
+)
+def test_seed_diagnostic_projects_known_kind_without_payload(kind):
+    probe = _provider_probe()
+    value = probe._seed_diagnostic(
+        [
+            {
+                "type": "provider_stream_failure",
+                "details": {
+                    "kind": kind,
+                    "status": 401,
+                    "raw": "FORBIDDEN_SENTINEL",
+                    "requestId": "FORBIDDEN_SENTINEL",
+                },
+                "error": {
+                    "code": "EACCES",
+                    "message": "FORBIDDEN_SENTINEL",
+                    "stack": "FORBIDDEN_SENTINEL",
+                },
+            }
+        ],
+        [],
+        False,
+        "error",
+        True,
+    )
+    assert value["failure_kind"] == kind
+    assert value["diagnostic_origin"] == "provider_stream_failure"
+    assert value["phase"] == "provider_stream"
+    assert value["http_status"] == "http_401"
+    assert value["error_code"] == "EACCES"
+    assert (
+        value["kernel_ready"]
+        == value["protocol_match"]
+        == value["bootstrap_done"]
+        == "unavailable"
+    )
+    assert value["projection_complete"] is False
+    assert "FORBIDDEN_SENTINEL" not in json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (400, "http_400"),
+        (401, "http_401"),
+        (403, "http_403"),
+        (404, "http_404"),
+        (408, "http_408"),
+        (429, "http_429"),
+        (500, "http_500"),
+        (502, "http_502"),
+        (503, "http_503"),
+        (504, "http_504"),
+        (529, "http_529"),
+        (200, "other"),
+        (None, "absent"),
+        (True, "malformed"),
+        ("FORBIDDEN_SENTINEL", "malformed"),
+        ({}, "malformed"),
+    ],
+)
+def test_seed_diagnostic_http_buckets(status, expected):
+    value = _provider_probe()._seed_diagnostic(
+        [{"type": "provider_stream_failure", "details": {"status": status}}],
+        [],
+        False,
+        "error",
+        True,
+    )
+    assert value["http_status"] == expected
+    assert "FORBIDDEN_SENTINEL" not in json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        (item, item)
+        for item in ("ENOENT", "EACCES", "EPERM", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT")
+    ]
+    + [
+        (None, "absent"),
+        (0, "other"),
+        (True, "malformed"),
+        ({}, "malformed"),
+        pytest.param("FORBIDDEN_SENTINEL" * 1000, "other", id="overlong"),
+    ],
+)
+def test_seed_diagnostic_code_buckets(code, expected):
+    value = _provider_probe()._seed_diagnostic(
+        [{"type": "agent_lifecycle_failure", "error": {"code": code}}], [], False, "error", True
+    )
+    assert value["error_code"] == expected
+    assert value["phase"] == "agent_lifecycle"
+    assert "FORBIDDEN_SENTINEL" not in json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        ("ok", "ok"),
+        ("error", "error"),
+        ("aborted", "aborted"),
+        ("starting", "starting"),
+        (None, "absent"),
+        (True, "malformed"),
+        pytest.param("FORBIDDEN_SENTINEL" * 1000, "malformed", id="overlong"),
+    ],
+)
+@pytest.mark.parametrize(
+    "is_error,expected_error",
+    [
+        (True, "true"),
+        (False, "false"),
+        (None, "absent"),
+        (0, "malformed"),
+        ("FORBIDDEN_SENTINEL", "malformed"),
+    ],
+)
+def test_seed_diagnostic_tool_status_is_not_startup_proof(
+    status, expected, is_error, expected_error
+):
+    value = _provider_probe()._seed_diagnostic(
+        None,
+        [
+            {
+                "details": {
+                    "status": status,
+                    "stdout": "FORBIDDEN_SENTINEL",
+                    "bootstrap_done": "ok",
+                },
+                "isError": is_error,
+                "content": "FORBIDDEN_SENTINEL",
+            }
+        ],
+        True,
+        "error",
+        True,
+    )
+    assert value["ipython_done"] == expected
+    assert value["ipython_is_error"] == expected_error
+    assert value["ipython_call"] == "observed"
+    assert value["phase"] == "unknown"
+    assert value["phase_evidence"] == "tool_status_only"
+    assert value["bootstrap_done"] == "unavailable"
+    assert "FORBIDDEN_SENTINEL" not in json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "diagnostics,expected",
+    [
+        (None, "absent"),
+        ([], "absent"),
+        ({}, "malformed"),
+        ([{}], "malformed"),
+        ([{"type": []}], "malformed"),
+        ([{"type": "FORBIDDEN_SENTINEL" * 1000}], "unknown"),
+        ([{}] * 17, "malformed"),
+        ([{"type": "agent_lifecycle_failure"}, {"type": "provider_stream_failure"}], "both"),
+    ],
+)
+def test_seed_diagnostic_missing_malformed_and_ambiguous(diagnostics, expected):
+    value = _provider_probe()._seed_diagnostic(diagnostics, [], False, "error", True)
+    assert value["diagnostic_origin"] == expected
+    assert value["phase"] == "unknown"
+    assert value["projection_complete"] is False
+    assert "FORBIDDEN_SENTINEL" not in json.dumps(value)
+
+
+def test_seed_diagnostic_closed_schema_and_hostile_values():
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError("hostile equality")
+
+        def __str__(self):
+            raise AssertionError("hostile stringify")
+
+        def __hash__(self):
+            raise AssertionError("hostile hash")
+
+    class HostileDict(dict):
+        def get(self, *args):
+            raise AssertionError("hostile getter")
+
+    probe = _provider_probe()
+    for diagnostics in ([HostileDict()], [{"type": Hostile()}], HostileDict()):
+        value = probe._seed_diagnostic(diagnostics, [], False, "error", True)
+        assert value["diagnostic_origin"] == "malformed"
+    value = probe._seed_diagnostic(
+        [
+            {
+                "type": "provider_stream_failure",
+                "details": {"kind": Hostile(), "status": Hostile()},
+                "error": {"code": Hostile()},
+            }
+        ],
+        [],
+        False,
+        "error",
+        True,
+    )
+    assert value["failure_kind"] == "unknown"
+    assert value["http_status"] == value["error_code"] == "malformed"
+    for field, allowed in probe._SEED_DIAGNOSTIC_ENUMS.items():
+        for enum in allowed:
+            assert probe._validate_seed_diagnostic({**value, field: enum})[field] == enum
+        for malformed in (Hostile(), None, 0, "FORBIDDEN_SENTINEL" * 1000):
+            with pytest.raises(ValueError, match="native_seed_diagnostic_enum"):
+                probe._validate_seed_diagnostic({**value, field: malformed})
+    with pytest.raises(ValueError, match="native_seed_diagnostic_schema"):
+        probe._validate_seed_diagnostic({**value, "extra": "FORBIDDEN_SENTINEL"})
+    del value["phase"]
+    with pytest.raises(ValueError, match="native_seed_diagnostic_schema"):
+        probe._validate_seed_diagnostic(value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "retained",
+        "missing_event",
+        "rename",
+        "replaced",
+        "recreated",
+        "invalid_watch",
+        "credential_reappears",
+        "prior_error",
+        "api_unavailable",
+        "http_failure",
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_retirement_attempt_receipts_fail_closed(tmp_path, monkeypatch, failure):
+    import shutil
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    real_queue = probe.select.kqueue
+
+    class Watch:
+        def __init__(self):
+            self.queue = real_queue()
+            self.polls = 0
+
+        def control(self, changes, maximum, timeout):
+            events = self.queue.control(changes, maximum, timeout)
+            if not changes:
+                self.polls += 1
+                if self.polls == 2 and failure == "missing_event":
+                    return []
+                if self.polls == 2 and failure == "invalid_watch":
+                    event = events[0]
+                    return [
+                        SimpleNamespace(
+                            ident=event.ident,
+                            filter=event.filter,
+                            flags=event.flags,
+                            fflags=event.fflags,
+                            data=1,
+                        )
+                    ]
+            return events
+
+        def close(self):
+            self.queue.close()
+
+    monkeypatch.setattr(probe.select, "kqueue", Watch)
+
+    def delete(method, route, **kwargs):
+        if failure in ("missing_event", "invalid_watch", "recreated"):
+            shutil.rmtree(compact)
+            if failure == "recreated":
+                paths.prepare()
+        elif failure in ("rename", "replaced"):
+            compact.rename(compact.with_name("moved"))
+            if failure == "replaced":
+                paths.prepare()
+        elif failure == "credential_reappears":
+            target.write_text("FORBIDDEN_SENTINEL")
+        return httpx.Response(
+            503 if failure == "http_failure" else 200,
+            request=httpx.Request(method, "http://synthetic/session"),
+        )
+
+    run.request_http = delete
+    result = {
+        "steps": [],
+        "errors": ["remove credential copy: prior failure"] if failure == "prior_error" else [],
+    }
+    try:
+        if failure == "retained":
+            run._delete_owned_session(result)
+        else:
+            with pytest.raises((RuntimeError, httpx.HTTPStatusError)):
+                run._delete_owned_session(result, unavailable=failure == "api_unavailable")
+        receipt = json.loads((run.evidence / "retirement-attempts.json").read_text())
+        assert receipt == json.loads(json.dumps(result["retirement_attempts"]))
+        assert len(receipt) == 1
+        record = receipt[0]
+        assert record["allocation_id"] == owner.allocation_id
+        assert record["session_id"] == "synthetic-session"
+        assert record["schema"] == "native_retirement_attempt_v1"
+        assert record["branch"] != "retired"
+        assert compact not in run._retired_trees
+        assert "FORBIDDEN_SENTINEL" not in json.dumps(receipt)
+        if failure == "retained":
+            assert record["branch"] == "retained_original"
+            assert record["name_state"] == "original"
+            assert record["held_root_matches"] is record["held_parent_matches"] is True
+            assert record["http_status"] == 200
+            assert record["event_flags"] == 0
+        if failure == "missing_event":
+            assert record["branch"] == "owned_tree_deletion_event_missing"
+            assert record["name_state"] == "absent"
+        if failure in ("api_unavailable", "prior_error"):
+            assert record["delete_step"] is record["http_status"] is None
+        assert owner.removed is None
+    finally:
+        with contextlib.suppress(RuntimeError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize("poll_pass", [1, 2])
+def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(tmp_path, poll_pass):
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    entries[2:2] = [
+        {
+            "id": "call-entry",
+            "type": "message",
+            "parentId": "native-user",
+            "message": {
+                "role": "assistant",
+                "stopReason": "toolUse",
+                "content": [
+                    {"type": "toolCall", "id": "call", "name": "ipython", "arguments": {}}
+                ],
+            },
+        },
+        {
+            "id": "tool-entry",
+            "type": "message",
+            "parentId": "call-entry",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": "call",
+                "toolName": "ipython",
+                "content": [{"type": "text", "text": "FORBIDDEN_SENTINEL"}],
+                "details": {"status": "error", "stderr": "FORBIDDEN_SENTINEL"},
+                "isError": True,
+            },
+        },
+    ]
+    entries[-1]["parentId"] = "tool-entry"
+    entries[-1]["message"].update(
+        stopReason="error",
+        diagnostics=[
+            {
+                "type": "agent_lifecycle_failure",
+                "error": {"code": "ENOENT", "message": "FORBIDDEN_SENTINEL"},
+            }
+        ],
+    )
+    run = _provider_capture_run(probe, operation, entries, tmp_path)
+    pages = iter([entries[:2], entries] if poll_pass == 2 else [entries])
+    run.journal = lambda: next(pages)
+    run.items = lambda **kwargs: items
+    with pytest.raises(RuntimeError, match="native_assistant_not_successful"):
+        run.completed_reply(operation, "kernel-seed")
+    text = (tmp_path / "kernel-seed-native-failure.json").read_text()
+    receipt = json.loads(text)
+    diagnostic = receipt["diagnostic"]
+    assert diagnostic["operation"] == "kernel_seed"
+    assert diagnostic["observation_scope"] == "same_operation_events"
+    assert diagnostic["ipython_done"] == "error"
+    assert diagnostic["ipython_is_error"] == "true"
+    assert diagnostic["error_code"] == "ENOENT"
+    assert diagnostic["phase"] == "agent_lifecycle"
+    assert diagnostic["bootstrap_done"] == "unavailable"
+    assert receipt["session_id"] == "conversation"
+    assert receipt["native_final_position"] == 4
+    assert "FORBIDDEN_SENTINEL" not in text
+    previous = json.loads((tmp_path / "kernel-seed-native-predicates.json").read_text())
+    assert previous["observation_state"] == "previous_poll"
+    assert "diagnostic" not in previous
