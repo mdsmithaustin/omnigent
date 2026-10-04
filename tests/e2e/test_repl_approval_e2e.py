@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import re
@@ -42,6 +43,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pyte
 import pytest
 
 from tests.e2e.conftest import (
@@ -384,6 +386,99 @@ def _read_pending(child: Any, seconds: float = 0.2) -> str:
     if isinstance(captured, bytes):
         captured = captured.decode("utf-8", errors="replace")
     return _strip_ansi(captured)
+
+
+def _wait_for_rendered_turn(
+    child: Any,
+    output: io.StringIO,
+    start: int,
+    reply: str,
+    timeout: float = 45.0,
+) -> str:
+    screen = pyte.Screen(120, 40)
+    stream = pyte.Stream(screen)
+    stream.feed(output.getvalue()[:start])
+    offset = start
+    deadline = time.monotonic() + timeout
+    saw_busy = False
+    turn_output = ""
+    while True:
+        captured = output.getvalue()
+        for frame in captured[offset:].split("\x1b[?25h"):
+            stream.feed(frame)
+            turn_output += frame
+            toolbar = next(
+                (line for line in reversed(screen.display) if "/help help" in line),
+                "",
+            )
+            saw_busy = saw_busy or "· streaming" in toolbar
+            turn = _strip_ansi(turn_output)
+            if saw_busy and "· ready" in toolbar and reply in turn:
+                return _strip_ansi(captured[start:])
+        offset = len(captured)
+        remaining = deadline - time.monotonic()
+        assert remaining > 0, (
+            f"Turn did not finish with reply {reply!r}.\n"
+            + "\n".join(screen.display)
+            + "\nTranscript:\n"
+            + captured[start:]
+        )
+        result = child.expect([pexpect.TIMEOUT, pexpect.EOF], timeout=min(0.2, remaining))
+        assert result == 0, "REPL exited before the turn completed.\n" + captured[start:]
+
+
+@pytest.mark.parametrize("partial_redraw", [False, True])
+def test_turn_observation_requires_reply_and_fresh_ready(partial_redraw: bool) -> None:
+    output = io.StringIO()
+    initial = "\x1b[19;1H── e2e label ask gate · ready  /help help"
+    output.write(initial)
+    start = output.tell()
+    busy = (
+        "\x1b[1;1Hexpected-first-reply"
+        "\x1b[19;1H── e2e label ask gate · streaming… 1s  /help help"
+        "\x1b[17;4H\x1b[?25h"
+    )
+    redraw = (
+        "\x1b[?25l\x1b[?7l\x1b[2A\x1b[3D\x1b[0m \x1b[0m\x1b[K\x1b[0m"
+        "\r\r\n\r\r\n\r\r\n\r\r\n\x1b[24C"
+        "\x1b[0;38;5;242;48;5;235mready \x1b[0;38;5;205;48;5;235m /help help · Ctr"
+        "\x1b[C+O debug ·\x1b[CCtrl+T show tools ·\x1b[CEsc cancel · Ctrl+C exit "
+        "\x1b[0;38;5;242;48;5;235m ○ 0%  state:\x1b[Cs\r\x1b[119Cl"
+        "\x1b[2A\r\x1b[3C\x1b[?7h\x1b[0m\x1b[?12l\x1b[?25h"
+    )
+    if not partial_redraw:
+        redraw = "\x1b[19;1H── e2e label ask gate · ready  /help help\x1b[K"
+    else:
+        assert re.search(r"·\s*ready", redraw) is None
+    output.write(busy + redraw)
+    turn = _wait_for_rendered_turn(None, output, start, "expected-first-reply")
+    assert "expected-first-reply" in turn
+
+
+@pytest.mark.parametrize(
+    "turn",
+    [
+        "\x1b[19;1H── e2e label ask gate · ready  /help help",
+        "\x1b[1;1Hexpected-first-reply",
+        "\x1b[1;1Hexpected-first-reply\x1b[19;1H── e2e label ask gate · streaming… 1s  /help help",
+        "\x1b[1;1Hwrong-reply"
+        "\x1b[19;1H── e2e label ask gate · streaming… 1s  /help help\x1b[?25h"
+        "\x1b[19;1H── e2e label ask gate · ready  /help help\x1b[K",
+    ],
+    ids=["stale-ready", "reply-before-busy", "reply-still-running", "wrong-reply"],
+)
+def test_turn_observation_rejects_incomplete_turn(turn: str) -> None:
+    output = io.StringIO("\x1b[19;1H── e2e label ask gate · ready  /help help")
+    output.seek(0, io.SEEK_END)
+    start = output.tell()
+    output.write(turn)
+
+    class ExitedRepl:
+        def expect(self, patterns: list[Any], timeout: float) -> int:
+            return 1
+
+    with pytest.raises(AssertionError, match="REPL exited before the turn completed"):
+        _wait_for_rendered_turn(ExitedRepl(), output, start, "expected-first-reply")
 
 
 def test_repl_single_approval_allows_llm_response(
@@ -1065,6 +1160,7 @@ def test_repl_label_driven_ask_approves(
     ap_cli: str,
     repl_env: dict[str, str],
     mock_llm_server_url: str,
+    tmp_path: Path,
 ) -> None:
     """
     Two-turn label-ASK composition, approve path.
@@ -1085,8 +1181,6 @@ def test_repl_label_driven_ask_approves(
     write in the chain doesn't leak the write on refuse
     (that's a separate refuse test below).
     """
-    # Turn 1: LLM responds normally (no ASK). Turn 2: ASK fires,
-    # approved, then LLM responds.
     _configure_mock_text(
         mock_llm_server_url,
         [
@@ -1104,34 +1198,23 @@ def test_repl_label_driven_ask_approves(
         dimensions=(40, 120),
         timeout=_LAUNCH_TIMEOUT,
     )
+    output = io.StringIO()
+    child.logfile_read = output
     try:
         _wait_for_prompt_ready(
             child,
             timeout=_LAUNCH_TIMEOUT,
             welcome_pattern="e2e.label.ask.gate",
         )
-        # Turn 1: trigger taint — no ASK fires this turn
-        # (condition checks the pre-evaluation snapshot).
+        turn_start = output.tell()
         child.send("hello BANANA_TRIGGER label-approve" + "\r")
-        # The LLM still replies normally. Wait for turn end.
-        _wait_for_turn_complete(child, timeout=45)
-        turn_one = child.before or ""
-        if isinstance(turn_one, bytes):
-            turn_one = turn_one.decode("utf-8", errors="replace")
-        turn_one = _strip_ansi(turn_one)
-        # Turn 1 MUST NOT show an approval banner — the
-        # taint label didn't exist when the condition was
-        # checked.
+        turn_one = _wait_for_rendered_turn(
+            child, output, turn_start, "Got it, banana trigger noted."
+        )
         assert "approval required" not in turn_one, (
-            "Turn 1 fired an ASK before the taint label was set — "
-            "condition gate is reading the post-write snapshot.\n"
-            f"Turn 1:\n{turn_one[:1500]}"
+            "Turn 1 fired an ASK before the taint label was set.\n" + turn_one
         )
 
-        _read_pending(child, seconds=1.0)
-
-        # Turn 2: label persists from the store → condition
-        # matches → ASK fires.
         child.send("please continue" + "\r")
         child.expect("approval required", timeout=45)
         banner_tail = _read_pending(child, seconds=1.0)
@@ -1139,12 +1222,10 @@ def test_repl_label_driven_ask_approves(
             "Turn 2's banner didn't come from the label-gated policy.\n"
             f"Banner:\n{banner_tail[:800]}"
         )
+        turn_start = output.tell()
         child.send("y" + "\r")
         child.expect("approved", timeout=5)
-        # Sync on the scripted reply rather than the cosmetic `· ready`
-        # idle marker, which can fail to render under CI load even after
-        # the turn has completed.
-        child.expect("Continuing as requested", timeout=45)
+        _wait_for_rendered_turn(child, output, turn_start, "Continuing as requested.")
     finally:
         try:
             child.send("/quit" + "\r")
@@ -1153,12 +1234,14 @@ def test_repl_label_driven_ask_approves(
             pass
         if child.isalive():
             child.terminate(force=True)
+        (tmp_path / "terminal.raw").write_text(output.getvalue())
 
 
 def test_repl_label_driven_ask_refuse_shows_sentinel(
     ap_cli: str,
     repl_env: dict[str, str],
     mock_llm_server_url: str,
+    tmp_path: Path,
 ) -> None:
     """
     Same composition, refuse path.
@@ -1168,8 +1251,6 @@ def test_repl_label_driven_ask_refuse_shows_sentinel(
     label-gated ASK's refuse branch goes through the same
     pre-persist sentinel path as INPUT DENY.
     """
-    # Turn 1: LLM responds normally. Turn 2: refused — DENY sentinel,
-    # no second LLM call. Extra dummy response as fail-safe.
     _configure_mock_text(
         mock_llm_server_url,
         [
@@ -1187,27 +1268,28 @@ def test_repl_label_driven_ask_refuse_shows_sentinel(
         dimensions=(40, 120),
         timeout=_LAUNCH_TIMEOUT,
     )
+    output = io.StringIO()
+    child.logfile_read = output
     try:
         _wait_for_prompt_ready(
             child,
             timeout=_LAUNCH_TIMEOUT,
             welcome_pattern="e2e.label.ask.gate",
         )
-        # Turn 1: taint.
+        turn_start = output.tell()
         child.send("hi BANANA_TRIGGER label-refuse" + "\r")
-        _wait_for_turn_complete(child, timeout=45)
-        _read_pending(child, seconds=1.0)
+        turn_one = _wait_for_rendered_turn(child, output, turn_start, "Banana trigger received.")
+        assert "approval required" not in turn_one
 
-        # Turn 2: ASK fires, user refuses.
         child.send("anything" + "\r")
         child.expect("approval required", timeout=45)
+        banner_tail = _read_pending(child, seconds=1.0)
+        assert "ask_when_tainted" in banner_tail
+        turn_start = output.tell()
         child.send("n" + "\r")
         child.expect("refused", timeout=5)
-        _wait_for_turn_complete(child, timeout=45)
-        full_turn = child.before or ""
-        if isinstance(full_turn, bytes):
-            full_turn = full_turn.decode("utf-8", errors="replace")
-        full_turn = _strip_ansi(full_turn)
+        full_turn = _wait_for_rendered_turn(child, output, turn_start, "Denied by policy")
+        assert "should not appear" not in full_turn
         assert "Denied by policy" in full_turn, (
             "Refused label-gated ASK did not produce a DENY sentinel.\n"
             f"Captured:\n{full_turn[:1500]}"
@@ -1220,6 +1302,7 @@ def test_repl_label_driven_ask_refuse_shows_sentinel(
             pass
         if child.isalive():
             child.terminate(force=True)
+        (tmp_path / "terminal.raw").write_text(output.getvalue())
 
 
 # ── OUTPUT-phase approval coverage ────────────────────────
