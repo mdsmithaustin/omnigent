@@ -12,9 +12,10 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
@@ -527,6 +528,92 @@ def _ensure_conversation_tables(engine: Engine) -> None:
         else:
             ConversationBase.metadata.create_all(bind=engine, checkfirst=True)
         ensure_fts_table(engine)
+
+
+@dataclass(frozen=True)
+class VerifiedSessionWorkSchema:
+    role: Literal["split-ap", "shared"]
+    target: str
+    backend: str
+    verified_objects: tuple[str, ...]
+
+
+class SessionWorkDeploymentError(RuntimeError):
+    """A bounded operator error that contains no URI or driver exception."""
+
+
+def _apply_session_work_schema(engine: Engine) -> None:
+    from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
+
+    version = None
+    if is_cockroachdb(engine.dialect.name):
+        version = _crdb_server_version(engine)
+        _verify_crdb_read_committed(engine, version)
+    with engine.connect() as connection:
+        if version is not None:
+            _prepare_crdb_schema_transaction(connection, version)
+        revision.apply(connection)
+        connection.commit()
+    with engine.connect() as connection:
+        revision.verify(connection)
+
+
+def deploy_session_work_schema(
+    db_uri: str, *, role: Literal["split-ap", "shared"], target: str
+) -> VerifiedSessionWorkSchema:
+    """Deploy exactly mm and verify durable shape using an owned, uncached engine.
+
+    Split AP deployment creates no metadata history. Existing incompatible
+    objects refuse deployment. Retries preserve rows and add only missing DDL.
+    All raised deployment errors omit credentials and driver exception details.
+    """
+    from omnigent.db.cockroachdb import _CRDB_BOOTSTRAP_MARKER_TABLE
+    from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
+
+    if role not in ("split-ap", "shared") or target != revision.REVISION:
+        raise SessionWorkDeploymentError("Invalid role or schema target.")
+    try:
+        db_uri = normalize_database_url(db_uri)
+        backend = make_url(db_uri).get_backend_name()
+        if backend not in {"sqlite", "postgresql", "mysql", "cockroachdb"}:
+            raise SessionWorkDeploymentError("Unsupported database backend.")
+        if _get_head_db_revision(db_uri) != target:
+            raise SessionWorkDeploymentError("Schema target does not match artifact head.")
+        engine = _create_engine(db_uri)
+        try:
+            with query_name_scope("omnigent.database.deploy_session_work_schema"):
+                if role == "split-ap":
+                    inspector = inspect(engine)
+                    objects = set(inspector.get_table_names()) | set(inspector.get_view_names())
+                    if backend in {"postgresql", "cockroachdb"}:
+                        objects.update(inspector.get_materialized_view_names())
+                    if objects & {"alembic_version", _CRDB_BOOTSTRAP_MARKER_TABLE}:
+                        raise SessionWorkDeploymentError(
+                            "Split AP target contains shared history."
+                        )
+                    _apply_session_work_schema(engine)
+                else:
+                    with engine.connect() as connection:
+                        revision.preflight(connection)
+                    _initialize_or_verify_schema(engine, db_uri)
+                    with engine.connect() as connection:
+                        revision.verify(connection)
+                    if _get_current_db_revision(engine) != target:
+                        raise SessionWorkDeploymentError("Shared revision verification failed.")
+                return VerifiedSessionWorkSchema(
+                    role=role,
+                    target=target,
+                    backend=engine.dialect.name,
+                    verified_objects=revision.verified_objects(),
+                )
+        finally:
+            engine.dispose()
+    except SessionWorkDeploymentError:
+        raise
+    except revision.SchemaDriftError as exc:
+        raise SessionWorkDeploymentError(str(exc)) from None
+    except Exception:  # noqa: BLE001 - driver errors may contain credentials
+        raise SessionWorkDeploymentError("Database schema deployment failed.") from None
 
 
 def _set_alembic_database_url(config: Config, db_uri: str) -> None:

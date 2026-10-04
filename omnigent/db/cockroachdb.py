@@ -271,9 +271,11 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
     from alembic import command
 
     from omnigent.db.db_models import ConversationBase, OmnigentBase
+    from omnigent.db.migrations.schema import mm1a2b3c4d5e as session_work
 
     # Imported lazily: utils imports this module at load time.
     from omnigent.db.utils import (
+        _apply_session_work_schema,
         _build_alembic_config,
         _get_current_db_revision,
         _get_head_db_revision,
@@ -288,8 +290,22 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
     tables = set(inspect(engine).get_table_names())
     expected = set(OmnigentBase.metadata.tables) | set(ConversationBase.metadata.tables)
 
-    if current is None:
+    if current is not None:
+        _verify_db_revision_is_supported(db_uri, current, head)
+        if not _crdb_revision_is_supported(db_uri, current, head):
+            raise RuntimeError(
+                f"CockroachDB schema revision {current!r} predates Omnigent's CRDB "
+                f"baseline {CRDB_BASELINE_REVISION!r}. Use a new empty database."
+            )
+    if head == session_work.REVISION:
+        expected.update(session_work.schema().tables)
+    if current is None or _CRDB_BOOTSTRAP_MARKER_TABLE in tables:
         _start_or_resume_crdb_bootstrap(engine, version, tables, expected, head)
+    if head == session_work.REVISION:
+        with engine.connect() as connection:
+            session_work.preflight(connection)
+
+    if current is None:
         with query_name_scope("omnigent.database.bootstrap_cockroachdb"):
             with engine.connect() as connection:
                 _prepare_crdb_schema_transaction(connection, version)
@@ -298,6 +314,8 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                 _prepare_crdb_schema_transaction(connection, version)
                 ConversationBase.metadata.create_all(bind=connection)
                 connection.commit()
+            if head == session_work.REVISION:
+                _apply_session_work_schema(engine)
             missing = expected - set(inspect(engine).get_table_names())
             if missing:
                 raise RuntimeError(
@@ -309,7 +327,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
             with engine.connect() as connection:
                 _prepare_crdb_schema_transaction(connection, version)
                 config.attributes["connection"] = connection
-                command.stamp(config, "head")
+                command.stamp(config, head)
                 connection.commit()
             if _get_current_db_revision(engine) != head:
                 raise RuntimeError(
@@ -319,12 +337,6 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
             _finish_crdb_bootstrap(engine, version)
         return
 
-    _verify_db_revision_is_supported(db_uri, current, head)
-    if not _crdb_revision_is_supported(db_uri, current, head):
-        raise RuntimeError(
-            f"CockroachDB schema revision {current!r} predates Omnigent's CRDB "
-            f"baseline {CRDB_BASELINE_REVISION!r}. Use a new empty database."
-        )
     if current != head:
         _logger.warning(
             "CockroachDB schema is out of date (found revision %r, expected %r); "
@@ -355,4 +367,12 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                 f"    omnigent debug db-upgrade {safe_uri!r}\n\n"
                 "to inspect or retry the migration manually."
             )
+    if head == session_work.REVISION:
+        with query_name_scope("omnigent.database.deploy_session_work_schema"):
+            _apply_session_work_schema(engine)
+    if _CRDB_BOOTSTRAP_MARKER_TABLE in tables:
+        missing = expected - set(inspect(engine).get_table_names())
+        if missing:
+            raise RuntimeError("CockroachDB bootstrap is missing expected tables.")
+        _repair_and_verify_crdb_model_indexes(engine, version)
     _finish_crdb_bootstrap(engine, version)
