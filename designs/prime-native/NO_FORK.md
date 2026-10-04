@@ -98,6 +98,34 @@ The integrated adapter probe verified all ten required scenarios on September 29
 
 All three negative controls exited 1 at their named mismatch: the wrong Python value, the wrong MCP result, and a required write marker that root policy prevented. Each qualified control left no owned survivors, forced cleanup, or cleanup errors. Evidence manifests retain the exact source and runtime hashes. Earlier scoped Python regression runs passed 661 cases. The final broader run passed 826 cases; the same five host model-catalog tests also fail on the fixed fork base. The Prime host catalog passed three tests, and the shared Pi extension passed 28 behavior checks.
 
+A separate authenticated xAI run on revision `5001626a` verified launch, HTTP input, native terminal input, model and effort controls, kernel seed and read, living-kernel reattachment, and cleanup on Prime 0.9.6. HTTP PATCH selected `xai/grok-4.3` with high effort. Native terminal commands selected `xai/grok-4.7` with low effort. Both selections appeared in the native journal and public session state. The retained assistant completions use Grok 4.7; this does not establish generation on Grok 4.3 or provider-side effort behavior.
+
+All eight required checks passed. Cleanup recorded no fatal errors, owned survivors, remaining credential copies, cleanup errors, or forced native fallback. This historical run predates the `c22045ea9` pane-reaper selector change. It does not qualify finite waits, MCP reconnect, or the current observer. The retained `prior-provider-run-ltiscmii/result.json` and `manifest.json` identify the run. The driver hash is `860c55abe0b2c4120019ebdc01c22851fc89ffed8b7f9680734f2395a4413909`.
+
+The fresh authenticated finite-wait run `provider-waits-m4g99h4o` passed all five
+cases on the same admitted Prime 0.9.6 artifact with configured Grok 4.7. It ran
+on `c22045ea9` with provider driver SHA256
+`a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
+The [finite-wait workflow](../../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
+provides the command and required evidence.
+
+The runner idle control expired and the native pane idle control actually reaped.
+Their positive arms completed real 60-second and 300-second Python tools after
+more than 37 and 280 quiet seconds, respectively. Both accepted the exact native
+queued input before tool completion, consumed it afterward, and produced the
+matching native and public replies. Terminal follow-ups preserved the same
+living kernel, value, and socket. A fresh wrong-memory arm failed only at its
+named assertion after meeting the normal prerequisites. All five cases left no
+owned survivors, private sockets, credential copies, cleanup errors, or forced
+fallback. The independent audit passed 1,920 checks against the retained receipts.
+
+Earlier journal failures and `provider-waits-ug3ppd91` remain FAILED. That run's
+pane cleanup failed after session deletion removed its owned credential tree.
+The current driver records the original directory deletion and rejects recreated
+copies or changed ownership. Finite native `running` is qualified. Genuine native
+`waiting`, status-only protection during complete output silence, one-hour and
+indefinite waits, and MCP reconnect remain unqualified.
+
 ## Original acceptance criteria
 
 Every original ID remains visible. A narrower passing observation does not qualify a stronger original guarantee.
@@ -106,7 +134,7 @@ Every original ID remains visible. A narrower passing observation does not quali
 | --- | --- |
 | N01 | Implemented native registration, `prime-native` harness, and `prime-native-ui` CLI agent. |
 | N02 | Reframed and implemented without a vendor bridge. Exact Prime version admission and Omnigent control outcomes replace the fork dependency. |
-| N03 | Model and effort controls verified through HTTP and the native terminal, including a custom agent without a wrapper label. Fixture credentials do not qualify OAuth or a commercial provider. |
+| N03 | Model and effort controls verified through HTTP and the native terminal, including a custom agent without a wrapper label. Separate authenticated xAI qualification on `5001626a` passed model and effort control changes between Grok 4.3 and 4.7. Other providers remain unqualified. |
 | N04 | Prime base instructions, a custom agent nonce, and canonical Omnigent framework instructions observed in actual model requests. Kit delivery is external. |
 | N05 | Bundled skill instructions and the exact declared Python resource delivered through `load_skill` and `read_skill_file`. The living kernel executed that resource and produced its literal result and nonce file. |
 | N06 | Native attachment and live terminal reattachment implemented and verified by the baseline helper. |
@@ -120,7 +148,7 @@ Every original ID remains visible. A narrower passing observation does not quali
 | N14 | A real Prime RLM child executed a nonce write without replacing the root's native identity, control incarnation, or transcript. Prime recursive lineage remains separate from Omnigent declared roles. Full descendant visibility is unqualified. |
 | N15 | Mixed declared-role compositions and completion-dependent Prime children remain unsupported. |
 | N16 | Prime's native long-running controls remain available in its terminal. Omnigent goals, heartbeat, and schedule controls need separate qualification. |
-| N17 | Running and waiting protect native residency. Focused reaper checks passed. Arbitrary long native waits need runtime qualification. |
+| N17 | Actual 60-second and 300-second native Python tools passed with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
 | N18 | Inbox delivery is admission, not completion. Root quiescence is observed. Whole-descendant settlement remains unqualified. |
 | N19 | A declared MCP tool executed through Omnigent's relay with its literal result. The wrong-result control failed at that assertion with clean cleanup. Reconnect availability is unqualified. |
 | N20 | Root relayed write denial verified through HTTP and terminal input with absent marker files. The opposite side-effect control failed at its named assertion. Universal allow, deny, approval, native-client, and descendant coverage remains unmet. |

@@ -212,5 +212,18 @@ A readiness receipt is optional orchestration input,
 not a prerequisite for public use. This broader probe pins the tested macOS
 arm64 artifact. See the [full probe workflow](../.agents/skills/verify-prime-native/SKILL.md#full-adapter-probe)
 for the runtime prerequisites, negative controls, and evidence inventory.
+The [authenticated finite-wait workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
+uses configured xAI credentials and Grok 4.7. The five-case qualification passed
+with actual 60-second and 300-second Python tools, matched runner and pane idle
+controls, HTTP steering, and reattachment to the same living kernel. Its receipt distinguishes finite native
+`running` from unqualified genuine `waiting` and status-only protection during
+silence. The workflow requires copied-auth removal and exact owned-process
+absence. It does not inspect unrelated terminal input.
+HTTP 202 proves admission only. Require the exact native queue receipt before
+the tool ends, followed by its result, queued user entry, and successful native
+reply. The public conversation must contain the matching reply and ordered tool
+evidence. Earlier journal and pane cleanup failures remain FAILED. The fresh
+passing run also verified the wrong-memory control and clean cleanup in all
+five cases. See the workflow for the source hashes and cleanup receipts.
 The separate daemon probe is a qualification gate and currently exits nonzero
 for the published runtime's known gaps.

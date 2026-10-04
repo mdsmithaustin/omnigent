@@ -97,6 +97,99 @@ Require the named mismatch in the failed scenario and zero owned survivors in ea
 
 The probe qualifies root relayed tool denial. It does not prove confinement of arbitrary Python or descendants. Fixture model choices do not prove commercial provider authentication. Durable recovery, global control exclusivity, arbitrary dialogs, and whole-descendant settlement remain outside this probe's passing claim.
 
+## Qualify authenticated finite waits
+
+`scripts/provider_probe.py` uses configured xAI credentials and
+`xai/grok-4.7`. It creates fresh private runtimes and copies credentials into
+owned files. It preserves
+the original auth file and checks unrelated Prime process identities. It does
+not inspect pending input in unrelated terminals.
+
+The probe supervises a public foreground host with its private clock settings.
+It requires the native CLI to reuse that exact host. Automatic host-daemon
+creation with `--server` filters the pane timeout before runner startup. The
+probe still requires the actual runner environment and reaper startup log to
+match each clock profile.
+
+Supply the admitted full Prime 0.9.6 macOS arm64 bundle, the managed kernel's
+`bin/python` entry, and your xAI auth file. Replace the absolute paths below.
+Install the documented optional runtime dependencies first.
+
+```sh
+uv sync --locked --extra all --group dev
+PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/provider_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /tmp --case waits
+```
+
+A nonzero setup exit means prerequisites failed. Require probe exit zero,
+every required normal-arm claim `VERIFIED`, a verified wrong-result control,
+matching deployment hashes, and clean cleanup in every child receipt. An
+absent required claim, cleanup error, forced fallback, or source drift fails
+the result. Read the printed aggregate manifest and its hashed child receipts.
+
+HTTP 202 proves Omnigent admission only. Require a separate native queue receipt
+for the exact owned prompt while the tool is running. Match the worker, binding,
+native session, subscription generation, and original attachment baseline. Its
+original receive time must precede the actual tool end, with an absent adjacent
+end marker. After completion, require the tool result, exact queued user entry,
+and successful native final in that order. The public conversation must contain
+the matching literal reply and complete ordered tool evidence.
+
+Prime writes the queued user entry after the tool finishes. Earlier runs failed
+the journal-before-end requirement; preserve those FAILED receipts. The queue
+requirement applies to fresh runs and does not reinterpret historical failures.
+
+Prime assigns event numbers before filtering delivery to each subscriber. A gap
+alone does not prove dropped input. Require a fresh native steering receipt in
+the same generation above the matched attachment baseline. This observer does
+not qualify exhaustive stream delivery or replay.
+
+`--case runner` tests a 30-second runner watchdog with pane reaping disabled.
+Its idle control must expire. Its actual 60-second Python tool must survive
+more than 37 quiet seconds. `--case pane` disables the runner watchdog and
+uses a 30-second pane timeout with the production 60-second scan cadence.
+Its idle control must actually reap the native pane. Its 300-second Python
+tool must survive at least 280 measured quiet seconds. Quiet observation sends
+no routed requests or terminal input. Each positive arm then requires HTTP
+steering, terminal reattachment, and the same living kernel value and socket.
+
+The default `waits` case runs both pairs and a fresh wrong-memory arm. For a
+separate negative control, replace `--case waits` with
+`--case runner --expected-memory WRONG`. Require exit 1 at
+`memory_read_mismatch` after the normal tool
+completed, with clean cleanup. An earlier failure does not qualify the control.
+`--case selector` checks observed native metadata and inferred eligibility only.
+It cannot replace the pane idle control's actual reap evidence.
+
+These finite tool waits observe native `running`. Genuine native `waiting`,
+default one-hour thresholds, and indefinite waits remain unqualified. Pane
+survival with fresh TUI output does not establish protection from native status
+alone. Those limits have separate `NOT VERIFIED` observations and do not become
+required passing claims. MCP reconnect is a separate qualification.
+
+The provider probe uses one immutable reply baseline and fixed operation
+deadline for seed, steering, terminal, and memory checks. Native user, tool,
+and final identities must agree with the ordered public projection. An idle
+snapshot or completed carrier alone cannot prove the reply. Malformed current
+messages, an interrupted current final, or an incomplete public page fail the
+operation. Each HTTP request, response body, and close has a bounded budget.
+
+Inspect `cleanup.json` in every child. Require empty errors, no exact owned
+survivors or private sockets, `forced_native_fallback: false`,
+`credential_copies_absent: true`, and unchanged source and deployment evidence.
+When session DELETE removes the owned Prime directory, `retired_owned_trees`
+binds its original root and surviving parent identities to the exact session,
+DELETE step, successful HTTP status, and Darwin deletion event. HTTP success
+or path absence alone cannot prove removal. Recreated copies, roots, or changed
+ancestors fail ownership checks. A surviving original directory follows the
+ordinary cleanup path and needs no retirement record.
+
+The retained `provider-waits-m4g99h4o` run passed all five cases on the admitted
+Prime artifact with configured Grok 4.7. Its driver SHA256 is
+`a2584ce9b149568e791f49ace5b7be7c332493770ad771cde18cb0e20d8335bb`.
+The earlier `provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
+Changes to the probe, imported application source, or admitted runtime require
+fresh qualification.
+
 ## Disposable daemon qualification
 
 `scripts/daemon_probe.py` uses the real public supervisor socket and native terminal alongside an isolated model fixture. It exercises actual Python execution, command deduplication, a lost reply, supervisor adoption, replacement, replay classification, worker recovery, and scoped shutdown. It never changes Prime's source or the production adapter transport.

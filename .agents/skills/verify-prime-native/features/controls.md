@@ -71,3 +71,16 @@ scenarios must say `VERIFIED` and the run must exit zero.
 The independent native TUI remains outside Omnigent's settings queue. These
 controls do not qualify global exclusivity, per-prompt model atomicity, arbitrary
 dialogs, or whole-descendant settlement.
+
+The [authenticated finite-wait workflow](../SKILL.md#qualify-authenticated-finite-waits)
+tests runner and pane inactivity separately with real Grok tool execution.
+Require each matched idle control to expire before accepting its positive arm.
+The pane control must observe an actual production reap. HTTP 202 proves
+admission only. Require an exact native queue receipt before the active tool
+ends, then its completed result, queued user entry, and fresh final reply in
+order. Match the subscription generation, baseline, root, and binding. Native
+and public replies must agree within the fixed operation deadline. The terminal
+follow-up, living-kernel continuity, and cleanup remain independent requirements.
+The fresh five-case qualification passed with Grok 4.7 on the admitted Prime
+0.9.6 artifact. Earlier failed receipts remain failed. Genuine native `waiting`
+and protection during complete output silence remain separate gaps.
