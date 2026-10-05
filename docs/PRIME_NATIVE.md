@@ -313,8 +313,12 @@ documentation review of this composition remains required.
 
 The provider helper SHA256 remains
 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-The MCP helper SHA256 remains
+At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
+The repaired helper SHA256 is
+`043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
+Its fixture close fallback reaps the exact registered child even when identity
+metadata capture fails. The original failure remains sticky.
 `OWNER_SHA256` admits that exact provider helper. Every present native-final
 error rejects, including empty containers, false, zero, and whitespace-only
 strings. Only missing, null, and exact empty-string errors are absent.

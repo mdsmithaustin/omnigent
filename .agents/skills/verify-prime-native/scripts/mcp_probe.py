@@ -606,7 +606,7 @@ class OwnedMcpFixture:
             except owner.FINALIZATION_ERRORS as exc:
                 self.errors.append("fixture stop: " + owner.sanitize(str(exc)))
                 try:
-                    if handle.identity and owner.identity_alive(handle.identity):
+                    if handle.process.poll() is None:
                         handle.process.kill()
                         handle.process.wait(timeout=5)
                 except owner.FINALIZATION_ERRORS as kill_error:

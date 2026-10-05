@@ -557,6 +557,194 @@ def test_real_fixture_partial_start_is_failed_settlement(probe, run, monkeypatch
             handle.process.stdout.close()
 
 
+@pytest.mark.parametrize(
+    "capture,condition",
+    [
+        ("own", "alive"),
+        ("psutil", "alive"),
+        ("own", "dead"),
+        ("own", "wait"),
+        ("own", "output"),
+        ("own", "poll"),
+        ("own", "kill"),
+        ("own", "receipt"),
+        ("own", "foreign"),
+    ],
+)
+def test_real_fixture_missing_identity_reaps_owned_child(
+    probe, run, monkeypatch, capture, condition
+):
+    fixture = run.fixture
+    foreign = None
+    if condition == "foreign":
+        foreign_port = probe.unused_port()
+        foreign_ready = run.evidence / "foreign-ready"
+        foreign_source = run.evidence / "foreign-daemon.py"
+        foreign_source.write_text(
+            "import socket, time\nfrom pathlib import Path\n"
+            "listener = socket.socket()\n"
+            f"listener.bind(('127.0.0.1', {foreign_port}))\n"
+            "listener.listen()\n"
+            f"Path({str(foreign_ready)!r}).write_text('ready')\n"
+            "time.sleep(60)\n"
+        )
+        foreign = subprocess.Popen([sys.executable, str(foreign_source)])
+
+    def fail_capture(process):
+        handle = fixture.handles[0]
+        assert handle.process.pid == (process if capture == "psutil" else process.pid)
+        probe.wait_for(
+            lambda: handle.startup_path.is_file() and not fixture.refused(),
+            "registered fixture listener before metadata failure",
+            10,
+        )
+        witness = json.loads(handle.startup_path.read_text())
+        assert witness["pid"] == handle.process.pid
+        assert witness["stateful"] is True
+        assert handle.process.poll() is None
+        assert handle.identity is None
+        raise OSError("synthetic metadata capture failure")
+
+    try:
+        with monkeypatch.context() as capture_patch:
+            if capture == "psutil":
+                capture_patch.setattr(probe.psutil, "Process", fail_capture)
+            else:
+                capture_patch.setattr(run, "own", fail_capture)
+            with pytest.raises(OSError, match="synthetic metadata capture failure"):
+                fixture.start(1)
+        handle = fixture.handles[0]
+        output = handle.stdout
+        assert handle.identity is None
+        assert handle.process.poll() is None
+        assert fixture.refused() is False
+        if condition == "dead":
+            handle.process.kill()
+            handle.process.wait(timeout=5)
+
+        def fail_operation(*args, **kwargs):
+            raise OSError("synthetic " + condition + " failure")
+
+        with monkeypatch.context() as close_patch:
+            if condition in {"poll", "kill", "wait"}:
+                close_patch.setattr(handle.process, condition, fail_operation)
+            elif condition == "dead":
+                close_patch.setattr(handle.process, "kill", fail_operation)
+                close_patch.setattr(handle.process, "terminate", fail_operation)
+            elif condition == "output":
+
+                class FailingOutput:
+                    @property
+                    def closed(self):
+                        return output.closed
+
+                    def close(self):
+                        output.close()
+                        fail_operation()
+
+                handle.stdout = FailingOutput()
+                fixture.outputs[0] = handle.stdout
+            elif condition == "receipt":
+                write = probe.owner.write_json
+
+                def fail_receipt(path, *args, **kwargs):
+                    if path.name == "fixture-cleanup.json":
+                        fail_operation()
+                    return write(path, *args, **kwargs)
+
+                close_patch.setattr(probe.owner, "write_json", fail_receipt)
+            settlement = fixture.close()
+        assert handle.identity is None
+        assert settlement.status == "failed_fixture"
+        assert "fixture start: synthetic metadata capture failure" in settlement.errors
+        if condition not in {"dead", "poll"}:
+            assert "generation stop: mcp_exact_generation_identity_missing" in settlement.errors
+            assert "fixture stop: mcp_exact_generation_identity_missing" in settlement.errors
+        assert output.closed is True
+        if condition in {"poll", "kill"}:
+            assert handle.process.poll() is None
+            assert fixture.refused() is False
+        else:
+            probe.wait_for(fixture.refused, "failed fixture endpoint refused", 5)
+            assert handle.process.poll() is not None
+            assert fixture.refused() is True
+        if condition in {"wait", "output", "poll", "kill", "receipt"}:
+            assert any("synthetic " + condition + " failure" in e for e in settlement.errors)
+        if condition == "receipt":
+            assert settlement.evidence == ()
+        else:
+            receipt = json.loads((run.evidence / "fixture-cleanup.json").read_text())
+            assert receipt["passed"] is False
+            assert receipt["errors"] == list(settlement.errors)
+            assert receipt["outputs_closed"] == [True]
+            if condition == "wait" and not receipt["endpoint_refused"]:
+                assert "fixture endpoint check: mcp_fixture_endpoint_still_available" in (
+                    settlement.errors
+                )
+            else:
+                assert receipt["endpoint_refused"] is (condition not in {"poll", "kill"})
+        if foreign is not None:
+            probe.wait_for(foreign_ready.is_file, "foreign synthetic daemon ready", 5)
+            assert foreign.poll() is None
+            with socket.create_connection(("127.0.0.1", foreign_port), timeout=1):
+                pass
+    finally:
+        for handle in fixture.handles:
+            if handle.process.poll() is None:
+                handle.process.kill()
+            handle.process.wait(timeout=5)
+            with contextlib.suppress(OSError):
+                handle.stdout.close()
+        if foreign is not None:
+            if foreign.poll() is None:
+                foreign.kill()
+            foreign.wait(timeout=5)
+
+
+@pytest.mark.parametrize("condition", ["alive", "dead", "wait"])
+def test_real_fixture_recorded_identity_close(probe, run, monkeypatch, condition):
+    handle = run.fixture.start(1)
+    try:
+        assert handle.identity is not None
+        if condition == "dead":
+            handle.process.kill()
+            handle.process.wait(timeout=5)
+        with monkeypatch.context() as close_patch:
+            if condition == "wait":
+
+                def fail_wait(*args, **kwargs):
+                    raise OSError("synthetic raw wait failure")
+
+                close_patch.setattr(handle.process, "wait", fail_wait)
+            elif condition == "dead":
+
+                def fail_signal(*args, **kwargs):
+                    raise AssertionError("already dead child signaled")
+
+                close_patch.setattr(handle.process, "kill", fail_signal)
+                close_patch.setattr(handle.process, "terminate", fail_signal)
+            settlement = run.fixture.close()
+        handle.process.wait(timeout=5)
+        assert probe.owner.identity_alive(handle.identity) is False
+        assert handle.stdout.closed is True
+        assert run.fixture.refused() is True
+        receipt = json.loads((run.evidence / "fixture-cleanup.json").read_text())
+        if condition == "wait":
+            assert settlement.status == "failed_fixture"
+            assert receipt["passed"] is False
+            assert any("synthetic raw wait failure" in e for e in settlement.errors)
+        else:
+            assert settlement.status == "settled_fixture"
+            assert settlement.errors == ()
+            assert receipt["passed"] is True
+            assert receipt["generations"][0]["exit"] is not None
+    finally:
+        if handle.process.poll() is None:
+            handle.process.kill()
+        handle.process.wait(timeout=5)
+        handle.stdout.close()
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_mcp_first_failure_survives_owner_exit_failure(probe, tmp_path, monkeypatch):
     def fail_start(run):
