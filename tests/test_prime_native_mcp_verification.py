@@ -595,8 +595,12 @@ def test_live_generation_cannot_be_restarted_before_stop(probe, run):
 
 @pytest.mark.parametrize(
     "stale_pin",
-    ["0" * 64, "a4ac20a5c467e8b867d281759b2c193dd0b6d659cc6cd87fc3a8d2f62fba36ed"],
-    ids=["unknown", "previous-provider"],
+    [
+        "0" * 64,
+        "a4ac20a5c467e8b867d281759b2c193dd0b6d659cc6cd87fc3a8d2f62fba36ed",
+        "45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c",
+    ],
+    ids=["unknown", "previous-provider", "pre-retirement-provider"],
 )
 def test_mcp_rejects_stale_owner_before_allocation(probe, tmp_path, monkeypatch, stale_pin):
     req = request(probe, tmp_path)

@@ -31,7 +31,7 @@ from adapter_probe import (
 )
 from verify import wait_for
 
-OWNER_SHA256 = "45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c"
+OWNER_SHA256 = "c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3"
 ERROR_PREFIX = "Request failed on the runner; see the runner log for details: "
 REQUIRED = (
     "actual_provider",

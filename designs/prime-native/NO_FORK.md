@@ -207,17 +207,22 @@ are required on the final integrated bytes. Independent review of these
 maintained documentation changes also remains required.
 
 The current provider helper SHA256 is
-`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
 The current MCP helper SHA256 is
+`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
+Its `OWNER_SHA256` admits that exact provider helper. These retirement and
+finite-observation changes have synthetic source checks only. Independent
+source and documentation review remains pending. No live WAIT or MCP run on
+these bytes is claimed.
+
+The preceding provider hash was
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+The preceding MCP hash was
 `9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
-Its `OWNER_SHA256` admits that exact provider helper. Both source units and their
-private documentation context passed independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The historical ecf1bb and ad945
-verdicts above apply only to their named revisions and hashes.
-Independent review of the current combined PR6 context and these documentation
-changes remains pending. Fresh live WAIT and MCP qualification on the final
-integrated bytes remains required. Earlier context passes do not qualify these
-new source bytes or replace that live proof.
+Those source units passed independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. That verdict and the older ecf1bb and
+ad945 verdicts cover their named source bytes only. They do not qualify the
+current repair or supply fresh runtime proof.
 
 The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
 remains FAILED. All five seed cases have false completion records and retained
@@ -225,6 +230,15 @@ allocations. Their native cause and first rejected filesystem entry remain
 unknown. The later absence of 69 recorded PIDs proves only those identities
 absent, not writer settlement or scratch removal. Do not retrospectively remove
 those allocations using current metadata or rewrite their historical receipts.
+
+The later audited `provider-waits-d_tb1jmg` run at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native
+replies failed at kernel seed, before WAIT, with false committed completions.
+All five lack external compact-root retirement authority. The precise DELETE
+and filesystem branches and native cause remain unknown. The first case also
+has a sticky `unrelated_user_process_identity_changed` failure with unknown
+cause. Preserve these allocations and historical receipts. Fresh MCP execution
+on the repaired source has not run.
 
 For the current rejected entry, inspect `<operation>-native-failure.json`.
 `<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.
@@ -236,6 +250,26 @@ reads at most 4096 characters and records unknown or truncated state explicitly.
 No native error sample, content, or hash enters this observation. A coarse class
 does not attest a backend cause, provider authentication, or availability.
 The fixed failure reason remains `native_assistant_not_successful`.
+
+The failure receipt's nested `diagnostic` uses a closed finite schema. It
+projects known structured diagnostic types, kinds, status and code buckets,
+and matched same-operation ipython status and `isError`. It exports no raw
+payload or unknown-value hash. Startup, protocol, and bootstrap flags remain
+unavailable without a typed producer. Diagnostic categories do not attest the
+backend cause, and previous-poll predicates cannot populate the current failure.
+
+Qualified cleanup admits root, parent, and vnode witnesses before public DELETE
+while the dedicated runner can still perform owned teardown. Public Stop
+remains a separate control qualification and a cleanup attempt after DELETE
+failure. `retirement-attempts.json` records bounded allocation and session
+bindings, reached phase, status, held identities, no-follow name state, validated
+event flags, and allowlisted branches on every retirement-attempt exit.
+Unknown observations remain explicit. A retained external root or DELETE 200
+without the combined removal witness cannot qualify retirement. There is no
+manual external-root reclamation. Sticky errors, complete settlement, captures,
+and owner exit before committed publication remain required. The cooperative
+namespace precondition still leaves hostile same-UID final-syscall interference
+BLOCKED. See the verification skill for the exact finite observation contract.
 
 Only `data/logs/cli/latest-cli.log` is an admitted metadata-only CLI alias.
 Capture and removal receipts bind the allocation, exact path, checked parent,
@@ -274,7 +308,7 @@ Only a written `fixture-cleanup.json` can support `settled_fixture`. Startup,
 stop, close, endpoint, or receipt failure yields `failed_fixture` with sticky
 errors. MCP rejects `no_fixture`, missing settlement, and another allocation's
 settlement. Failed settlement prevents runtime removal and retains scratch.
-The current fixture source unit passed the cumulative review at
+The preceding fixture source unit passed the cumulative review at
 `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the combined
 PR6 context and documentation, and fresh final-byte live proof, remain pending.
 

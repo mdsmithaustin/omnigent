@@ -264,17 +264,22 @@ fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
 
 The current provider helper SHA256 is
-`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
 The current MCP helper SHA256 is
+`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
+Its `OWNER_SHA256` admits that exact provider helper. These retirement and
+finite-observation changes have synthetic source checks only. Independent
+source and documentation review remains pending. No live WAIT or MCP run on
+these bytes is claimed.
+
+The preceding provider hash was
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
+The preceding MCP hash was
 `9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
-Its `OWNER_SHA256` admits that exact provider helper. Both source units and their
-private documentation context passed independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The historical ecf1bb and ad945
-verdicts above apply only to their named revisions and hashes.
-Independent review of the current combined PR6 context and these documentation
-changes remains pending. Fresh live WAIT and MCP qualification on the final
-integrated bytes remains required. Earlier context passes do not qualify these
-new source bytes or replace that live proof.
+Those source units passed independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. That verdict and the older ecf1bb and
+ad945 verdicts cover their named source bytes only. They do not qualify the
+current repair or supply fresh runtime proof.
 
 The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
 remains FAILED. All five seed cases have false completion records and retained
@@ -282,6 +287,15 @@ allocations. Their native cause and first rejected filesystem entry remain
 unknown. The later absence of 69 recorded PIDs proves only those identities
 absent, not writer settlement or scratch removal. Do not retrospectively remove
 those allocations using current metadata or rewrite their historical receipts.
+
+The later audited `provider-waits-d_tb1jmg` run at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native
+replies failed at kernel seed, before WAIT, with false committed completions.
+All five lack external compact-root retirement authority. The precise DELETE
+and filesystem branches and native cause remain unknown. The first case also
+has a sticky `unrelated_user_process_identity_changed` failure with unknown
+cause. Preserve these allocations and historical receipts. Fresh MCP execution
+on the repaired source has not run.
 
 For a failed native reply, inspect `<operation>-native-failure.json` separately
 from `<operation>-native-predicates.json`. The latter records
@@ -297,6 +311,49 @@ characters and publishes no native error text, sample, or hash. A class does
 not attest provider authentication or availability. A native failure still
 rejects with `native_assistant_not_successful`. A completed publication records
 `passed: false`. Missing publication cannot authorize success.
+
+The nested `diagnostic` object uses the closed `native_seed_diagnostic_v1`
+schema and the surrounding failure receipt's current session, operation,
+baseline, and entry identities. Only exact diagnostic types, finite failure
+kinds, HTTP status buckets, error-code buckets, and matched same-operation
+ipython status and `isError` fields enter it. Unknown values are replaced by
+explicit finite buckets without their original value or hash. Unknown keys in
+the projected schema reject. Producer payload, message, stdout, stderr,
+traceback, request ID, header, and arbitrary metadata values are not exported.
+
+A diagnostic type identifies its producer catch boundary, not an independently
+proved backend cause. Tool status cannot distinguish startup, bootstrap, and
+cell execution. Kernel-ready, protocol-match, and bootstrap flags remain
+`unavailable` because no supported typed producer supplies them here.
+`projection_complete` remains false. Kernel identity receipt presence alone
+is not execution proof. The projection cannot reuse `previous_poll` predicates
+or change the sticky native failure and false completion.
+
+Qualified cleanup admits the original root, parent, and vnode watch before
+public DELETE. DELETE can then use its still-available dedicated runner for
+owned stop and teardown. Public Stop before DELETE can end that runner while
+retaining saved state. Stop remains a separate control qualification. If DELETE
+fails, cleanup still attempts the existing public Stop path and retains its
+idle-expiry predicates and the original failure.
+
+`retirement-attempts.json` is a bounded closed-schema observation on every
+session-retirement attempt exit, including failed admission and unavailable API.
+Each of at most 64 root records binds the allocation, validated session, DELETE
+step, external-root flag, and admitted root and parent identities. It records
+the reached phase, HTTP status, held-identity matches, no-follow name state,
+validated event flags, and an allowlisted branch. Null and `unobserved` fields
+mean that no observation was established. No body, exception text, directory
+content, alias target, or credential material enters these records.
+A missing receipt or receipt-write failure cannot authorize cleanup.
+
+A 200 response proves best-effort conversation deletion. Only the existing
+combined original-vnode `NOTE_DELETE`, name-absence, parent, and root checks
+admit retirement. Offline runners, failed teardown, and retained external roots
+remain failed. There is no manual external-root reclamation or replacement
+retirement authority. Empty census, writer and reader closure, socket and
+fixture settlement, captures, sticky errors, and committed completion after
+owner exit remain required. The cooperative namespace grant does not exclude
+hostile same-UID writers in the final check/syscall window.
 
 The owner admits only `data/logs/cli/latest-cli.log` as a metadata-only alias.
 Inspect `runtime-cli-alias-capture.json` and `runtime-cli-alias-remove.json`.
@@ -411,7 +468,7 @@ It predates allocation-bound settlement and completion publication. It cannot
 qualify the migrated owner contract. Historical independent source review returned
 PASS+NOTES for provider revision `ecf1bb4824a28913377109cefc3107f018fdb21a`
 and MCP revision `ad945096ed6da2c1ffe866a33841188f77770b4f`, with their older
-hashes recorded above. Current source admission is the separate cumulative
+hashes recorded above. The preceding source admission is the separate cumulative
 review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent combined-context
 and documentation review, and fresh live WAIT and MCP qualification on final
 integrated bytes, remain pending.
