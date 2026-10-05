@@ -151,7 +151,7 @@ the private socket for session cleanup. Native Windows launch is rejected
 because Prime's default named pipe is shared.
 
 Prime is a fork of Pi that now develops independently, as described in
-[Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/README.md).
+[Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/README.md).
 The adapters share
 the extension inbox, message conversion, and tool relay transport. Prime has
 its own launch, version check, session resume, and daemon shutdown code.
@@ -247,9 +247,18 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The current PR5 provider helper at `a5d0703a57882800a3a0b36dc925a090b4546451`
-has SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
-It ports the provider-only repair from `57293032d4fe2f53bd4c688a14cac4e9fd41e930`.
+The current PR5 provider helper at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8`
+has SHA256 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
+It rejects every present native-final error, including empty lists, empty
+objects, false, zero, and whitespace-only strings. Only missing, null, and exact
+empty-string errors are absent. A successful stop reason and matching literal
+reply remain required. Fresh independent review of these repaired bytes is pending.
+
+The preceding provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
+had SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
+It matched the accepted provider-only repair at
+`57293032d4fe2f53bd4c688a14cac4e9fd41e930`. Its source verdict does not cover
+the current final-error admission repair.
 The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
 was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
 Its independent source review passed 925 repository cases and seven independent
@@ -257,8 +266,11 @@ checks. Those results do not qualify the current PR5 context or runtime.
 Fresh PR5 source, context, runtime, base-CI, and documentation gates remain pending.
 The original CLI registry omission remains unwaived until the bootstrap repair lands.
 
-The separate private PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`
-has the exact accepted `98309e7c5136c3801bfd227e79289f2d62ed7915` tree.
+Before this PR5 repair, the separate private PR6 candidate
+`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the exact accepted
+`98309e7c5136c3801bfd227e79289f2d62ed7915` tree. The repaired PR5 provider
+bytes differ from that historical tree. This does not establish current whole
+PR5 and PR6 tree identity.
 Its MCP helper SHA256 is
 `1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
 That helper is absent from this PR5 checkout. PR6 remains a separate required
