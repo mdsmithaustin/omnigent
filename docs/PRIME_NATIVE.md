@@ -8,8 +8,13 @@ is `prime-native-ui`.
 ## Launch and reattach
 
 Install Prime Agent **0.9.6** and `tmux`. This adapter requires that exact Prime
-version on macOS and Linux. Configure Prime's login or `models.json` before
-launching. Omnigent copies `auth.json`, `settings.json`, and `models.json` into
+version on macOS and Linux. Configure Prime's authentication before launching.
+For xAI, run `/login` in Prime and select the xAI subscription or API-key entry.
+Complete the selected flow as described in the
+[pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
+Saved authentication is separate from the current provider and model labels.
+A listed or selected model does not prove that a request will succeed.
+Omnigent copies `auth.json`, `settings.json`, and `models.json` into
 private conversation state without changing the source files.
 Launch is rejected on native Windows because the published default supervisor
 named pipe does not identify a private conversation for scoped shutdown.
@@ -252,7 +257,9 @@ has SHA256 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
 It rejects every present native-final error, including empty lists, empty
 objects, false, zero, and whitespace-only strings. Only missing, null, and exact
 empty-string errors are absent. A successful stop reason and matching literal
-reply remain required. Fresh independent review of these repaired bytes is pending.
+reply remain required. Independent source and documentation review passed at
+`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That verdict covers its recorded
+context. Fresh independent review of the current Main composition remains pending.
 
 The preceding provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
 had SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
@@ -263,8 +270,10 @@ The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
 was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
 Its independent source review passed 925 repository cases and seven independent
 checks. Those results do not qualify the current PR5 context or runtime.
-Fresh PR5 source, context, runtime, base-CI, and documentation gates remain pending.
-The original CLI registry omission remains unwaived until the bootstrap repair lands.
+Current Main includes the bootstrap repair that registers `prime-native` in the
+CLI dispatcher. Preserve the earlier failed registry receipt as historical
+evidence. Fresh composition checks and independent source and documentation
+review remain required. Runtime qualification and base-CI remain separate gates.
 
 Before this PR5 repair, the separate private PR6 candidate
 `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the exact accepted

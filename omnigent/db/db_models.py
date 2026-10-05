@@ -304,6 +304,7 @@ class SqlAgent(OmnigentBase):
     __table_args__ = (
         CheckConstraint("kind IN (1, 2)", name="ck_agents_kind"),
         Index("ix_agents_created_at", "workspace_id", "created_at", "id"),
+        Index("ix_agents_id_name", "workspace_id", "id", "name"),
         # Template agents have unique names; session-scoped agents (kind=2)
         # may reuse the same name. That "unique only within the template set"
         # rule can't be a partial unique index (MySQL has none), so it is

@@ -2,7 +2,7 @@
 # Decides whether a PR satisfies the "UI behavior changes need an e2e_ui test"
 # gate.
 #
-# Gate passes when ANY holds:
+# After file validation, the gate passes for these outcomes:
 #   1. The PR changes no web/** files            -> nothing to cover.
 #   2. An LLM judge decides the web/** change      -> coverage adequate, or
 #      either is not a user-facing behavior change      not a behavior change.
@@ -29,9 +29,8 @@
 # uncertainty. A wrong/injected "pass" cannot merge anything on its own: the
 # separate required `Maintainer Approval` check still gates merge.
 #
-# Case 3 applies the maintainer-effective waiver: the `skip-e2e-ui-test` label
-# is honoured only when the author is a maintainer, or a maintainer's latest
-# decisive review is APPROVED (see below) -- a fork author cannot self-waive.
+# Case 3 requires a valid needs_test=true verdict first. Configuration, gateway,
+# and parsing failures block before waiver evaluation.
 #
 # Reads change/label/review state from the API only -- never checks out or runs
 # PR-head code. Called from a base-branch (pull_request_target) job, so a PR
@@ -47,9 +46,39 @@ set -euo pipefail
 fail() { echo "::error::$1"; exit 1; }
 pass() { echo "$1"; exit 0; }
 
-# --- 1. Changed files (REST, paginated -- robust for large PRs) -----------
-FILES=$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
-  --jq '.[] | [.status, .filename] | @tsv')
+if ! FILE_PAGES=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --slurp); then
+  fail "Could not read PR changed files; cannot determine e2e_ui coverage."
+fi
+if ! FILES_JSON=$(jq -ces '
+  if length != 1 then error("expected one document") else .[0] end
+  | if type != "array" then error("expected pages")
+    elif length == 0 then error("missing pages")
+    elif any(.[]; type != "array") then error("invalid page")
+    else [.[][]] end
+  | if all(.[]; type == "object"
+      and (.filename | type == "string" and length > 0)
+      and (.status | type == "string" and length > 0)
+      and (if .status == "renamed" or has("previous_filename")
+        then (.previous_filename | type == "string" and length > 0)
+        else true end))
+    then . else error("invalid file") end
+  | if (map(.filename) | unique | length) == length
+    then . else error("duplicate filename") end
+' <<< "$FILE_PAGES" 2>/dev/null); then
+  fail "Invalid or incomplete PR changed files; cannot determine e2e_ui coverage."
+fi
+if ! PR_JSON=$(gh api "repos/$REPO/pulls/$PR"); then
+  fail "Could not read PR changed files; cannot determine e2e_ui coverage."
+fi
+FILE_COUNT=$(jq length <<< "$FILES_JSON")
+if ! jq -es --argjson count "$FILE_COUNT" '
+  length == 1 and (.[0] | type == "object" and (.changed_files
+    | type == "number" and . >= 0 and . <= 3000 and floor == . and . == $count))
+' <<< "$PR_JSON" >/dev/null 2>&1; then
+  fail "Invalid or incomplete PR changed files; cannot determine e2e_ui coverage."
+fi
+FILES=$(jq -r '.[] | .status as $status
+  | (.filename, (.previous_filename // empty)) | [$status, .] | @tsv' <<< "$FILES_JSON")
 
 touches_ui=false
 while IFS=$'\t' read -r fstatus path; do
@@ -61,6 +90,16 @@ done <<< "$FILES"
 
 if [[ "$touches_ui" != "true" ]]; then
   pass "PASS: PR touches no web/** files; e2e_ui coverage not required."
+fi
+
+if [[ ! "${E2E_UI_JUDGE_MODEL:-}" =~ [^[:space:]] ]]; then
+  fail "Set OMNIGENT_CI_E2E_JUDGE_MODEL repository variable for web changes."
+fi
+if [[ ! "${OPENAI_BASE_URL:-}" =~ [^[:space:]] ]]; then
+  fail "Set GATEWAY_BASE_URL repository secret for web changes."
+fi
+if [[ ! "${OPENAI_API_KEY:-}" =~ [^[:space:]] ]]; then
+  fail "Set LLM_API_KEY repository secret for web changes."
 fi
 
 # --- 2. LLM judge: behavior change without adequate e2e_ui coverage? ------
@@ -80,22 +119,16 @@ MAX_BLOB_BYTES=60000
 # can crowd the other out, listing the test patches first.
 E2E_UI_BUDGET=$((MAX_BLOB_BYTES / 2))
 
-# `gh api --paginate` (no --jq) merges all pages into one JSON array; capture it
-# once and feed it to jq per category so --argjson reaches jq (gh api itself has
-# no --argjson flag).
-FILES_JSON=$(gh api "repos/$REPO/pulls/$PR/files" --paginate)
-
-# Emit the truncated "=== status filename ===\n<patch>" block for every file
-# whose path starts with the given prefix.
 patch_blob() {  # $1 = path prefix
   jq -r --argjson max "$MAX_PATCH_LINES" --arg pfx "$1" '.[]
-    | select(.filename | startswith($pfx))
+    | select(any(.filename, (.previous_filename // empty); startswith($pfx)))
     | (.patch // "(no textual patch -- binary or too large)") as $p
     | ($p | split("\n")) as $lines
     | (if ($lines | length) > $max
          then (($lines[:$max] | join("\n")) + "\n... (patch truncated at \($max) lines)")
          else $p end) as $trunc
-    | "=== \(.status) \(.filename) ===\n\($trunc)"' <<< "$FILES_JSON"
+    | "=== \(.status) \(.filename)\(if has("previous_filename")
+        then " (from \(.previous_filename))" else "" end) ===\n\($trunc)"' <<< "$FILES_JSON"
 }
 
 E2E_BLOB=$(patch_blob "tests/e2e_ui/")
@@ -150,9 +183,6 @@ CURL_RC=$?
 set -e
 
 if [[ $CURL_RC -ne 0 ]]; then
-  # Fail closed on infra error, but distinguish it from a real "missing test"
-  # so the author knows to retry or use the waiver rather than scramble to
-  # write a test. The skip label remains the escape hatch.
   fail "Could not reach the e2e_ui judge (gateway error, exit $CURL_RC). Re-run the check; if it keeps failing, a maintainer can apply 'skip-e2e-ui-test'."
 fi
 

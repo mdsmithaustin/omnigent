@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -523,17 +524,23 @@ def _worker_db_uri() -> Generator[str, None, None]:
 
     For SQLite nothing is created here; ``db_uri`` handles per-test files.
     """
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "w0")
+    with _server_test_database(
+        os.environ.get("OMNIGENT_TEST_DB_URI", ""), f"omnigent_test_{worker}"
+    ) as uri:
+        yield uri
+
+
+@contextmanager
+def _server_test_database(base_uri: str, db_name: str) -> Generator[str, None, None]:
     import re
 
     import sqlalchemy as _sa
 
-    base_uri = os.environ.get("OMNIGENT_TEST_DB_URI", "")
     if not base_uri:
         yield ""
         return
 
-    worker = os.environ.get("PYTEST_XDIST_WORKER", "w0")
-    db_name = f"omnigent_test_{worker}"
     uri = re.sub(r"/[^/]*(\?.*)?$", f"/{db_name}", base_uri)
 
     root_engine = _sa.create_engine(base_uri, isolation_level="AUTOCOMMIT")
@@ -554,22 +561,26 @@ def _worker_db_uri() -> Generator[str, None, None]:
             conn.execute(_sa.text(f'CREATE DATABASE "{db_name}"'))
     root_engine.dispose()
 
-    engine = get_or_create_engine(uri)
-    yield uri
-
-    with _engine_lock:
-        _engine_cache.pop(uri, None)
-    engine.dispose()
-
-    root_engine2 = _sa.create_engine(base_uri, isolation_level="AUTOCOMMIT")
-    with root_engine2.connect() as conn:
-        if dialect == "mysql":
-            conn.execute(_sa.text(f"DROP DATABASE IF EXISTS `{db_name}`"))
-        elif dialect == "cockroachdb":
-            conn.execute(_sa.text(f'DROP DATABASE IF EXISTS "{db_name}" CASCADE'))
-        else:
-            conn.execute(_sa.text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
-    root_engine2.dispose()
+    engine = None
+    try:
+        engine = get_or_create_engine(uri)
+        yield uri
+    finally:
+        with _engine_lock:
+            _engine_cache.pop(uri, None)
+        if engine is not None:
+            engine.dispose()
+        root_engine2 = _sa.create_engine(base_uri, isolation_level="AUTOCOMMIT")
+        try:
+            with root_engine2.connect() as conn:
+                if dialect == "mysql":
+                    conn.execute(_sa.text(f"DROP DATABASE IF EXISTS `{db_name}`"))
+                elif dialect == "cockroachdb":
+                    conn.execute(_sa.text(f'DROP DATABASE IF EXISTS "{db_name}" CASCADE'))
+                else:
+                    conn.execute(_sa.text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
+        finally:
+            root_engine2.dispose()
 
 
 @pytest.fixture(scope="session")

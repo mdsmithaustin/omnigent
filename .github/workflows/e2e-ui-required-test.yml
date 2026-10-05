@@ -1,0 +1,30 @@
+name: E2E UI Required Test
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/e2e-ui-required.yml
+      - .github/scripts/e2e-ui-required/check.sh
+      - .github/scripts/merge-ready/load-maintainers.sh
+      - .github/scripts/e2e_ui_required_test.py
+      - .github/workflows/e2e-ui-required-test.yml
+      - docs/model-hardcoding-plan.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-ui-required-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Run required UI gate unit test
+        run: python3 .github/scripts/e2e_ui_required_test.py -v
