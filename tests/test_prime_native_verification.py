@@ -2009,6 +2009,11 @@ def test_provider_partial_subclass_retains_allocation_without_fabricated_settlem
         ("error", {}, "error", "malformed", False),
         ("error", False, "error", "malformed", False),
         ("error", 0, "error", "malformed", False),
+        ("stop", [], "stop", "malformed", False),
+        ("stop", {}, "stop", "malformed", False),
+        ("stop", False, "stop", "malformed", False),
+        ("stop", 0, "stop", "malformed", False),
+        ("stop", " \t\n", "stop", "unknown", False),
     ],
     ids=[
         "error",
@@ -2023,6 +2028,11 @@ def test_provider_partial_subclass_retains_allocation_without_fabricated_settlem
         "empty-dict",
         "false",
         "zero",
+        "stop-empty-list",
+        "stop-empty-dict",
+        "stop-false",
+        "stop-zero",
+        "stop-whitespace",
     ],
 )
 def test_native_failure_observation_survives_completed_reply(
@@ -2095,13 +2105,17 @@ def test_native_failure_observation_survives_completed_reply(
 
 @pytest.mark.parametrize("poll_pass", [1, 2])
 @pytest.mark.parametrize("error_state", ["missing", "null", "empty"])
-def test_native_absent_error_failure_and_success_controls(tmp_path, poll_pass, error_state):
+@pytest.mark.parametrize("literal", ["REPLY", "WRONG"])
+def test_native_absent_error_failure_and_success_controls(
+    tmp_path, poll_pass, error_state, literal
+):
     probe = _provider_probe()
     for reason in ("error", "stop"):
         evidence = tmp_path / reason
         evidence.mkdir()
         operation, entries, items = _provider_reply(probe)
         entries[-1]["message"]["stopReason"] = reason
+        entries[-1]["message"]["content"][0]["text"] = literal
         if error_state != "missing":
             entries[-1]["message"]["errorMessage"] = None if error_state == "null" else ""
         run = _provider_capture_run(probe, operation, entries, evidence)
@@ -2117,6 +2131,11 @@ def test_native_absent_error_failure_and_success_controls(tmp_path, poll_pass, e
             assert observation["error_present"] is False
             assert observation["native_reply_id"] == "native-final"
             assert observation["native_final_position"] == 2
+        elif literal == "WRONG":
+            with pytest.raises(RuntimeError, match=r"^native_assistant_literal_mismatch$"):
+                run.completed_reply(operation, "kernel-seed")
+            assert not receipt.exists()
+            assert not (evidence / "completion.json").exists()
         else:
             result = run.completed_reply(operation, "kernel-seed")
             assert result["complete"] is True
@@ -2126,6 +2145,30 @@ def test_native_absent_error_failure_and_success_controls(tmp_path, poll_pass, e
             published = probe._publish_case(_synthetic_draft(probe, evidence))
             assert published.passed is True
             assert json.loads((evidence / "completion.json").read_text())["passed"] is True
+
+
+@pytest.mark.parametrize("reason", ["stop", "error"])
+@pytest.mark.parametrize("container", [list, dict])
+def test_native_final_rejects_hostile_error_containers(reason, container):
+    class Hostile(container):
+        def __bool__(self):
+            raise AssertionError("error presence must not invoke truthiness")
+
+        def __eq__(self, other):
+            raise AssertionError("error presence must not compare containers")
+
+        def __str__(self):
+            raise AssertionError("error presence must not export container text")
+
+    probe = _provider_probe()
+    operation, entries, items = _provider_reply(probe)
+    entries[-1]["message"].update(stopReason=reason, errorMessage=Hostile())
+    with pytest.raises(probe._NativeReplyFailure) as caught:
+        probe._reply_verdict(operation, entries, items)
+    assert str(caught.value) == "native_assistant_not_successful"
+    assert caught.value.observation.error_present is True
+    assert caught.value.observation.error_class == "malformed"
+    assert caught.value.observation.stop_reason == reason
 
 
 def _produce_cli_log(run):
@@ -2858,7 +2901,10 @@ def test_retirement_attempt_receipts_fail_closed(tmp_path, monkeypatch, failure)
 
 
 @pytest.mark.parametrize("poll_pass", [1, 2])
-def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(tmp_path, poll_pass):
+@pytest.mark.parametrize("reason,error", [("error", None), ("stop", []), ("stop", False)])
+def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(
+    tmp_path, poll_pass, reason, error
+):
     probe = _provider_probe()
     operation, entries, items = _provider_reply(probe)
     entries[2:2] = [
@@ -2890,7 +2936,8 @@ def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(tmp_path, po
     ]
     entries[-1]["parentId"] = "tool-entry"
     entries[-1]["message"].update(
-        stopReason="error",
+        stopReason=reason,
+        errorMessage=error,
         diagnostics=[
             {
                 "type": "agent_lifecycle_failure",
@@ -2916,6 +2963,9 @@ def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(tmp_path, po
     assert diagnostic["bootstrap_done"] == "unavailable"
     assert receipt["session_id"] == "conversation"
     assert receipt["native_final_position"] == 4
+    assert receipt["stop_reason"] == reason
+    assert receipt["error_present"] is (reason == "stop")
+    assert receipt["error_class"] == ("malformed" if reason == "stop" else "absent")
     assert "FORBIDDEN_SENTINEL" not in text
     previous = json.loads((tmp_path / "kernel-seed-native-predicates.json").read_text())
     assert previous["observation_state"] == "previous_poll"

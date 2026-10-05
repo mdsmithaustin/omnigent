@@ -159,7 +159,7 @@ the private socket for session cleanup. Native Windows launch is rejected
 because Prime's default named pipe is shared.
 
 Prime is a fork of Pi that now develops independently, as described in
-[Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/README.md).
+[Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/README.md).
 The adapters share
 the extension inbox, message conversion, and tool relay transport. Prime has
 its own launch, version check, session resume, and daemon shutdown code.
@@ -299,23 +299,60 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The current provider helper SHA256 is
-`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
-The current MCP helper SHA256 is
-`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
-Its `OWNER_SHA256` admits that exact provider helper. These retirement and
-finite-observation changes have synthetic source checks only. Independent
-source and documentation review remains pending. No live WAIT or MCP run on
-these bytes is claimed.
+The current PR6 source is the pending merge composition of
+`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` and
+`e1aa5176782d2cce6d50ad9e2115977339143a5c`, with the MCP owner pin updated.
+Its provider helper SHA256 is
+`c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
+Its MCP helper SHA256 is
+`b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
+`OWNER_SHA256` admits that exact provider helper. The helper rejects every
+present native-final error, including empty containers, false, zero, and
+whitespace-only strings. Only missing, null, and exact empty-string errors
+are absent. A successful stop reason and matching literal reply remain required.
 
-The preceding provider hash was
+PR5's source repair at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8` received
+independent source and documentation PASS at
+`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That review passed 854 fresh
+context cases and 69 independent controls. The parent failed 21 of those
+controls and passed 48. This evidence covers the separate PR5 source context.
+PR5 retains its historical 20-case root behavior and does not contain PR6's
+paired root-rejection repair or MCP helper.
+
+The current PR6 composition retains the paired root-rejection behavior and
+its root and task-boundary tests from `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`.
+Relayed tools and task operations without a live root binding return a paired
+error result. They do not consume root controls or mutate the root task list.
+Independent source and documentation review of this composition remains pending.
+No actual MCP call or fresh live WAIT qualification on these bytes is claimed.
+The actual MCP gate remains pending. No current base or CI qualification is
+claimed. The Main CLI registry failure remains unwaived until PR8's bootstrap
+repair lands. Full S01-S04 and the 31-requirement program remain incomplete.
+
+The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
+exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
+base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`. Its 925 repository cases
+and seven independent checks are historical evidence for that composition.
+Its provider SHA256 was
+`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`,
+and its MCP SHA256 was
+`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
+The provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
+matched `57293032d4fe2f53bd4c688a14cac4e9fd41e930`. These historical
+identities do not establish current PR5 and PR6 whole-tree identity or runtime
+qualification.
+
+The preceding provider SHA256 was
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
-The preceding MCP hash was
+The paired historical MCP SHA256 was
 `9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
-Those source units passed independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. That verdict and the older ecf1bb and
-ad945 verdicts cover their named source bytes only. They do not qualify the
-current repair or supply fresh runtime proof.
+Their independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that source context only.
+Historical MCP review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
+returned PASS+NOTES for MCP SHA256
+`b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
+Fresh final-byte WAIT and MCP receipts remain required after source or context
+changes.
 
 The later audited `provider-waits-d_tb1jmg` run at
 `4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native
@@ -325,6 +362,16 @@ and filesystem branches and native cause remain unknown. The first case also
 has a sticky `unrelated_user_process_identity_changed` failure with unknown
 cause. Preserve these allocations and historical receipts. Fresh MCP execution
 on the repaired source has not run.
+
+The configured private basic-response attempt at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
+Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
+zero. Settlement failed and the daemon remained retained. Basic Prime response
+is still unverified. The durable public Prime 0.9.6 installation has version and
+hash checks, but no successful model-response baseline. Neither this result nor
+the WAIT failures establish an authentication, provider, kernel, or installation
+cause. Preserve the retained allocations and private receipts.
 
 For a failed reply, inspect the current `<operation>-native-failure.json`.
 The separate predicates receipt marks stale state as `previous_poll`. Missing,
@@ -342,7 +389,8 @@ backend cause, and previous-poll predicates cannot populate the current failure.
 Qualified cleanup admits root, parent, and vnode witnesses before public DELETE
 while the dedicated runner can still perform owned teardown. Public Stop
 remains a separate control qualification and a cleanup attempt after DELETE
-failure. `retirement-attempts.json` records bounded allocation and session
+failure. A successful Stop fallback cannot clear the DELETE failure.
+`retirement-attempts.json` records bounded allocation and session
 bindings, reached phase, status, held identities, no-follow name state, validated
 event flags, and allowlisted branches on every retirement-attempt exit.
 Unknown observations remain explicit. A retained external root or DELETE 200
