@@ -181,6 +181,35 @@ Operators can update those values as provider catalogs change without a code
 release. Workflows deliberately do not carry source-controlled model defaults;
 missing required variables fail or take their existing fail-open path.
 
+The E2E UI Required gate validates all changed-file pages and compares their
+unique filenames with the PR's reported `changed_files` count before classifying
+the change. Classification checks both `filename` and any `previous_filename`.
+Renames into, out of, or within `web/**` require the judge settings and send the
+renamed patch with both paths to the judge. A complete diff with neither path
+under `web/**` passes without judge settings or a gateway request. This includes
+a received empty page with a count of zero and unrelated renames.
+Missing pages, malformed data, failed requests, duplicate filenames, mismatched
+counts, and counts above the files API's 3,000-file limit block the gate.
+Renamed files must have a nonempty string `previous_filename`. Any supplied
+`previous_filename` must also be a nonempty string, regardless of file status.
+The files and count reads are separate. Concurrent PR edits can cause a mismatch
+that requires a retry. Matching counts do not prove an atomic snapshot.
+
+For changes under `web/**`, the gate requires nonblank
+`OMNIGENT_CI_E2E_JUDGE_MODEL`, `GATEWAY_BASE_URL`, and `LLM_API_KEY`, in that order.
+The model is a repository variable. The gateway URL and token are repository
+secrets. No source-controlled defaults apply. The maintainer waiver is evaluated
+only after a valid `needs_test=true` verdict. It cannot bypass configuration,
+gateway, or parsing failures, even though the existing gateway and parser error
+messages suggest applying the skip label. The UI waiver accepts a maintainer's
+latest decisive approval without checking its commit. The separate Maintainer
+Approval gate retains its own freshness requirement.
+
+Run `python3 .github/scripts/e2e_ui_required_test.py -v` to exercise the workflow
+entrypoint offline with synthetic API responses. A nonzero exit, zero tests,
+or a missing `OK` result means verification failed. These tests do not qualify
+live gateway access, token entitlements, or model compatibility.
+
 ## Ad-hoc CLI Defaults
 
 Minimal agent YAMLs that declare neither a harness nor a model now resolve the

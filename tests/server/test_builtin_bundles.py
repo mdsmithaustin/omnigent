@@ -241,6 +241,7 @@ _EXPECTED_BUILTIN_AGENT_IDS = {
     "claude-native-ui": "58a1bc5bf0bba6d31ceeb7661f8d751c",
     "codex-native-ui": "16a06503889b0c3034496821afd41b9e",
     "pi-native-ui": "a1b7caa17404f6716180ba69aa37c592",
+    "prime-native-ui": "c192435531f6a659fc4a0131acb0cea6",
     "opencode-native-ui": "cf65137fc096a61a6434956c92093549",
     "cursor-native-ui": "a5fac3a24c1961af2dbb1cafe0a81425",
     "kiro-native-ui": "cc8fef6623a8792be9c039cf2673ce93",
