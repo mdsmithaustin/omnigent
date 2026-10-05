@@ -122,7 +122,7 @@ def _diagnostic(
         code = traceback.tb_frame.f_code
         entry = approved.get(id(code))
         line = traceback.tb_lineno
-        if entry is not None and entry[0] is code and 1 <= line <= 1_000_000 and line in entry[2]:
+        if entry is not None and entry[0] is code and line in entry[2] and 1 <= line <= 1_000_000:
             frames.append(SafeFrame(entry[1], line))
             if len(frames) > 6:
                 del frames[0]
