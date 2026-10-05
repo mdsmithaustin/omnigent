@@ -8,8 +8,13 @@ is `prime-native-ui`.
 ## Launch and reattach
 
 Install Prime Agent **0.9.6** and `tmux`. This adapter requires that exact Prime
-version on macOS and Linux. Configure Prime's login or `models.json` before
-launching. Omnigent copies `auth.json`, `settings.json`, and `models.json` into
+version on macOS and Linux. Configure Prime's authentication before launching.
+For xAI, run `/login` in Prime and select the xAI subscription or API-key entry.
+Complete the selected flow as described in the
+[pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
+Saved authentication is separate from the current provider and model labels.
+A listed or selected model does not prove that a request will succeed.
+Omnigent copies `auth.json`, `settings.json`, and `models.json` into
 private conversation state without changing the source files.
 Launch is rejected on native Windows because the published default supervisor
 named pipe does not identify a private conversation for scoped shutdown.
@@ -190,8 +195,8 @@ case with configured xAI credentials and Grok 4.7. Finite waits have not been
 rerun on those changed MCP and extension bytes. Each receipt identifies its
 source, so neither result qualifies an untested final commit. Earlier provider
 and MCP source units passed independent cumulative review
-at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The current retirement and finite
-observation repair requires new independent source and documentation review.
+at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. The private composition with
+actual merged PR5 requires fresh independent source and documentation review.
 The verification workflow records
 the current hashes separately from historical PASS+NOTES verdicts.
 Fresh live WAIT and MCP receipts on final integrated bytes remain pending.
@@ -299,35 +304,38 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The current PR6 source is the pending merge composition of
-`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` and
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`, with the MCP owner pin updated.
-Its provider helper SHA256 is
+This private PR6 composition combines accepted PR6
+`1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
+`63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
+Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
+Those results describe the old PR6 context. Fresh independent source and
+documentation review of this composition remains required.
+
+The provider helper SHA256 remains
 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-Its MCP helper SHA256 is
+The MCP helper SHA256 remains
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
-`OWNER_SHA256` admits that exact provider helper. The helper rejects every
-present native-final error, including empty containers, false, zero, and
-whitespace-only strings. Only missing, null, and exact empty-string errors
-are absent. A successful stop reason and matching literal reply remain required.
+`OWNER_SHA256` admits that exact provider helper. Every present native-final
+error rejects, including empty containers, false, zero, and whitespace-only
+strings. Only missing, null, and exact empty-string errors are absent.
+A successful stop reason and matching literal reply remain required.
 
-PR5's source repair at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8` received
-independent source and documentation PASS at
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That review passed 854 fresh
-context cases and 69 independent controls. The parent failed 21 of those
-controls and passed 48. This evidence covers the separate PR5 source context.
-PR5 retains its historical 20-case root behavior and does not contain PR6's
-paired root-rejection repair or MCP helper.
-
-The current PR6 composition retains the paired root-rejection behavior and
-its root and task-boundary tests from `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`.
+The composition preserves PR6's paired root rejection and task-boundary tests.
 Relayed tools and task operations without a live root binding return a paired
 error result. They do not consume root controls or mutate the root task list.
-Independent source and documentation review of this composition remains pending.
-No actual MCP call or fresh live WAIT qualification on these bytes is claimed.
-The actual MCP gate remains pending. No current base or CI qualification is
-claimed. The Main CLI registry failure remains unwaived until PR8's bootstrap
-repair lands. Full S01-S04 and the 31-requirement program remain incomplete.
+PR5's historical standalone 20-case root context does not replace this contract.
+Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
+854 context cases and 69 controls. The parent failed 21 controls and passed 48.
+These historical counts are unchanged and are not fresh composition results.
+
+The actual PR5 merge has the reviewed `fd2b0b4bbaf52cecf7bc34129ef6804c0fdd14c3`
+tree. It brings Main's bootstrap, CRDB, CLI registry, and agent-name index
+repairs, the OAuth prerequisite correction, and two literal-readiness waits.
+The earlier registry failure and Linux empty-readiness failure remain historical.
+Linux misc CI passed at fd2. That result does not qualify this new composition
+or any native runtime. The imported registry fix requires a fresh scoped check.
+No actual MCP call, provider acceptance, or fresh live WAIT qualification is
+claimed. Full S01-S04 and the 31-requirement program remain incomplete.
 
 The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
 exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
@@ -373,6 +381,12 @@ hash checks, but no successful model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
 
+A later sanitized basic-receipt review records the actual basic response as
+FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
+known PID/socket absence do not prove normal/full settlement, a successful
+response, exhaustive descendants, credential-source comparison, removal, or
+future custody. A successful model-response baseline remains unverified.
+
 For a failed reply, inspect the current `<operation>-native-failure.json`.
 The separate predicates receipt marks stale state as `previous_poll`. Missing,
 null, and empty-string errors are absent; non-string errors are malformed and
@@ -413,9 +427,9 @@ for the published runtime's known gaps.
 
 To repeat the declared regular HTTP MCP restart case, run this command from the
 checkout to qualify. Supply the admitted Prime 0.9.6 binary, the kernel
-environment's `bin/python` entry without resolving its symlink, configured xAI
-credentials, and a private evidence directory. Admit `--cooperative-cleanup`
-only under the controlled namespace precondition above.
+environment's `bin/python` entry without resolving its symlink, saved xAI
+subscription OAuth credentials, and a private evidence directory.
+Admit `--cooperative-cleanup` only under the controlled namespace precondition above.
 
 ```sh
 PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup

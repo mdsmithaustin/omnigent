@@ -196,35 +196,48 @@ The combined repair at `ecf1bb4824a28913377109cefc3107f018fdb21a` has an indepen
 scoped source verdict of PASS+NOTES and 143 passing synthetic tests. Its provider
 SHA256 is `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
 This source verdict does not qualify a live provider or complete the roadmap.
-The current PR6 source is the pending merge composition of
-`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` and
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`, with the MCP owner pin updated.
-Its provider helper SHA256 is
+This private PR6 composition combines accepted PR6
+`1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
+`63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
+Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
+Those results describe the old PR6 context. Fresh independent source and
+documentation review of this composition remains required.
+
+The provider helper SHA256 remains
 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-Its MCP helper SHA256 is
+The MCP helper SHA256 remains
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
-`OWNER_SHA256` admits that exact provider helper. The helper rejects every
-present native-final error, including empty containers, false, zero, and
-whitespace-only strings. Only missing, null, and exact empty-string errors
-are absent. A successful stop reason and matching literal reply remain required.
+`OWNER_SHA256` admits that exact provider helper. Every present native-final
+error rejects, including empty containers, false, zero, and whitespace-only
+strings. Only missing, null, and exact empty-string errors are absent.
+A successful stop reason and matching literal reply remain required.
 
-PR5's source repair at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8` received
-independent source and documentation PASS at
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That review passed 854 fresh
-context cases and 69 independent controls. The parent failed 21 of those
-controls and passed 48. This evidence covers the separate PR5 source context.
-PR5 retains its historical 20-case root behavior and does not contain PR6's
-paired root-rejection repair or MCP helper.
-
-The current PR6 composition retains the paired root-rejection behavior and
-its root and task-boundary tests from `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`.
+The composition preserves PR6's paired root rejection and task-boundary tests.
 Relayed tools and task operations without a live root binding return a paired
 error result. They do not consume root controls or mutate the root task list.
-Independent source and documentation review of this composition remains pending.
-No actual MCP call or fresh live WAIT qualification on these bytes is claimed.
-The actual MCP gate remains pending. No current base or CI qualification is
-claimed. The Main CLI registry failure remains unwaived until PR8's bootstrap
-repair lands. Full S01-S04 and the 31-requirement program remain incomplete.
+PR5's historical standalone 20-case root context does not replace this contract.
+Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
+854 context cases and 69 controls. The parent failed 21 controls and passed 48.
+These historical counts are unchanged and are not fresh composition results.
+
+The actual PR5 merge has the reviewed `fd2b0b4bbaf52cecf7bc34129ef6804c0fdd14c3`
+tree. It brings Main's bootstrap, CRDB, CLI registry, and agent-name index
+repairs, the OAuth prerequisite correction, and two literal-readiness waits.
+The earlier registry failure and Linux empty-readiness failure remain historical.
+Linux misc CI passed at fd2. That result does not qualify this new composition
+or any native runtime. The imported registry fix requires a fresh scoped check.
+No actual MCP call, provider acceptance, or fresh live WAIT qualification is
+claimed. Full S01-S04 and the 31-requirement program remain incomplete.
+
+Historical composition failures remain part of the evidence. One prior strict
+clean precheck failed before its owner proceeded. A broad CLI test selection
+started API/server, host, and zygote processes outside that unit's scope and
+reported 442 passes and three failures. Reported reaping did not prove exhaustive
+cleanup. The recorder failure, index.lock failure, initial timing gap, Android
+no-op wrappers, and five CRDB backend skips remain historical limitations.
+The later stopped PR6 attempt lost precheck terminal metadata and its process
+diagnostic raised a Python SyntaxError. Neither attempt supplies this
+composition's verification or changes any runtime acceptance status.
 
 The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
 exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
@@ -276,6 +289,12 @@ is still unverified. The durable public Prime 0.9.6 installation has version and
 hash checks, but no successful model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
+
+A later sanitized basic-receipt review records the actual basic response as
+FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
+known PID/socket absence do not prove normal/full settlement, a successful
+response, exhaustive descendants, credential-source comparison, removal, or
+future custody. A successful model-response baseline remains unverified.
 
 For the current rejected entry, inspect `<operation>-native-failure.json`.
 `<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.

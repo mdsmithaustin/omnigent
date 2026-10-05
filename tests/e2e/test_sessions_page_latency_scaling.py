@@ -23,7 +23,9 @@ Run it directly (no LLM key needed)::
 
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import statistics
 import time
 from pathlib import Path
@@ -86,7 +88,7 @@ def _spread_created_at(db_uri: str) -> None:
     engine.dispose()
 
 
-async def _median_page_latency_ms(db_uri: str) -> float:
+async def _median_page_latency_ms(db_uri: str, *, samples_out: list[float] | None = None) -> float:
     """Boot a real server against *db_uri* and time the sidebar page read.
 
     :param db_uri: Pre-seeded SQLAlchemy URI the server boots against.
@@ -114,6 +116,8 @@ async def _median_page_latency_ms(db_uri: str) -> float:
             # gets fast by returning nothing).
             assert len(resp.json()["data"]) == _PAGE_LIMIT
             samples.append(elapsed_ms)
+        if samples_out is not None:
+            samples_out.extend(samples)
         return statistics.median(samples)
 
 
@@ -136,10 +140,52 @@ async def test_list_sessions_page_latency_does_not_scale_with_corpus(
     _spread_created_at(small_uri)
     _spread_created_at(large_uri)
 
-    small_ms = await _median_page_latency_ms(small_uri)
-    large_ms = await _median_page_latency_ms(large_uri)
+    small_samples: list[float] = []
+    large_samples: list[float] = []
+    small_ms = await _median_page_latency_ms(small_uri, samples_out=small_samples)
+    large_ms = await _median_page_latency_ms(large_uri, samples_out=large_samples)
 
     ratio = large_ms / small_ms
+    if ratio > _MAX_LATENCY_RATIO:
+        evidence = {"sqlite_version": sqlite3.sqlite_version, "ratio": ratio, "corpora": {}}
+        for name, samples in (("small", small_samples), ("large", large_samples)):
+            with sqlite3.connect(tmp_path / f"{name}.db") as db:
+                counts = {
+                    table: db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                    for table in (
+                        "agents",
+                        "conversations",
+                        "conversation_items",
+                        "session_permissions",
+                        "omnigent_conversation_metadata",
+                        "projects",
+                    )
+                }
+                ids = [
+                    row[0]
+                    for row in db.execute(
+                        "SELECT agent_id FROM conversations WHERE workspace_id = 0"
+                        " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                        (_PAGE_LIMIT,),
+                    )
+                ]
+                placeholders = ",".join("?" for _ in ids)
+                plan = db.execute(
+                    "EXPLAIN QUERY PLAN SELECT id, name FROM agents"
+                    f" WHERE workspace_id = ? AND id IN ({placeholders})",
+                    (0, *ids),
+                ).fetchall()
+            evidence["corpora"][name] = {
+                "samples_ms": samples,
+                "counts": counts,
+                "agent_name_plan": plan,
+            }
+        diagnostic_dir = tmp_path / "page-latency"
+        diagnostic_dir.mkdir()
+        (diagnostic_dir / "server.log").write_text(
+            json.dumps(evidence, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(evidence))
     assert ratio <= _MAX_LATENCY_RATIO, (
         f"GET /v1/sessions?limit={_PAGE_LIMIT} median latency scales with the "
         f"total session count: {small_ms:.1f} ms at {_SMALL_SESSIONS} sessions "

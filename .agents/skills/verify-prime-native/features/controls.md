@@ -81,6 +81,8 @@ ends, then its completed result, queued user entry, and fresh final reply in
 order. Match the subscription generation, baseline, root, and binding. Native
 and public replies must agree within the fixed operation deadline. The terminal
 follow-up, living-kernel continuity, and cleanup remain independent requirements.
-The fresh five-case qualification passed with Grok 4.7 on the admitted Prime
-0.9.6 artifact. Earlier failed receipts remain failed. Genuine native `waiting`
-and protection during complete output silence remain separate gaps.
+The historical five-case qualification passed its original checks with Grok 4.7
+on the admitted Prime 0.9.6 artifact. It does not qualify the repaired observer.
+Fresh qualification remains required as described in the linked workflow.
+Earlier failed receipts remain failed. Genuine native `waiting` and protection
+during complete output silence remain separate gaps.
