@@ -808,18 +808,6 @@ class McpServerConnection:
         ToolManager's ``EventLoopThread.run`` schedules
         ``connect()`` and ``close()`` as separate tasks.
 
-        Failure modes are routed through ``_ready_future``:
-
-        - If teardown fails *before* ready is set, the
-          exception is propagated to the caller of
-          :meth:`connect` (or :meth:`_reconnect`) so they see
-          a real error rather than a silently-wedged
-          connection.
-        - If a steady-state failure occurs *after* ready, it
-          is logged here — :meth:`close` already has the
-          ``await lifecycle_task`` it needs to surface a
-          terminal exception, but a mid-flight teardown error
-          shouldn't crash the workflow.
         """
         try:
             async with AsyncExitStack() as stack:
@@ -878,9 +866,6 @@ class McpServerConnection:
         If the cache is fresh, returns cached definitions without
         calling ``tools/list``. Otherwise performs a live
         ``tools/list`` call and updates the cache.
-
-        Must be called after ``_open_session()`` so that
-        ``self._session`` is live.
 
         :returns: List of MCP tool definitions.
         """
