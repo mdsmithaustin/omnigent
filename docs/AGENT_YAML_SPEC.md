@@ -623,7 +623,14 @@ deadline beyond configured SDK and transport timing. A stalled transport exit
 can therefore delay cancellation and subsequent calls.
 
 The runner's session MCP endpoint returns HTTP 400 with code `-32700` for
-invalid JSON. Body-read failures propagate separately from JSON parsing.
+invalid JSON. Body-read failures return a sanitized HTTP 500 and propagate
+for server logging. Cancellation still propagates.
+The endpoint accepts one JSON object. Other valid JSON values return HTTP 200
+with code `-32600` and message `Invalid Request` in the existing partial error
+envelope. It does not implement batches or require full JSON-RPC framing.
+For `tools/call`, non-null `params` must be an object. Other values, including
+`false`, `0`, and `[]`, return HTTP 200 with code `-32602` and message
+`Invalid params`. Absent, null, and empty-object params retain their defaults.
 Schema-discovery failures return HTTP 200 with code `-32000` and a generic
 client message. The runner logs retain the cause.
 

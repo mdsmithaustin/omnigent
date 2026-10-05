@@ -13144,7 +13144,10 @@ def create_runner_app(
         if isinstance(request, _BodyRequest):
             body = await request.json()
         else:
-            raw_body = await request.body()
+            try:
+                raw_body = await request.body()
+            except ValueError as exc:
+                raise RuntimeError("MCP request body read failed") from exc
             try:
                 body = json.loads(raw_body)
             except ValueError:
@@ -13152,7 +13155,21 @@ def create_runner_app(
                     status_code=400,
                     content={"error": {"code": -32700, "message": "Parse error: invalid JSON"}},
                 )
+        if not isinstance(body, dict):
+            return JSONResponse(
+                status_code=200,
+                content={"error": {"code": -32600, "message": "Invalid Request"}},
+            )
         method: str = body.get("method") or ""
+        if (
+            method == "tools/call"
+            and body.get("params") is not None
+            and not isinstance(body["params"], dict)
+        ):
+            return JSONResponse(
+                status_code=200,
+                content={"error": {"code": -32602, "message": "Invalid params"}},
+            )
         params: _JsonObject = body.get("params") or {}
 
         raw_operation = body.get("_omnigent_operation")

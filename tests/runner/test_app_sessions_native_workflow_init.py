@@ -2812,6 +2812,112 @@ async def test_mcp_execute_body_failure_is_not_a_parse_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [b"null", b"[]", b"[{}]", b'""', b'"x"', b"0", b"7", b"0.0", b"1.5", b"false", b"true"],
+)
+async def test_mcp_execute_rejects_non_object_request(payload: bytes) -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool()
+    async with _runner_client(app) as client:
+        response = await client.post("/v1/sessions/shape/mcp/execute", content=payload)
+    assert response.status_code == 200
+    assert response.json() == {"error": {"code": -32600, "message": "Invalid Request"}}
+    assert manager.call_tool_invocations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [[], [1], "", "x", 0, 7, 0.0, 1.5, False, True],
+)
+async def test_mcp_execute_rejects_non_object_call_params(params: Any) -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool()
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions/shape/mcp/execute",
+            json={"method": "tools/call", "params": params},
+        )
+    assert response.status_code == 200
+    assert response.json() == {"error": {"code": -32602, "message": "Invalid params"}}
+    assert manager.call_tool_invocations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"method": "tools/call"},
+        {"method": "tools/call", "params": None},
+        {"method": "tools/call", "params": {}},
+    ],
+)
+async def test_mcp_execute_preserves_empty_call_params(body: dict[str, Any]) -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool()
+    async with _runner_client(app) as client:
+        response = await client.post("/v1/sessions/shape/mcp/execute", json=body)
+    assert response.status_code == 200
+    assert response.json() == {"error": {"code": -32000, "message": "Missing tool name"}}
+    assert manager.call_tool_invocations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_type", [ValueError, OSError, RuntimeError, ClientDisconnect, asyncio.CancelledError]
+)
+async def test_mcp_execute_asgi_receive_failure(failure_type: type[BaseException]) -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool()
+    failure = failure_type("private reader sentinel")
+    messages: list[dict[str, Any]] = []
+    reads = 0
+
+    async def receive() -> dict[str, Any]:
+        nonlocal reads
+        reads += 1
+        if failure_type is ClientDisconnect:
+            return {"type": "http.disconnect"}
+        raise failure
+
+    async def send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/sessions/reader/mcp/execute",
+        "raw_path": b"/v1/sessions/reader/mcp/execute",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 1234),
+        "server": ("test", 80),
+    }
+    expected_type = RuntimeError if failure_type is ValueError else failure_type
+    with pytest.raises(expected_type) as raised:
+        await app(scope, receive, send)
+    assert reads == 1
+    if failure_type is asyncio.CancelledError:
+        assert messages == []
+        assert raised.value is failure
+    else:
+        starts = [message for message in messages if message["type"] == "http.response.start"]
+        assert [message["status"] for message in starts] == [500]
+        assert (
+            b"".join(message.get("body", b"") for message in messages) == b"Internal Server Error"
+        )
+        if failure_type is ValueError:
+            assert str(raised.value) == "MCP request body read failed"
+            assert raised.value.__cause__ is failure
+        elif failure_type is ClientDisconnect:
+            assert str(raised.value) == ""
+        else:
+            assert raised.value is failure
+    assert manager.call_tool_invocations == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure_type", [RuntimeError, ValueError])
 async def test_mcp_execute_sanitizes_schema_failure(
     failure_type: type[Exception],
