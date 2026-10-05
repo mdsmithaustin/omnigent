@@ -367,13 +367,16 @@ def test_capture_rejects_forged_code_identity_and_line(monkeypatch):
 
     monkeypatch.setattr(utils, "_create_engine", trusted)
     clone = FunctionType(trusted.__code__.replace(), globals())
-    for frame, line in [
-        (trusted(None), 999_999),
-        (clone(None), trusted.__code__.co_firstlineno + 1),
+    trusted_frame = trusted(None)
+    clone_frame = clone(None)
+    for frame, offset, line in [
+        (trusted_frame, trusted_frame.f_lasti, 999_999),
+        (trusted_frame, 1_000_000, -1),
+        (clone_frame, clone_frame.f_lasti, trusted.__code__.co_firstlineno + 1),
     ]:
         capture = SessionWorkFailureCapture("deployment")
         failure = TypeError(CANARY)
-        capture.__exit__(TypeError, failure, TracebackType(None, frame, frame.f_lasti, line))
+        capture.__exit__(TypeError, failure, TracebackType(None, frame, offset, line))
         assert asdict(capture.failure) == {
             "message": "Database schema deployment failed.",
             "diagnostics": (
