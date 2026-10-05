@@ -303,6 +303,50 @@ async def test_launch_replaces_stale_running_entry(
     assert reg.get("conv_x", "shell", "s1") is created
 
 
+async def test_native_panes_selects_registered_prime_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ControlledTerminal(TerminalInstance):
+        async def launch(self, *, cwd: Path | None = None) -> None:
+            self.running = True
+
+        async def is_alive(self) -> bool:
+            return self.running
+
+    def _create_terminal(
+        name: str, session_key: str, *_args: object, **_kwargs: object
+    ) -> TerminalCreateResult:
+        return TerminalCreateResult(
+            instance=_ControlledTerminal(
+                name=name,
+                session_key=session_key,
+                socket_path=tmp_path / f"{name}-{session_key}.sock",
+                private_dir=tmp_path / f"{name}-{session_key}",
+                running=False,
+            ),
+            cwd=tmp_path,
+        )
+
+    monkeypatch.setattr(registry_mod, "create_terminal_instance", _create_terminal)
+    reg = TerminalRegistry()
+    for name, session_key in (
+        ("prime-native", "main"),
+        ("prime-native", "other"),
+        ("shell", "main"),
+    ):
+        await reg.launch(
+            "conv_prime",
+            name,
+            session_key,
+            TerminalEnvSpec(command="bash"),
+        )
+
+    assert reg.native_panes() == [
+        ("conv_prime", "prime-native", tmp_path / "prime-native-main.sock")
+    ]
+
+
 def test_transfer_moves_terminal_without_closing_tmux(tmp_path: Path) -> None:
     """
     Terminal transfer changes ownership without touching the instance.
