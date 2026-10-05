@@ -1330,7 +1330,9 @@ def _reply_verdict(
                 raise RuntimeError("native_tool_carrier_malformed")
             if users and index > users[0]:
                 finals.append(entry)
-                if message.get("stopReason") != "stop" or message.get("errorMessage"):
+                error = message.get("errorMessage")
+                absent = error is None or (isinstance(error, str) and error == "")
+                if message.get("stopReason") != "stop" or not absent:
                     raise _NativeReplyFailure(operation, entries, users[0], index, calls, results)
                 if assistant_text(message).strip() != operation.literal:
                     raise RuntimeError("native_assistant_literal_mismatch")
