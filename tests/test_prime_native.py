@@ -1257,9 +1257,13 @@ def test_stop_retains_records_for_an_orphaned_renamed_kernel(
         },
     )
     try:
-        for _ in range(200):
-            if ready.exists() or kernel.poll() is not None:
+        deadline = time.monotonic() + 2
+        while True:
+            assert kernel.poll() is None, "Synthetic kernel exited before readiness"
+            if ready.exists() and ready.read_text() == "ready":
                 break
+            if time.monotonic() >= deadline:
+                pytest.fail("Synthetic kernel did not become ready within 2 seconds")
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(kernel.pid).name()
@@ -1309,9 +1313,13 @@ def test_stop_retains_records_for_an_orphaned_renamed_prime_executable(
         env={**os.environ, **launch.env, "PYTHONHOME": sys.base_prefix},
     )
     try:
-        for _ in range(200):
-            if ready.exists() or child.poll() is not None:
+        deadline = time.monotonic() + 2
+        while True:
+            assert child.poll() is None, "Synthetic Prime executable exited before readiness"
+            if ready.exists() and ready.read_text() == "ready":
                 break
+            if time.monotonic() >= deadline:
+                pytest.fail("Synthetic Prime executable did not become ready within 2 seconds")
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(child.pid).name()
