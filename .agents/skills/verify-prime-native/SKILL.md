@@ -245,26 +245,44 @@ The prompt and ownership repair at `ecf1bb4824a28913377109cefc3107f018fdb21a`
 has an independent scoped source verdict of PASS+NOTES and synthetic controls.
 Its provider SHA256 is
 `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
-PR6's MCP caller, fixture settlement, publisher, and owner pin still need
-migration and independent review. Fresh live WAIT and MCP qualification on final
-integrated bytes remains pending. Changes to the probe, imported application
+PR6's migrated MCP caller, fixture settlement, publisher, and owner pin belong
+to the separate reviewed candidate identified below. Fresh live WAIT and MCP
+qualification on final integrated bytes remains pending. Changes to the probe, imported application
 source, or admitted runtime require fresh qualification. Full S01-S04 and the
 31-requirement program remain incomplete.
 
-The current PR5 provider helper SHA256 is
+The current PR5 provider helper at `a5d0703a57882800a3a0b36dc925a090b4546451`
+has SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
+It ports the provider-only repair from `57293032d4fe2f53bd4c688a14cac4e9fd41e930`.
+The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
+was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
+Its independent source review passed 925 repository cases and seven independent
+checks. Those results do not qualify the current PR5 context or runtime.
+Fresh PR5 source, context, runtime, base-CI, and documentation gates remain pending.
+The original CLI registry omission remains unwaived until the bootstrap repair lands.
+
+The separate private PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`
+has the exact accepted `98309e7c5136c3801bfd227e79289f2d62ed7915` tree.
+Its MCP helper SHA256 is
+`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
+That helper is absent from this PR5 checkout. PR6 remains a separate required
+integration and qualification stage. PR5 production root behavior retains its
+own historical 20-pass context; it does not include PR6's root-rejection repair.
+Fresh final-byte WAIT and MCP receipts remain required in their respective stages.
+
+The preceding provider SHA256 was
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
-Its failure-observation and CLI-alias source unit has independent PASS in the
-private cumulative review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`.
-That review also passed its private documentation context. Independent review
-of the current PR5 context and these documentation changes remains pending.
-Fresh live WAIT qualification on the final integrated bytes remains pending.
+The paired historical MCP SHA256 was
+`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
+Their independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that private source context only.
 
 Historical MCP source review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
 returned PASS+NOTES for MCP SHA256
 `b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
 That private historical record does not establish MCP implementation or admission
-on PR5. The actual PR6 branch needs separate integration, independent review,
-and fresh live MCP qualification.
+on PR5. The separate PR6 candidate requires final integration review and fresh
+live MCP qualification after any source or context change.
 
 The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
 remains FAILED. All five seed cases have false completion records and retained
@@ -272,6 +290,25 @@ allocations. Their native cause and first rejected filesystem entry remain
 unknown. The later absence of 69 recorded PIDs proves only those identities
 absent, not writer settlement or scratch removal. Do not retrospectively remove
 those allocations using current metadata or rewrite their historical receipts.
+
+The later audited `provider-waits-d_tb1jmg` run at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native
+replies failed at kernel seed, before WAIT, with false committed completions.
+All five lack external compact-root retirement authority. The precise DELETE
+and filesystem branches and native cause remain unknown. The first case also
+has a sticky `unrelated_user_process_identity_changed` failure with unknown
+cause. Preserve these allocations and historical receipts. Fresh MCP execution
+on the repaired source has not run.
+
+The configured private basic-response attempt at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
+Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
+zero. Settlement failed and the daemon remained retained. Basic Prime response
+is still unverified. The durable public Prime 0.9.6 installation has version and
+hash checks, but no successful model-response baseline. Neither this result nor
+the WAIT failures establish an authentication, provider, kernel, or installation
+cause. Preserve the retained allocations and private receipts.
 
 For a failed native reply, inspect `<operation>-native-failure.json` separately
 from `<operation>-native-predicates.json`. The latter records
@@ -287,6 +324,49 @@ characters and publishes no native error text, sample, or hash. A class does
 not attest provider authentication or availability. A native failure still
 rejects with `native_assistant_not_successful`. A completed publication records
 `passed: false`. Missing publication cannot authorize success.
+
+The nested `diagnostic` object uses the closed `native_seed_diagnostic_v1`
+schema and the surrounding failure receipt's current session, operation,
+baseline, and entry identities. Only exact diagnostic types, finite failure
+kinds, HTTP status buckets, error-code buckets, and matched same-operation
+ipython status and `isError` fields enter it. Unknown values are replaced by
+explicit finite buckets without their original value or hash. Unknown keys in
+the projected schema reject. Producer payload, message, stdout, stderr,
+traceback, request ID, header, and arbitrary metadata values are not exported.
+
+A diagnostic type identifies its producer catch boundary, not an independently
+proved backend cause. Tool status cannot distinguish startup, bootstrap, and
+cell execution. Kernel-ready, protocol-match, and bootstrap flags remain
+`unavailable` because no supported typed producer supplies them here.
+`projection_complete` remains false. Kernel identity receipt presence alone
+is not execution proof. The projection cannot reuse `previous_poll` predicates
+or change the sticky native failure and false completion.
+
+Qualified cleanup admits the original root, parent, and vnode watch before
+public DELETE. DELETE can then use its still-available dedicated runner for
+owned stop and teardown. Public Stop before DELETE can end that runner while
+retaining saved state. Stop remains a separate control qualification. If DELETE
+fails, cleanup still attempts the existing public Stop path and retains its
+idle-expiry predicates and the original failure.
+
+`retirement-attempts.json` is a bounded closed-schema observation on every
+session-retirement attempt exit, including failed admission and unavailable API.
+Each of at most 64 root records binds the allocation, validated session, DELETE
+step, external-root flag, and admitted root and parent identities. It records
+the reached phase, HTTP status, held-identity matches, no-follow name state,
+validated event flags, and an allowlisted branch. Null and `unobserved` fields
+mean that no observation was established. No body, exception text, directory
+content, alias target, or credential material enters these records.
+A missing receipt or receipt-write failure cannot authorize cleanup.
+
+A 200 response proves best-effort conversation deletion. Only the existing
+combined original-vnode `NOTE_DELETE`, name-absence, parent, and root checks
+admit retirement. Offline runners, failed teardown, and retained external roots
+remain failed. There is no manual external-root reclamation or replacement
+retirement authority. Empty census, writer and reader closure, socket and
+fixture settlement, captures, sticky errors, and committed completion after
+owner exit remain required. The cooperative namespace grant does not exclude
+hostile same-UID writers in the final check/syscall window.
 
 The owner admits only `data/logs/cli/latest-cli.log` as a metadata-only alias.
 Inspect `runtime-cli-alias-capture.json` and `runtime-cli-alias-remove.json`.

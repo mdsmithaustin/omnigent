@@ -134,7 +134,9 @@ Conversation state lives under `$OMNIGENT_DATA_DIR/prime-native/`, or
 its own Prime configuration, temporary directory, daemon socket, and saved
 sessions. When that socket path would exceed the Unix limit, Omnigent uses a
 private digest directory under `/tmp/ogp-<uid>/`. Stop retains saved
-sessions; deleting the conversation removes its adapter state after shutdown.
+sessions. Conversation DELETE attempts adapter-state removal after shutdown.
+Runner cleanup is best effort. A successful response can leave state when the
+runner is unavailable or removal fails; it does not prove observed retirement.
 
 Startup and host maintenance stop orphaned Prime runtimes whose recorded owner
 is dead in the same process namespace and boot. A live terminal protects its
@@ -245,18 +247,78 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-The current provider helper SHA256 is
+The current PR5 provider helper at `a5d0703a57882800a3a0b36dc925a090b4546451`
+has SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
+It ports the provider-only repair from `57293032d4fe2f53bd4c688a14cac4e9fd41e930`.
+The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
+was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
+Its independent source review passed 925 repository cases and seven independent
+checks. Those results do not qualify the current PR5 context or runtime.
+Fresh PR5 source, context, runtime, base-CI, and documentation gates remain pending.
+The original CLI registry omission remains unwaived until the bootstrap repair lands.
+
+The separate private PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1`
+has the exact accepted `98309e7c5136c3801bfd227e79289f2d62ed7915` tree.
+Its MCP helper SHA256 is
+`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
+That helper is absent from this PR5 checkout. PR6 remains a separate required
+integration and qualification stage. PR5 production root behavior retains its
+own historical 20-pass context; it does not include PR6's root-rejection repair.
+Fresh final-byte WAIT and MCP receipts remain required in their respective stages.
+
+The preceding provider SHA256 was
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
-Its source unit passed independent review in the private cumulative context at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the current PR5
-context and documentation remains pending. PR6 integration and review remain
-separate. Fresh live WAIT and MCP receipts on final integrated bytes are required.
+The paired historical MCP SHA256 was
+`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
+Their independent cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that private source context only.
+
+The later audited `provider-waits-d_tb1jmg` run at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native
+replies failed at kernel seed, before WAIT, with false committed completions.
+All five lack external compact-root retirement authority. The precise DELETE
+and filesystem branches and native cause remain unknown. The first case also
+has a sticky `unrelated_user_process_identity_changed` failure with unknown
+cause. Preserve these allocations and historical receipts. Fresh MCP execution
+on the repaired source has not run.
+
+The configured private basic-response attempt at
+`4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
+`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
+Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
+zero. Settlement failed and the daemon remained retained. Basic Prime response
+is still unverified. The durable public Prime 0.9.6 installation has version and
+hash checks, but no successful model-response baseline. Neither this result nor
+the WAIT failures establish an authentication, provider, kernel, or installation
+cause. Preserve the retained allocations and private receipts.
 
 For a failed reply, inspect the current `<operation>-native-failure.json`.
 The separate predicates receipt marks stale state as `previous_poll`. Missing,
 null, and empty-string errors are absent; non-string errors are malformed and
 present. The bounded failure observation contains no native error text, sample,
 or hash. Its coarse class does not establish provider authentication or cause.
+
+The failure receipt's nested `diagnostic` uses a closed finite schema. It
+projects known structured diagnostic types, kinds, status and code buckets,
+and matched same-operation ipython status and `isError`. It exports no raw
+payload or unknown-value hash. Startup, protocol, and bootstrap flags remain
+unavailable without a typed producer. Diagnostic categories do not attest the
+backend cause, and previous-poll predicates cannot populate the current failure.
+
+Qualified cleanup admits root, parent, and vnode witnesses before public DELETE
+while the dedicated runner can still perform owned teardown. Public Stop
+remains a separate control qualification and a cleanup attempt after DELETE
+failure. A successful Stop fallback cannot clear the DELETE failure.
+`retirement-attempts.json` records bounded allocation and session
+bindings, reached phase, status, held identities, no-follow name state, validated
+event flags, and allowlisted branches on every retirement-attempt exit.
+Unknown observations remain explicit. A retained external root or DELETE 200
+without the combined removal witness cannot qualify retirement. There is no
+manual external-root reclamation. Sticky errors, complete settlement, captures,
+and owner exit before committed publication remain required. The cooperative
+namespace precondition still leaves hostile same-UID final-syscall interference
+BLOCKED. See the verification skill for the exact finite observation contract.
+
 The owner captures the expected CLI log alias as metadata only, then removes
 it only after writer settlement and matching identity checks. See the
 [ownership and failure contract](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
