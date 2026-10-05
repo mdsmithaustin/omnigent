@@ -55,7 +55,22 @@ A successful command prints one JSON object. For split SQLite, the result is:
 
 Exit zero means the committed shape passed inspection through a new connection.
 The result does not certify actor enrollment or an admission fence.
-Failures print a bounded error without the URI or raw driver diagnostics.
+Failures leave stdout empty and print one JSON object to stderr, without the URI
+or raw driver diagnostics. Known refusals keep the `error` field alone and exit 1.
+Invalid arguments or a missing URI exit 2.
+
+Unexpected failures also include `diagnostics`. Each record names the boundary
+as `deployment`, `dispose`, or `cli`, a fixed error category, and approved code
+locations with line numbers. The records contain no exception messages, paths,
+source text, arguments, SQL, local variables, or cause chains. Unknown exception
+types use the category `other`.
+
+Keep this JSON when reporting a deployment bug. It contains at most three records
+in failure order, with at most six approved locations per record. A `truncated`
+value of `true` means capture reached a traceback or record limit. Unexpected
+error JSON stays below 4,096 UTF-8 bytes. If cleanup also fails, its record follows
+the operation's record. If every failure is expected, the last cleanup refusal
+determines the error message.
 
 Python deployment callers can use the same managed operation:
 
@@ -71,6 +86,10 @@ result = deploy_session_work_schema(
 
 The operation owns and disposes an uncached engine on success and failure.
 It retains the managed engine's pooling, token-refresh, and CRDB transaction preparation.
+Catch `SessionWorkDeploymentError` from `omnigent.db.utils` to inspect its
+immutable `diagnostics` tuple. Each diagnostic provides `boundary`, `kind`,
+`frames`, and `truncated`. Each frame provides `code` and `line`. The public error
+does not retain the original exception through its cause or context.
 
 ## Retry an interrupted deployment
 
@@ -119,13 +138,15 @@ Schema deployment does not qualify those future writers.
 Run the migration and deployment tests from the repository root:
 
 ```sh
-uv run --no-sync pytest -q tests/db/test_migration_session_work.py tests/db/test_session_work_deployment.py tests/db/test_session_work_catalog.py
+uv run --no-sync pytest -q tests/db/test_migration_session_work.py tests/db/test_session_work_deployment.py tests/db/test_session_work_catalog.py tests/db/test_session_work_failure.py
 ```
 
 A nonzero exit, zero collected cases, or an absent passing summary fails this check.
 Without `OMNIGENT_TEST_DB_URI`, the suite uses fresh SQLite files.
 CRDB-only and MySQL-only cases explicitly skip. Those skips are missing server coverage.
 Recorded catalog tests exercise verification logic without connecting to a database.
+The failure tests use temporary SQLite files and injected failures. They check
+Python errors, CLI JSON, disposal, stream restoration, and credential redaction.
 
 For server qualification, supply `OMNIGENT_TEST_DB_URI` through test secrets and run
 the same command separately against each required backend.

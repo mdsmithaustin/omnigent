@@ -9,6 +9,13 @@ import os
 import sys
 from dataclasses import asdict
 
+from omnigent_session_work_failure import (
+    DEPLOYMENT_ERROR_MESSAGE,
+    ExpectedSchemaFailure,
+    SessionWorkFailureCapture,
+    _combine_failures,
+)
+
 
 class DeploymentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -26,28 +33,27 @@ def main() -> int:
     if not uri:
         print('{"error": "Database URI environment variable is missing."}', file=sys.stderr)
         return 2
-    try:
-        # Driver and Alembic diagnostics can include connection credentials.
-        with (
-            open(os.devnull, "w") as diagnostics,
-            contextlib.redirect_stdout(diagnostics),
-            contextlib.redirect_stderr(diagnostics),
-        ):
-            from omnigent.db.utils import (
-                SessionWorkDeploymentError,
-                deploy_session_work_schema,
-            )
+    invocation = SessionWorkFailureCapture("cli")
+    streams = SessionWorkFailureCapture("cli")
+    with streams:
+        try:
+            with (
+                open(os.devnull, "w") as diagnostics,
+                contextlib.redirect_stdout(diagnostics),
+                contextlib.redirect_stderr(diagnostics),
+                invocation,
+            ):
+                from omnigent.db.utils import deploy_session_work_schema
 
-            try:
                 result = deploy_session_work_schema(uri, role=args.role, target=args.target)
-            except SessionWorkDeploymentError as exc:
-                error = str(exc)
-            else:
-                error = None
-    except Exception:  # noqa: BLE001 - the operator must not print raw diagnostics
-        error = "Database schema deployment failed."
-    if error is not None:
-        print(json.dumps({"error": error}), file=sys.stderr)
+        except OSError:
+            raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+    failure = _combine_failures(invocation.failure, streams.failure)
+    if failure is not None:
+        payload: dict[str, object] = {"error": failure.message}
+        if failure.diagnostics:
+            payload["diagnostics"] = [asdict(item) for item in failure.diagnostics]
+        print(json.dumps(payload), file=sys.stderr)
         return 1
     print(json.dumps(asdict(result)))
     return 0

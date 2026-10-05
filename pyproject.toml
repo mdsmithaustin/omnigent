@@ -448,6 +448,7 @@ omnigent-slack = { path = "integrations/slack", editable = true }
 
 [tool.setuptools]
 include-package-data = true
+py-modules = ["omnigent_session_work_failure"]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -1,5 +1,3 @@
-"""Recorded native catalogs exercise verification without a database server."""
-
 from __future__ import annotations
 
 import copy

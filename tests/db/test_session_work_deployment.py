@@ -1,5 +1,3 @@
-"""Exercise deployment against independent, initially unmigrated databases."""
-
 from __future__ import annotations
 
 import json

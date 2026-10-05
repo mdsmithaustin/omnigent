@@ -17,8 +17,10 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 from sqlalchemy import Engine, Index, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 
 from omnigent.db.query_context import query_name_scope
+from omnigent_session_work_failure import ExpectedSchemaFailure
 
 _logger = logging.getLogger(__name__)
 
@@ -49,13 +51,15 @@ def _parse_crdb_server_version(raw: str) -> Version:
     """Parse and validate a CockroachDB server version string."""
     match = re.search(r"CockroachDB(?: \w+)? v(\d+\.\d+\.\d+)", raw)
     if match is None:
-        raise RuntimeError(f"Could not determine the CockroachDB version from {raw!r}.")
+        raise ExpectedSchemaFailure(f"Could not determine the CockroachDB version from {raw!r}.")
     try:
         version = Version(match.group(1))
     except InvalidVersion as exc:
-        raise RuntimeError(f"CockroachDB returned an invalid version string: {raw!r}.") from exc
+        raise ExpectedSchemaFailure(
+            f"CockroachDB returned an invalid version string: {raw!r}."
+        ) from exc
     if version < CRDB_MINIMUM_VERSION:
-        raise RuntimeError(
+        raise ExpectedSchemaFailure(
             f"CockroachDB {version} is unsupported. Omnigent requires "
             f"CockroachDB {CRDB_MINIMUM_VERSION} or newer."
         )
@@ -84,7 +88,7 @@ def _verify_crdb_read_committed(engine: Engine, version: Version) -> None:
             " Enable it with `SET CLUSTER SETTING "
             "sql.txn.read_committed_isolation.enabled = true;`, then restart Omnigent."
         )
-    raise RuntimeError(
+    raise ExpectedSchemaFailure(
         f"CockroachDB {version} did not honor READ COMMITTED isolation "
         f"(effective isolation: {effective!r}). Omnigent requires READ COMMITTED."
         f"{setting_hint}"
@@ -138,7 +142,7 @@ def _start_or_resume_crdb_bootstrap(
     }
     if not marker_exists:
         if existing_tables:
-            raise RuntimeError(
+            raise ExpectedSchemaFailure(
                 "CockroachDB contains tables but has no supported Omnigent schema revision. "
                 "Use a new empty database; PostgreSQL migrations and partial CRDB migration "
                 "attempts cannot be upgraded safely."
@@ -191,7 +195,7 @@ def _start_or_resume_crdb_bootstrap(
                 },
             )
         return
-    raise RuntimeError(
+    raise ExpectedSchemaFailure(
         "CockroachDB has an invalid Omnigent bootstrap marker or unexpected tables. "
         "Use a new empty database rather than stamping an unknown partial schema."
     )
@@ -250,7 +254,7 @@ def _repair_and_verify_crdb_model_indexes(engine: Engine, version: Version) -> N
         if index.name is not None and not verified.has_index(table_name, index.name)
     ]
     if still_missing:
-        raise RuntimeError(
+        raise ExpectedSchemaFailure(
             "CockroachDB schema bootstrap did not create expected indexes: "
             + ", ".join(still_missing)
         )
@@ -293,7 +297,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
     if current is not None:
         _verify_db_revision_is_supported(db_uri, current, head)
         if not _crdb_revision_is_supported(db_uri, current, head):
-            raise RuntimeError(
+            raise ExpectedSchemaFailure(
                 f"CockroachDB schema revision {current!r} predates Omnigent's CRDB "
                 f"baseline {CRDB_BASELINE_REVISION!r}. Use a new empty database."
             )
@@ -318,7 +322,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                 _apply_session_work_schema(engine)
             missing = expected - set(inspect(engine).get_table_names())
             if missing:
-                raise RuntimeError(
+                raise ExpectedSchemaFailure(
                     "CockroachDB schema bootstrap did not create expected tables: "
                     + ", ".join(sorted(missing))
                 )
@@ -330,7 +334,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                 command.stamp(config, head)
                 connection.commit()
             if _get_current_db_revision(engine) != head:
-                raise RuntimeError(
+                raise ExpectedSchemaFailure(
                     "CockroachDB schema bootstrap did not stamp the expected Alembic head "
                     f"{head!r}. The bootstrap marker was retained for a safe retry."
                 )
@@ -348,19 +352,23 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
         # errors land in logs and deployment consoles with broader read
         # access than the database credential itself.
         safe_uri = make_url(db_uri).render_as_string(hide_password=True)
+        migration_failure = (
+            "CockroachDB schema migration failed "
+            f"(found revision {current!r}, expected {head!r}). "
+            "Take a backup, then run\n\n"
+            f"    omnigent debug db-upgrade {safe_uri!r}\n\n"
+            "to inspect or retry the migration manually."
+        )
         try:
             _run_migrations(engine, db_uri)
+        except (ExpectedSchemaFailure, SQLAlchemyError) as exc:
+            raise ExpectedSchemaFailure(migration_failure) from exc
         except Exception as exc:
-            raise RuntimeError(
-                "CockroachDB schema migration failed "
-                f"(found revision {current!r}, expected {head!r}). "
-                "Take a backup, then run\n\n"
-                f"    omnigent debug db-upgrade {safe_uri!r}\n\n"
-                "to inspect or retry the migration manually."
-            ) from exc
+            raise RuntimeError(migration_failure) from exc
+
         migrated = _get_current_db_revision(engine)
         if migrated != head:
-            raise RuntimeError(
+            raise ExpectedSchemaFailure(
                 "CockroachDB schema migration did not reach head "
                 f"(started at {current!r}, now at {migrated!r}, expected {head!r}). "
                 "Take a backup, then run\n\n"
@@ -373,6 +381,6 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
     if _CRDB_BOOTSTRAP_MARKER_TABLE in tables:
         missing = expected - set(inspect(engine).get_table_names())
         if missing:
-            raise RuntimeError("CockroachDB bootstrap is missing expected tables.")
+            raise ExpectedSchemaFailure("CockroachDB bootstrap is missing expected tables.")
         _repair_and_verify_crdb_model_indexes(engine, version)
     _finish_crdb_bootstrap(engine, version)

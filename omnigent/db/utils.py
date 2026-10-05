@@ -19,7 +19,15 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 from sqlalchemy import Engine, create_engine, event, inspect, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import DBAPIError, NoSuchModuleError
+from sqlalchemy.exc import DBAPIError, NoSuchModuleError, SQLAlchemyError
+
+from omnigent_session_work_failure import (
+    DEPLOYMENT_ERROR_MESSAGE,
+    ExpectedSchemaFailure,
+    SessionWorkDeploymentError,
+    SessionWorkFailureCapture,
+    _combine_failures,
+)
 
 if TYPE_CHECKING:
     from alembic.config import Config
@@ -233,9 +241,9 @@ def _env_int(name: str, default: int, *, minimum: int) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise RuntimeError(f"{name} must be an integer, got {raw!r}.") from exc
+        raise ExpectedSchemaFailure(f"{name} must be an integer, got {raw!r}.") from exc
     if value < minimum:
-        raise RuntimeError(f"{name} must be at least {minimum}, got {raw!r}.")
+        raise ExpectedSchemaFailure(f"{name} must be at least {minimum}, got {raw!r}.")
     return value
 
 
@@ -247,9 +255,9 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
     try:
         value = float(raw)
     except ValueError as exc:
-        raise RuntimeError(f"{name} must be a number, got {raw!r}.") from exc
+        raise ExpectedSchemaFailure(f"{name} must be a number, got {raw!r}.") from exc
     if value < minimum:
-        raise RuntimeError(f"{name} must be at least {minimum}, got {raw!r}.")
+        raise ExpectedSchemaFailure(f"{name} must be at least {minimum}, got {raw!r}.")
     return value
 
 
@@ -366,7 +374,7 @@ def _create_engine(db_uri: str) -> Engine:
         engine = create_engine(db_uri, **engine_kwargs)
     except (ImportError, NoSuchModuleError) as exc:
         if is_crdb:
-            raise RuntimeError(
+            raise ExpectedSchemaFailure(
                 "CockroachDB support requires the optional dependencies. "
                 "Install them with `pip install 'omnigent[cockroachdb]'`."
             ) from exc
@@ -538,10 +546,6 @@ class VerifiedSessionWorkSchema:
     verified_objects: tuple[str, ...]
 
 
-class SessionWorkDeploymentError(RuntimeError):
-    """A bounded operator error that contains no URI or driver exception."""
-
-
 def _apply_session_work_schema(engine: Engine) -> None:
     from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
 
@@ -567,53 +571,80 @@ def deploy_session_work_schema(
     objects refuse deployment. Retries preserve rows and add only missing DDL.
     All raised deployment errors omit credentials and driver exception details.
     """
-    from omnigent.db.cockroachdb import _CRDB_BOOTSTRAP_MARKER_TABLE
-    from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
-
-    if role not in ("split-ap", "shared") or target != revision.REVISION:
-        raise SessionWorkDeploymentError("Invalid role or schema target.")
+    deployment = SessionWorkFailureCapture("deployment")
+    disposal = SessionWorkFailureCapture("dispose")
+    engine = None
     try:
-        db_uri = normalize_database_url(db_uri)
-        backend = make_url(db_uri).get_backend_name()
-        if backend not in {"sqlite", "postgresql", "mysql", "cockroachdb"}:
-            raise SessionWorkDeploymentError("Unsupported database backend.")
-        if _get_head_db_revision(db_uri) != target:
-            raise SessionWorkDeploymentError("Schema target does not match artifact head.")
-        engine = _create_engine(db_uri)
-        try:
-            with query_name_scope("omnigent.database.deploy_session_work_schema"):
-                if role == "split-ap":
-                    inspector = inspect(engine)
-                    objects = set(inspector.get_table_names()) | set(inspector.get_view_names())
-                    if backend in {"postgresql", "cockroachdb"}:
-                        objects.update(inspector.get_materialized_view_names())
-                    if objects & {"alembic_version", _CRDB_BOOTSTRAP_MARKER_TABLE}:
-                        raise SessionWorkDeploymentError(
-                            "Split AP target contains shared history."
+        with deployment:
+            from alembic.util import CommandError
+
+            from omnigent.db.cockroachdb import _CRDB_BOOTSTRAP_MARKER_TABLE
+            from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
+
+            try:
+                if role not in ("split-ap", "shared") or target != revision.REVISION:
+                    raise SessionWorkDeploymentError("Invalid role or schema target.")
+                db_uri = normalize_database_url(db_uri)
+                try:
+                    backend = make_url(db_uri).get_backend_name()
+                except ValueError:
+                    raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+                if backend not in {"sqlite", "postgresql", "mysql", "cockroachdb"}:
+                    raise SessionWorkDeploymentError("Unsupported database backend.")
+                try:
+                    head = _get_head_db_revision(db_uri)
+                except (OSError, CommandError):
+                    raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+                if head != target:
+                    raise SessionWorkDeploymentError("Schema target does not match artifact head.")
+                try:
+                    engine = _create_engine(db_uri)
+                except ImportError:
+                    raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+                with query_name_scope("omnigent.database.deploy_session_work_schema"):
+                    if role == "split-ap":
+                        inspector = inspect(engine)
+                        objects = set(inspector.get_table_names()) | set(
+                            inspector.get_view_names()
                         )
-                    _apply_session_work_schema(engine)
-                else:
-                    with engine.connect() as connection:
-                        revision.preflight(connection)
-                    _initialize_or_verify_schema(engine, db_uri)
-                    with engine.connect() as connection:
-                        revision.verify(connection)
-                    if _get_current_db_revision(engine) != target:
-                        raise SessionWorkDeploymentError("Shared revision verification failed.")
-                return VerifiedSessionWorkSchema(
-                    role=role,
-                    target=target,
-                    backend=engine.dialect.name,
-                    verified_objects=revision.verified_objects(),
-                )
-        finally:
-            engine.dispose()
-    except SessionWorkDeploymentError:
-        raise
-    except revision.SchemaDriftError as exc:
-        raise SessionWorkDeploymentError(str(exc)) from None
-    except Exception:  # noqa: BLE001 - driver errors may contain credentials
-        raise SessionWorkDeploymentError("Database schema deployment failed.") from None
+                        if backend in {"postgresql", "cockroachdb"}:
+                            objects.update(inspector.get_materialized_view_names())
+                        if objects & {"alembic_version", _CRDB_BOOTSTRAP_MARKER_TABLE}:
+                            raise SessionWorkDeploymentError(
+                                "Split AP target contains shared history."
+                            )
+                        _apply_session_work_schema(engine)
+                    else:
+                        with engine.connect() as connection:
+                            revision.preflight(connection)
+                        _initialize_or_verify_schema(engine, db_uri)
+                        with engine.connect() as connection:
+                            revision.verify(connection)
+                        if _get_current_db_revision(engine) != target:
+                            raise SessionWorkDeploymentError(
+                                "Shared revision verification failed."
+                            )
+                    result = VerifiedSessionWorkSchema(
+                        role=role,
+                        target=target,
+                        backend=engine.dialect.name,
+                        verified_objects=revision.verified_objects(),
+                    )
+            except revision.SchemaDriftError as exc:
+                raise SessionWorkDeploymentError(str(exc)) from None
+            except SQLAlchemyError:
+                raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+    finally:
+        if engine is not None:
+            with disposal:
+                try:
+                    engine.dispose()
+                except SQLAlchemyError:
+                    raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+    failure = _combine_failures(deployment.failure, disposal.failure)
+    if failure is not None:
+        raise SessionWorkDeploymentError(failure.message, diagnostics=failure.diagnostics)
+    return result
 
 
 def _set_alembic_database_url(config: Config, db_uri: str) -> None:
@@ -845,7 +876,7 @@ def _verify_db_revision_is_supported(
     try:
         script.get_revision(current)
     except CommandError as exc:
-        raise RuntimeError(
+        raise ExpectedSchemaFailure(
             "Omnigent database schema is newer than this version of Omnigent "
             f"(found revision {current!r}, latest supported revision {head!r}). "
             "Upgrade Omnigent before using this database."
@@ -895,22 +926,25 @@ def _initialize_or_verify_schema(engine: Engine, db_uri: str) -> None:
             current,
             head,
         )
+        migration_failure = (
+            f"Omnigent database schema is out of date "
+            f"(found revision {current!r}, expected {head!r}) "
+            f"and automatic migration failed. Take a backup of your database, then run\n"
+            f"\n"
+            f"    omnigent debug db-upgrade {db_uri!r}\n"
+            f"\n"
+            f"to inspect or retry the migration manually."
+        )
         try:
             _run_migrations(engine, db_uri)
+        except (ExpectedSchemaFailure, SQLAlchemyError) as exc:
+            raise ExpectedSchemaFailure(migration_failure) from exc
         except Exception as exc:
-            raise RuntimeError(
-                f"Omnigent database schema is out of date "
-                f"(found revision {current!r}, expected {head!r}) "
-                f"and automatic migration failed. Take a backup of your database, then run\n"
-                f"\n"
-                f"    omnigent debug db-upgrade {db_uri!r}\n"
-                f"\n"
-                f"to inspect or retry the migration manually."
-            ) from exc
+            raise RuntimeError(migration_failure) from exc
 
         migrated = _get_current_db_revision(engine)
         if migrated != head:
-            raise RuntimeError(
+            raise ExpectedSchemaFailure(
                 f"Omnigent automatic database migration did not reach head "
                 f"(started at {current!r}, now at {migrated!r}, expected {head!r}). "
                 f"Take a backup of your database, then run\n"

@@ -1,5 +1,3 @@
-"""Immutable Core schema and additive reconciliation for revision mm1a2b3c4d5e."""
-
 from __future__ import annotations
 
 import ast
@@ -78,7 +76,6 @@ def _refuse(table: str, property_name: str) -> None:
 
 
 def _check_expression(expression: str, dialect: str) -> str:
-    """Compare the supported catalog spellings without discarding Boolean grouping."""
     expression = " ".join(expression.lower().split())
     if dialect == "postgresql":
         expression = re.sub(
