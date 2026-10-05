@@ -472,6 +472,142 @@ def test_missing_alembic_head_is_unexpected(monkeypatch):
     assert caught.value.__context__ is None
 
 
+def test_python_missing_migration_directory_retains_safe_evidence(monkeypatch, tmp_path):
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    from alembic.util import CommandError
+
+    missing = tmp_path / CANARY
+    assert not missing.exists()
+    config = Config()
+    config.set_main_option("script_location", str(missing))
+    with pytest.raises(CommandError):
+        ScriptDirectory.from_config(config)
+    engines = []
+    monkeypatch.setattr(utils, "_build_alembic_config", lambda uri: config)
+    monkeypatch.setattr(utils, "_create_engine", lambda uri: engines.append(uri))
+    with pytest.raises(utils.SessionWorkDeploymentError) as caught:
+        utils.deploy_session_work_schema(
+            f"postgresql://{CANARY}:{CANARY}@localhost/{CANARY}",
+            role="split-ap",
+            target="mm1a2b3c4d5e",
+        )
+    error = caught.value
+    assert str(error) == "Database schema deployment failed."
+    assert [(item.boundary, item.kind) for item in error.diagnostics] == [("deployment", "other")]
+    assert "db.utils._get_head_db_revision" in {
+        frame.code for frame in error.diagnostics[0].frames
+    }
+    serialized = json.dumps([asdict(item) for item in error.diagnostics])
+    assert CANARY not in serialized
+    assert str(tmp_path) not in serialized
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert engines == []
+
+
+def test_cli_missing_migration_directory_retains_safe_evidence(tmp_path):
+    missing = tmp_path / CANARY
+    engine_call = tmp_path / "engine-called"
+    result = run_cli(f"""
+import os
+import sys
+from pathlib import Path
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from alembic.util import CommandError
+from omnigent.db import utils
+missing = Path({str(missing)!r})
+assert not missing.exists()
+config = Config()
+config.set_main_option("script_location", str(missing))
+try:
+    ScriptDirectory.from_config(config)
+except CommandError:
+    pass
+else:
+    raise AssertionError("Missing migration directory was accepted.")
+def create_engine(uri):
+    Path({str(engine_call)!r}).write_text("called")
+    raise AssertionError("Engine creation preceded artifact discovery.")
+utils._build_alembic_config = lambda uri: config
+utils._create_engine = create_engine
+os.environ["SCHEMA_TEST_URI"] = {f"postgresql://{CANARY}:{CANARY}@localhost/{CANARY}"!r}
+""")
+    payload = cli_error(result)
+    assert payload["error"] == "Database schema deployment failed."
+    assert [(item["boundary"], item["kind"]) for item in payload["diagnostics"]] == [
+        ("deployment", "other")
+    ]
+    assert "db.utils._get_head_db_revision" in {
+        frame["code"] for frame in payload["diagnostics"][0]["frames"]
+    }
+    assert str(tmp_path) not in result.stderr
+    assert not engine_call.exists()
+
+
+@pytest.mark.parametrize(
+    ("failure_type", "kind"),
+    [(FileNotFoundError, "other"), (PermissionError, "other"), (OSError, "os-error")],
+)
+def test_python_artifact_config_error_retains_safe_evidence(monkeypatch, failure_type, kind):
+    failure = failure_type(f"{CANARY} /private/{CANARY} postgresql://user:{CANARY}@host/db")
+    failure.__cause__ = RuntimeError(f"{CANARY}-cause")
+    failure.__context__ = ValueError(f"{CANARY}-context")
+
+    def fail_config(uri):
+        raise failure
+
+    engines = []
+    monkeypatch.setattr(utils, "_build_alembic_config", fail_config)
+    monkeypatch.setattr(utils, "_create_engine", lambda uri: engines.append(uri))
+    with pytest.raises(utils.SessionWorkDeploymentError) as caught:
+        utils.deploy_session_work_schema("sqlite://", role="split-ap", target="mm1a2b3c4d5e")
+    error = caught.value
+    assert str(error) == "Database schema deployment failed."
+    assert [(item.boundary, item.kind) for item in error.diagnostics] == [("deployment", kind)]
+    assert "db.utils._get_head_db_revision" in {
+        frame.code for frame in error.diagnostics[0].frames
+    }
+    assert CANARY not in json.dumps([asdict(item) for item in error.diagnostics])
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert engines == []
+
+
+@pytest.mark.parametrize(
+    ("failure_type", "kind"),
+    [("FileNotFoundError", "other"), ("PermissionError", "other"), ("OSError", "os-error")],
+)
+def test_cli_artifact_config_error_retains_safe_evidence(tmp_path, failure_type, kind):
+    engine_call = tmp_path / "engine-called"
+    result = run_cli(f"""
+import sys
+from pathlib import Path
+from omnigent.db import utils
+failure = {failure_type}({f"{CANARY} /private/{CANARY} postgresql://user:{CANARY}@host/db"!r})
+failure.__cause__ = RuntimeError({f"{CANARY}-cause"!r})
+failure.__context__ = ValueError({f"{CANARY}-context"!r})
+def fail_config(uri):
+    raise failure
+def create_engine(uri):
+    Path({str(engine_call)!r}).write_text("called")
+    raise AssertionError("Engine creation preceded artifact discovery.")
+utils._build_alembic_config = fail_config
+utils._create_engine = create_engine
+""")
+    payload = cli_error(result)
+    assert payload["error"] == "Database schema deployment failed."
+    assert [(item["boundary"], item["kind"]) for item in payload["diagnostics"]] == [
+        ("deployment", kind)
+    ]
+    assert "db.utils._get_head_db_revision" in {
+        frame["code"] for frame in payload["diagnostics"][0]["frames"]
+    }
+    assert str(tmp_path) not in result.stderr
+    assert not engine_call.exists()
+
+
 def test_pool_refusal_keeps_shared_guidance_and_is_expected_for_deployment(monkeypatch):
     from omnigent_session_work_failure import ExpectedSchemaFailure
 
