@@ -576,8 +576,6 @@ def deploy_session_work_schema(
     engine = None
     try:
         with deployment:
-            from alembic.util import CommandError
-
             from omnigent.db.cockroachdb import _CRDB_BOOTSTRAP_MARKER_TABLE
             from omnigent.db.migrations.schema import mm1a2b3c4d5e as revision
 
@@ -591,10 +589,7 @@ def deploy_session_work_schema(
                     raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
                 if backend not in {"sqlite", "postgresql", "mysql", "cockroachdb"}:
                     raise SessionWorkDeploymentError("Unsupported database backend.")
-                try:
-                    head = _get_head_db_revision(db_uri)
-                except (OSError, CommandError):
-                    raise ExpectedSchemaFailure(DEPLOYMENT_ERROR_MESSAGE) from None
+                head = _get_head_db_revision(db_uri)
                 if head != target:
                     raise SessionWorkDeploymentError("Schema target does not match artifact head.")
                 try:
