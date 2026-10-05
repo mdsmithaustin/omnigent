@@ -3739,16 +3739,8 @@ def test_call_tool_result_model_extra_preserves_mrtr_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
-    """
-    ``_invoke_tool`` raises ``McpElicitationRequired`` when the
-    MCP session returns a ``CallToolResult`` with
-    ``resultType == "input_required"`` in ``model_extra``.
-
-    If this fails: the MRTR detection in ``_invoke_tool`` is broken
-    and the runner will treat an ``InputRequiredResult`` as a normal
-    (empty) tool result, silently skipping the elicitation flow.
-    """
+async def test_call_tool_raises_elicitation_on_input_required() -> None:
+    """call_tool raises McpElicitationRequired with the server's input request and state."""
     config = _make_http_config()
     mrtr_result = _make_input_required_result(
         input_requests={
@@ -3761,7 +3753,6 @@ async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
     )
 
     with _mock_mcp_transport() as mock_session:
-        # Stub session.call_tool to return the MRTR result.
         mock_session.call_tool.return_value = mrtr_result
 
         conn = McpServerConnection(config=config)
@@ -3771,17 +3762,14 @@ async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
             await conn.call_tool("deploy_tool", {"env": "prod"})
 
     exc = exc_info.value
-    # input_requests carries the full elicitation payloads.
     assert "eid_abc" in exc.input_requests, (
         "input_requests must include the elicitation id from the server; "
         "if missing, the Omnigent server can't surface the elicitation to the user"
     )
-    # request_state must be echoed back verbatim on retry.
     assert exc.request_state == "state_xyz", (
         "request_state must match the server's opaque value; "
         "if wrong, the retry will be rejected by the server"
     )
-    # tool_name and arguments are preserved for the retry call.
     assert exc.tool_name == "deploy_tool", (
         "tool_name must be preserved so the retry knows which tool to call"
     )
@@ -3793,16 +3781,9 @@ async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invoke_tool_returns_normally_without_mrtr() -> None:
-    """
-    ``_invoke_tool`` returns the formatted result string when
-    ``model_extra`` does NOT contain ``resultType == "input_required"``.
-
-    If this fails: normal (non-MRTR) tool calls are broken — the
-    function is raising ``McpElicitationRequired`` when it shouldn't.
-    """
+async def test_call_tool_returns_normally_without_mrtr() -> None:
+    """call_tool returns formatted tool output when no input is required."""
     config = _make_http_config()
-    # Normal result — no extra fields triggering MRTR.
     normal_result = CallToolResult.model_validate(
         {
             "content": [{"type": "text", "text": "tool output here"}],
@@ -3818,7 +3799,6 @@ async def test_invoke_tool_returns_normally_without_mrtr() -> None:
 
         result = await conn.call_tool("normal_tool", {"x": 1})
 
-    # Normal path: formatted text returned, no exception.
     assert result == "tool output here", (
         "Normal tool results must be returned as formatted text; "
         "if McpElicitationRequired was raised instead, the MRTR "

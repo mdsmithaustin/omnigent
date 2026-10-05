@@ -622,6 +622,11 @@ resource cleanup finishes, then raises cancellation. Cancellation before
 deadline beyond configured SDK and transport timing. A stalled transport exit
 can therefore delay cancellation and subsequent calls.
 
+The runner's session MCP endpoint returns HTTP 400 with code `-32700` for
+invalid JSON. Body-read failures propagate separately from JSON parsing.
+Schema-discovery failures return HTTP 200 with code `-32000` and a generic
+client message. The runner logs retain the cause.
+
 These connection rules apply to both
 [`RunnerMcpManager`](../omnigent/runner/mcp_manager.py) and
 [`ServerMcpPool`](../omnigent/server/mcp_pool.py). The runner's MRTR route forwards

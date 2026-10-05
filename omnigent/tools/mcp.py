@@ -606,10 +606,6 @@ class McpServerConnection:
     async def call_tool(
         self,
         name: str,
-        # Values are Any because MCP tool arguments are JSON
-        # objects with heterogeneous value types (str, int,
-        # bool, nested dicts, etc.). Matches the MCP SDK's
-        # own ClientSession.call_tool() signature.
         arguments: dict[str, Any],
         session_id: str | None = None,
     ) -> str:
@@ -664,7 +660,7 @@ class McpServerConnection:
         self,
         session: ClientSession,
         name: str,
-        arguments: dict[str, Any],  # JSON values — see call_tool
+        arguments: dict[str, Any],
         session_id: str | None = None,
     ) -> str:
         """
@@ -687,7 +683,6 @@ class McpServerConnection:
         """
         result = await session.call_tool(name=name, arguments=arguments)
 
-        # ── MRTR: detect InputRequiredResult ─────────────────────────
         extras = getattr(result, "model_extra", {}) or {}
         if extras.get("resultType") == "input_required":
             raise McpElicitationRequired(
@@ -788,12 +783,16 @@ class McpServerConnection:
         """
         await self._close_lifecycle()
         loop = asyncio.get_running_loop()
-        self._ready_future = loop.create_future()
-        self._close_event = asyncio.Event()
-        self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
-        await asyncio.shield(self._ready_future)
+        ready: asyncio.Future[list[McpToolDef]] = loop.create_future()
+        close_event = asyncio.Event()
+        self._ready_future = ready
+        self._close_event = close_event
+        self._lifecycle_task = asyncio.create_task(self._run_lifecycle(ready, close_event))
+        await asyncio.shield(ready)
 
-    async def _run_lifecycle(self) -> None:
+    async def _run_lifecycle(
+        self, ready: asyncio.Future[list[McpToolDef]], close_event: asyncio.Event
+    ) -> None:
         """
         Long-lived task that owns the MCP connection's resources.
 
@@ -822,20 +821,9 @@ class McpServerConnection:
           terminal exception, but a mid-flight teardown error
           shouldn't crash the workflow.
         """
-        ready = self._ready_future
-        close_event = self._close_event
-        # Both invariants are set by the connect / reconnect site
-        # immediately before scheduling this task; assert rather
-        # than branch so a regression there fails loud here.
-        assert ready is not None, "ready future not initialized before lifecycle start"
-        assert close_event is not None, "close event not initialized before lifecycle start"
         try:
             async with AsyncExitStack() as stack:
                 read_stream, write_stream = await self._open_transport(stack)
-                # Session-level read timeout applies to initialize(),
-                # list_tools(), and any call_tool() that doesn't pass
-                # its own per-call timeout. Falls back to the MCP SDK
-                # default (no timeout) when config.timeout is None.
                 session_timeout = (
                     timedelta(seconds=self.config.timeout)
                     if self.config.timeout is not None
@@ -854,13 +842,10 @@ class McpServerConnection:
                 await stack.enter_async_context(session)
                 await session.initialize()
                 self._session = session
-                # Fresh transport — drop any unhealthy-transport
-                # signal recorded on the previous connection.
                 self._transport_error = None
                 discovered = await self._discover_or_use_cache()
                 self._discovered_tools = discovered
                 ready.set_result(discovered)
-                # Hold transport + session open until close() signals.
                 # All call_tool() invocations during this window run
                 # on sibling tasks, but they only send/receive on
                 # already-open anyio streams — that does not touch
@@ -869,10 +854,6 @@ class McpServerConnection:
             # ``async with`` exits HERE on this task → cancel scopes
             # opened by stdio_client / sse_client / ClientSession are
             # torn down by the same task that entered them. ✓
-        # Lifecycle task: any failure routes to the ready future on
-        # startup, or to the logger on steady state. Letting an
-        # exception bubble out of the task would leave the ready
-        # future never resolved and connect() would hang forever.
         except asyncio.CancelledError:
             if not ready.done():
                 ready.cancel()
@@ -1669,18 +1650,12 @@ async def _call_tool_with_reconnect(
                 assert ready is not None
                 if not ready.done():
                     await asyncio.shield(ready)
-            # Reconnect first when the previous attempt broke the
-            # session. Inside the try so a reconnect that fails on a
-            # still-recovering network is itself classified and
-            # retried on the next attempt instead of aborting the
-            # whole call.
             if needs_reconnect or conn._session is None:
                 await conn._reconnect()
                 needs_reconnect = False
             session = conn._session
             assert session is not None, "reconnect completed without a session"
             conn._active_session_id = session_id
-            # Invalidate late transport failures from earlier attempts.
             conn._call_serial += 1
             conn._transport_error = None
             try:
@@ -1692,7 +1667,6 @@ async def _call_tool_with_reconnect(
                 raise
             last_exc = exc
             needs_reconnect = True
-            # Last attempt — don't reconnect, just raise.
             if attempt + 1 >= total_tries:
                 break
             delay = _backoff_delay(attempt, retry)
@@ -1719,7 +1693,6 @@ async def _call_tool_with_reconnect(
             )
             await _sleep(delay)
 
-    # All attempts exhausted — re-raise the last connection error.
     assert last_exc is not None
     raise last_exc
 

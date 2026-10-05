@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import pytest
 from mcp.types import CallToolResult, ElicitRequestFormParams
+from starlette.requests import ClientDisconnect, Request
 
 from omnigent.entities.session_resources import SessionResourceView
 from omnigent.harnesses.codex_native.bridge import CODEX_NATIVE_BRIDGE_ID_LABEL_KEY
@@ -2780,6 +2781,89 @@ def test_kimi_auto_create_clears_forwarder_state_before_supervising() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [b"{", b"\xff", b'{"number": ' + b"1" * 5000 + b"}"],
+    ids=["syntax", "unicode", "integer-limit"],
+)
+async def test_mcp_execute_rejects_invalid_json(payload: bytes) -> None:
+    app, _, _, _ = _build_app_with_mcp_tool()
+    async with _runner_client(app) as client:
+        response = await client.post("/v1/sessions/parse/mcp/execute", content=payload)
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": -32700, "message": "Parse error: invalid JSON"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError("Stream consumed"), ClientDisconnect()])
+async def test_mcp_execute_body_failure_is_not_a_parse_error(
+    failure: Exception,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_body(request: Request) -> bytes:
+        raise failure
+
+    app, _, _, _ = _build_app_with_mcp_tool()
+    monkeypatch.setattr(Request, "body", fail_body)
+    async with _runner_client(app) as client:
+        with pytest.raises(type(failure)) as raised:
+            await client.post("/v1/sessions/body/mcp/execute", content=b"{}")
+    assert raised.value is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, ValueError])
+async def test_mcp_execute_sanitizes_schema_failure(
+    failure_type: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool()
+
+    async def fail_schemas(spec: AgentSpec) -> None:
+        raise failure_type("private schema path /internal/secret")
+
+    monkeypatch.setattr(manager, "schemas_for", fail_schemas)
+    async with _runner_client(app) as client:
+        seed = await client.post(
+            "/v1/sessions",
+            json={"session_id": "schema", "agent_id": "0e36e3219954d2deaef06b8e2a936f38"},
+        )
+        assert seed.status_code == 201, seed.text
+        response = await client.post(
+            "/v1/sessions/schema/mcp/execute",
+            json={"method": "tools/list"},
+        )
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32000
+    assert response.json()["error"]["message"].startswith(
+        "Request failed on the runner; see the runner log for details: "
+    )
+    assert "private schema path" not in response.text
+    assert "/internal/secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_execute_retained_operation_reuses_parsed_body() -> None:
+    app, manager, _, _ = _build_app_with_mcp_tool(tool_name="jira__echo")
+    async with _runner_client(app) as client:
+        seed = await client.post(
+            "/v1/sessions",
+            json={"session_id": "retained", "agent_id": "0e36e3219954d2deaef06b8e2a936f38"},
+        )
+        assert seed.status_code == 201, seed.text
+        body = {
+            "method": "tools/call",
+            "params": {"name": "jira__echo", "arguments": {"nonce": "retained"}},
+            "_omnigent_operation": {"id": "operation", "step": "call"},
+        }
+        for _ in range(2):
+            response = await client.post("/v1/sessions/retained/mcp/execute", json=body)
+            assert response.status_code == 200
+            assert response.json() == {"result": {"output": "called jira__echo"}}
+    assert manager.call_tool_invocations == [("jira__echo", {"nonce": "retained"})]
+
+
+@pytest.mark.asyncio
 async def test_mcp_execute_mrtr_recovers_with_exact_session_and_opaque_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2804,14 +2888,20 @@ async def test_mcp_execute_mrtr_recovers_with_exact_session_and_opaque_payload(
 
     monkeypatch.setattr(pending_approvals, "wait_for_user_verdict", approve)
     with controlled_mcp_lifecycle() as sdk:
-        async with httpx.AsyncClient(
-            transport=httpx.MockTransport(receive_event), base_url="http://server"
-        ) as event_client:
+        async with (
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(receive_event), base_url="http://server"
+            ) as event_client,
+            httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+                base_url="http://server",
+            ) as app_client,
+        ):
             manager = RunnerMcpManager(server_client=event_client)
             app = create_runner_app(
                 process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),
                 spec_resolver=resolve,
-                server_client=NullServerClient(),  # type: ignore[arg-type]
+                server_client=app_client,
                 mcp_manager=manager,
             )
             try:
