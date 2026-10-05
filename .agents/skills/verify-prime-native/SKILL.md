@@ -112,8 +112,11 @@ probe still requires the actual runner environment and reaper startup log to
 match each clock profile.
 
 Supply the admitted full Prime 0.9.6 macOS arm64 bundle, the managed kernel's
-`bin/python` entry, and your xAI auth file. To save xAI authentication, use
-`/login` in Prime and complete its xAI subscription or API-key flow. See the
+`bin/python` entry, and an auth file with saved xAI subscription OAuth credentials.
+Use `/login` in Prime, select the xAI subscription entry, and complete the OAuth
+flow. The general Prime CLI supports both subscription and API-key login, but
+this probe requires `xai.type == "oauth"` and rejects API-key authentication with
+`actual_xai_oauth_required`. See the
 [pinned provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
 Current provider and model labels do not establish saved authentication or a
 successful response. Replace the absolute paths below.
