@@ -290,7 +290,7 @@ are installed. A nonzero exit or a test summary with no passing tests fails the
 controlled regression check.
 
 ```sh
-uv run --no-sync pytest tests/server/integration/test_skill_command_admission.py tests/stores/test_skill_command_claims.py -q
+uv run --no-sync pytest tests/server/integration/test_skill_command_admission.py tests/stores/test_skill_command_claims.py tests/runner/test_skill_context_history_resume.py -q
 ```
 
 The maintained driver uses the real Claude CLI, native hooks, runner tunnel,
