@@ -1,0 +1,43 @@
+# no-mistakes push gate for this fork. Gate-control fields are read from main.
+commands:
+  # Mirrors the CI lint job in .github/workflows/lint.yml; corepack runs the pinned pnpm.
+  prepare: >-
+    OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
+    && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
+  lint: "uv run --no-sync pre-commit run --all-files --show-diff-on-failure"
+
+ignore_patterns:
+  - "uv.lock"
+  - "pnpm-lock.yaml"
+  - "omnigent/api/routing/v1/routing_pb2.py"
+  - "omnigent/api/routing/v1/routing_pb2.pyi"
+
+protected_paths:
+  - ".github/workflows/**"
+  - "omnigent/db/migrations/**"
+
+pr:
+  template: .github/pull_request_template.md
+
+ci:
+  revalidate_repairs: true
+
+test:
+  instructions: |
+    Start a local pod with `just dev`, then follow the matching verification skill in .claude/skills
+    (verify-prime-native, <harness>-e2e-dev, or cli-setup-verify). Docs-only changes need no live run.
+
+review:
+  # A slash-free pattern matches the basename at any depth, so "*" covers every changed file.
+  path_instructions:
+    - path: "*"
+      instructions: |
+        Fork seam check. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
+        Run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent` for each edited path; exit 0 means upstream-owned; an HTTP 404 means fork-owned; on any other gh error, report that ownership could not be checked.
+        For each upstream-owned file the change edits, flag fork behavior that could use a new fork-owned file through an existing extension point (harness registry, adapter, config, hook), unnecessary upstream renaming, moves, reordering, or reformatting,
+        changes to signatures or shared types other upstream modules depend on, or fork-only logic spread across the file instead of isolated behind one small, clearly named call site.
+    - path: "*"
+      instructions: |
+        Test value check. For each added or changed test, confirm it calls the code the way real callers do and asserts a concrete expected result.
+        Flag a test that would still pass if the code under test returned None or did nothing, that duplicates coverage an existing test already provides, or that depends on sleeps or wall-clock timing.
+        For each behavior change in non-test code, flag it when no test in the change would fail without it, unless the stated intent or commit message explains why a test is impractical.
