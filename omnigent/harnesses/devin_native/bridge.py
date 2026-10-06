@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from omnigent._platform import stable_user_id
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -50,7 +51,9 @@ if TYPE_CHECKING:
 DEVIN_NATIVE_BRIDGE_DIR_ENV_VAR = "HARNESS_DEVIN_NATIVE_BRIDGE_DIR"
 DEVIN_NATIVE_REQUEST_SESSION_ID_ENV_VAR = "HARNESS_DEVIN_NATIVE_REQUEST_SESSION_ID"
 
-_BRIDGE_ROOT = Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "devin-native"
+_BRIDGE_ROOT = (
+    Path(tempfile.gettempdir()) / f"{NATIVE_TMP_PREFIX}-{stable_user_id()}" / "devin-native"
+)
 
 _TMUX_FILE = "tmux.json"
 _HOOKS_FILE = "hooks.jsonl"

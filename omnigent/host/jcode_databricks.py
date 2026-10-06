@@ -31,6 +31,7 @@ from omnigent.host.databricks_credential import (
     fetch_broker_bearer,
     https_url_on_workspace_host,
 )
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 
 _logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ _JCODE_DATABRICKS_GATEWAY_MODEL_ENV = "OMNIGENT_DATABRICKS_GATEWAY_MODEL"
 # Base dir under which each session gets its own private JCODE_HOME. Keyed by a hash
 # of the session id so a session reuses one home across spawns (its own daemon) rather
 # than leaking a new dir per message.
-_JCODE_RUN_DIR_BASE = "omnigent-jcode-run"
+_JCODE_RUN_DIR_BASE = f"{NATIVE_TMP_PREFIX}-jcode-run"
 
 
 def _jcode_default_model() -> str:

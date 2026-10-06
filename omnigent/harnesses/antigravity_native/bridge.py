@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.native import native_bridge_common
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ _STATE_FILE = "state.json"
 # the tmux/TUI section at the end of this module). Written by the runner after
 # the agy terminal launches; read by the executor's first-turn bootstrap.
 _TMUX_FILE = "tmux.json"
-_BRIDGE_ROOT = Path.home() / ".omnigent" / "antigravity-native"
+_BRIDGE_ROOT = default_user_dir() / "antigravity-native"
 
 # Prefix of the launcher-minted placeholder conversation id (see
 # ``antigravity_native._mint_agy_conversation_id``). agy mints its own real
@@ -158,7 +159,7 @@ def bridge_root() -> Path:
     Tests may monkeypatch :data:`_BRIDGE_ROOT` to isolate bridge files.
 
     :returns: Absolute root for Antigravity-native bridge directories, e.g.
-        ``Path("~/.omnigent/antigravity-native")``.
+        ``Path("~/.omnigent-mdsmithaustin/antigravity-native")``.
     """
     return _BRIDGE_ROOT
 
@@ -214,7 +215,7 @@ def bridge_dir_for_bridge_id(bridge_id: str) -> Path:
 
     :param bridge_id: Opaque bridge id, e.g. ``"bridge_abc123"``.
     :returns: Absolute bridge directory under
-        ``~/.omnigent/antigravity-native``.
+        ``~/.omnigent-mdsmithaustin/antigravity-native``.
     """
     digest = hashlib.sha256(bridge_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest
@@ -441,7 +442,7 @@ def build_mcp_config(
     ``<python> -I -m omnigent.harnesses.claude_native.bridge serve-mcp --bridge-dir <dir>``.
 
     **HOME pinning.** agy spawns this relay as a child. The relay validates its
-    ``--bridge-dir`` against ``bridge_root()`` (``$HOME/.omnigent/antigravity-native``),
+    ``--bridge-dir`` against ``bridge_root()`` under the runner's default user directory,
     which must resolve to the RUNNER's real home where the bridge dir actually
     lives. Pinning ``HOME`` in the relay env keeps that invariant true even when a
     future agy launch path customizes process environment. ``-I`` does not clear
