@@ -12,6 +12,7 @@ from typing import TypeAlias
 
 import yaml
 
+from omnigent.installation_defaults import PROJECT_CONFIG_RELPATH, default_user_dir
 from omnigent.preferences import (
     PreferenceContext,
     PreferenceKey,
@@ -29,8 +30,8 @@ _cwd_missing_warned = False
 _Config: TypeAlias = dict[str, object]
 
 _CONFIG_HOME_ENV_VAR = "OMNIGENT_CONFIG_HOME"
-_GLOBAL_CONFIG_PATH = Path.home() / ".omnigent" / "config.yaml"
-_LOCAL_CONFIG_RELPATH = Path(".omnigent") / "config.yaml"
+_GLOBAL_CONFIG_PATH = default_user_dir() / "config.yaml"
+_LOCAL_CONFIG_RELPATH = PROJECT_CONFIG_RELPATH
 
 
 def global_config_path(default_path: Path | None = None) -> Path:
@@ -88,8 +89,8 @@ def _merge_effective_config(
     A project may select the default harness. Server selection, executables and
     arguments come from user configuration or explicit command-line options.
 
-    :param global_cfg: User-level config (``~/.omnigent/config.yaml``).
-    :param local_cfg: Project-level config (``.omnigent/config.yaml``).
+    :param global_cfg: User-level config (``~/.omnigent-mdsmithaustin/config.yaml``).
+    :param local_cfg: Project-level config (``.omnigent-mdsmithaustin/config.yaml``).
     :returns: The merged effective config dict.
     """
     merged: _Config = {

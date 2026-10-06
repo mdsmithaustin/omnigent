@@ -49,6 +49,8 @@ from rich.console import RenderableType as _RichRenderable
 from rich.text import Text
 from wcwidth import wcswidth
 
+from omnigent_ui_sdk.installation_defaults import DEFAULT_HISTORY_FILE
+
 from ._formatter import FormattedItem, StreamingText, StreamLive, StreamReplace
 from ._linkify import LinkifyingConsole, linkify_ansi
 from ._theme import LIGHT_THEME, TerminalTheme, get_theme
@@ -849,12 +851,8 @@ class TerminalHost:
     :param prompt_marker: Character shown before the cursor.
     :param accent_color: Color for prompt bars and marker.
     :param history_file: Path for persistent input history.
-        Defaults to ``"~/.omnigent_history"`` to match the
-        legacy ``omnigent run`` CLI's location
-        (``omnigent/inner/cli.py:_cli_history_file_path``) so
-        users who flip between legacy and Omnigent mode see the same
-        ↑ / Ctrl+R recall in both. SDK consumers outside
-        omnigent can override.
+        Defaults to ``"~/.omnigent-mdsmithaustin_history"``.
+        An explicit filename overrides the default.
     :param model_name: Shown in the bottom toolbar.
     :param toolbar_hints: Right-side hint segment of the
         bottom toolbar — same shape ``welcome()`` accepts so
@@ -883,7 +881,7 @@ class TerminalHost:
         *,
         prompt_marker: str = "❯",
         accent_color: str = "#F43BA6",
-        history_file: str = "~/.omnigent_history",
+        history_file: str = DEFAULT_HISTORY_FILE,
         model_name: str | None = None,
         toolbar_hints: list[str] | None = None,
         window_title: str | None = None,

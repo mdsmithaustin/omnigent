@@ -5660,7 +5660,7 @@ def test_config_list_warns_about_project_local_user_level_settings(
     value: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    local_path = tmp_path / ".omnigent" / "config.yaml"
+    local_path = tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
     local_path.parent.mkdir()
     local_path.write_text(f"{key}: {value}\n")
     monkeypatch.setattr("omnigent.cli._load_global_config", dict)
@@ -5827,7 +5827,7 @@ def test_save_local_config_migrates_scalar_harness(
 ) -> None:
     """``_save_local_config`` also migrates a scalar harness to the mapping form."""
     monkeypatch.chdir(tmp_path)
-    local_path = tmp_path / ".omnigent" / "config.yaml"
+    local_path = tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
     local_path.parent.mkdir(parents=True)
     local_path.write_text("harness: codex\n", encoding="utf-8")
 
@@ -6023,7 +6023,7 @@ def test_config_set_local_writes_project_config(
 ) -> None:
     """
     ``omnigent config set key=value`` without ``--global`` writes to
-    ``.omnigent/config.yaml`` in the current directory.
+    ``.omnigent-mdsmithaustin/config.yaml`` in the current directory.
 
     :param monkeypatch: Pytest monkeypatch fixture.
     :param tmp_path: Temporary directory used as a stand-in project root.
@@ -6034,7 +6034,7 @@ def test_config_set_local_writes_project_config(
     result = CliRunner().invoke(cli, ["config", "set", "model=my-model"])
 
     assert result.exit_code == 0, result.output
-    local_path = tmp_path / ".omnigent" / "config.yaml"
+    local_path = tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
     assert local_path.exists(), "local config file should have been created"
     cfg = yaml.safe_load(local_path.read_text())
     assert cfg["model"] == "my-model"
