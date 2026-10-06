@@ -35,6 +35,7 @@ import click
 
 from omnigent.host import HOST_FATAL_EXIT_CODE, HOST_SIGTERM_EXIT_CODE
 from omnigent.host.identity import HOST_ID_ENV_VAR, HOST_NAME_ENV_VAR, HOST_TOKEN_ENV_VAR
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.onboarding.sandboxes import types as _sandbox_types
 
 if TYPE_CHECKING:
@@ -268,7 +269,7 @@ _HOST_CONFIG_WRITE_SCRIPT: str = """\
 import base64, json, os, tempfile, yaml
 
 config_home = os.environ.get("OMNIGENT_CONFIG_HOME")
-config_dir = config_home if config_home else os.path.join(os.path.expanduser("~"), ".omnigent")
+config_dir = config_home or os.path.join(os.path.expanduser("~"), __USER_DIRNAME__)
 path = os.path.join(config_dir, "config.yaml")
 marker = os.path.join(config_dir, ".injected_host_config.json")
 existing = {}
@@ -337,7 +338,7 @@ def render_host_config_write_command(host_config: dict[str, object]) -> str:
     """
     Build the remote command that installs *host_config* into the
     sandbox's config directory before ``omnigent host`` starts. The directory
-    is ``$OMNIGENT_CONFIG_HOME`` when truthy, otherwise ``~/.omnigent``, exactly
+    is ``$OMNIGENT_CONFIG_HOME`` when truthy, otherwise ``~/.omnigent-mdsmithaustin``, exactly
     matching :func:`omnigent.onboarding.provider_config._config_path`.
 
     Server-managed replacement semantics: the server OWNS the names/keys it
@@ -376,7 +377,9 @@ def render_host_config_write_command(host_config: dict[str, object]) -> str:
         :meth:`SandboxLauncher.run` or embed in a larger shell script.
     """
     payload = base64.b64encode(json.dumps(host_config).encode()).decode()
-    script = _HOST_CONFIG_WRITE_SCRIPT.replace("__PAYLOAD__", repr(payload))
+    script = _HOST_CONFIG_WRITE_SCRIPT.replace("__USER_DIRNAME__", repr(USER_DIRNAME)).replace(
+        "__PAYLOAD__", repr(payload)
+    )
     return f"python3 -c {shlex.quote(script)}"
 
 
@@ -953,7 +956,7 @@ class SandboxHostLauncher(SandboxLifecycle):
             (empty for an empty workspace). The returned path is the single
             clone directory when exactly one repo is cloned, else the
             workspace root that parents them all.
-        :param host_config: Deployment-supplied ``~/.omnigent/config.yaml``
+        :param host_config: Deployment-supplied ``~/.omnigent-mdsmithaustin/config.yaml``
             content installed into the sandbox's config BEFORE the host starts.
         :param on_stage: Progress observer invoked with ``"cloning"`` and
             ``"starting"``.
@@ -995,7 +998,7 @@ class ExecModelHostLauncher(SandboxHostLauncher, SandboxExecTransport):
         The default is the EXEC model: probe ``$HOME``, create
         ``<HOME>/workspace``, clone each requested repo into it (via
         :meth:`materialize_workspace`), merge any *host_config* into
-        ``~/.omnigent/config.yaml``, and start the host detached
+        ``~/.omnigent-mdsmithaustin/config.yaml``, and start the host detached
         (``setsid``-backgrounded, identity + token in the process
         environment) — all driven through :meth:`run` / :meth:`run_background`.
 

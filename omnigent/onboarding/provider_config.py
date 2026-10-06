@@ -1,9 +1,9 @@
-"""Read/write the kind-typed model-provider config in ``~/.omnigent/config.yaml``.
+"""Read/write the kind-typed model-provider config in ``~/.omnigent-mdsmithaustin/config.yaml``.
 
 For open-source users who route coding agents through a non-Databricks
 endpoint (a vendor API key, a subscription CLI login, a gateway like
 OpenRouter, a local Ollama, or a Databricks profile), the ``providers:``
-block in ``~/.omnigent/config.yaml`` is the source of truth for the
+block in ``~/.omnigent-mdsmithaustin/config.yaml`` is the source of truth for the
 active model selection. Defaults are **per family**: a provider marked
 **``default: true``** is the default for the family/families it serves,
 so a Claude (``anthropic``) default and a Codex (``openai``) default
@@ -52,6 +52,7 @@ from typing import Literal
 from omnigent.cli_invocation import cli_invocation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_aliases import canonicalize_harness
+from omnigent.installation_defaults import default_user_dir
 from omnigent.spec.parser import check_unresolved_env_vars
 from omnigent.util.env_credentials import (
     _ENV_REF_RE,
@@ -589,12 +590,12 @@ def _config_path() -> str:
     rest of the onboarding layer).
 
     :returns: Path to ``config.yaml``, e.g.
-        ``"/home/u/.omnigent/config.yaml"``.
+        ``"/home/u/.omnigent-mdsmithaustin/config.yaml"``.
     """
     config_home = os.environ.get("OMNIGENT_CONFIG_HOME")
     if config_home:
         return os.path.join(config_home, "config.yaml")
-    return os.path.join(os.path.expanduser("~"), ".omnigent", "config.yaml")
+    return str(default_user_dir() / "config.yaml")
 
 
 def _load_config() -> dict[str, object]:
@@ -1096,7 +1097,7 @@ def _parse_provider(name: str, raw: dict[str, object]) -> ProviderEntry:
 
 
 def load_config() -> dict[str, object]:
-    """Load the global ``~/.omnigent/config.yaml`` mapping.
+    """Load the global ``~/.omnigent-mdsmithaustin/config.yaml`` mapping.
 
     Public entry point for callers (e.g. the runtime spawn-env builders)
     that need to pass the parsed config into :func:`load_providers` /
@@ -1117,7 +1118,7 @@ def load_config() -> dict[str, object]:
 def load_providers(config: dict[str, object]) -> dict[str, ProviderEntry]:
     """Parse the ``providers:`` block of *config* into named entries.
 
-    :param config: The parsed ``~/.omnigent/config.yaml`` mapping, e.g.
+    :param config: The parsed ``~/.omnigent-mdsmithaustin/config.yaml`` mapping, e.g.
         ``{"providers": {"anthropic": {"kind": "key", ...}}, "auth": {...}}``.
     :returns: Providers keyed by name, e.g.
         ``{"anthropic": ProviderEntry(...)}``. Empty when no ``providers:``
@@ -1180,7 +1181,7 @@ def provider_credential_env_vars(
     shell command, not a static env var.  ``base_url`` env-refs are omitted
     because the URL is not a credential.
 
-    :param config: The parsed ``~/.omnigent/config.yaml`` mapping.
+    :param config: The parsed ``~/.omnigent-mdsmithaustin/config.yaml`` mapping.
     :param include_dollar_key_refs: Forward dollar-style ``api_key_ref`` entries
         from a saved sandbox profile; defaults to legacy forwarding behavior.
     :returns: Env var names (and their ``OMNIGENT_`` aliases) that provider
@@ -1742,7 +1743,7 @@ def provider_entry_settings(
     """Build a ``{"providers": {name: entry}}`` dict to merge into config.
 
     Packages a single provider entry ready to deep-merge into
-    ``~/.omnigent/config.yaml`` under ``providers:``. When *make_default*
+    ``~/.omnigent-mdsmithaustin/config.yaml`` under ``providers:``. When *make_default*
     is set, the entry carries ``default: true`` — but the caller must still
     clear the flag on any other provider (use :func:`set_default_provider`
     over the merged result), since a deep-merge does not touch siblings.

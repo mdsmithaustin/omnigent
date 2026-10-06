@@ -199,8 +199,10 @@ def test_config_opt_out_defaults_to_home_dot_omnigent(
 ) -> None:
     monkeypatch.delenv("OMNIGENT_CONFIG_HOME", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    (tmp_path / ".omnigent").mkdir()
-    (tmp_path / ".omnigent" / "config.yaml").write_text("telemetry: false\n", encoding="utf-8")
+    (tmp_path / ".omnigent-mdsmithaustin").mkdir()
+    (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
+        "telemetry: false\n", encoding="utf-8"
+    )
 
     assert _config_telemetry_disabled() is True
 

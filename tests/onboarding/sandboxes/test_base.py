@@ -360,13 +360,13 @@ def _materialize(
 ) -> dict[str, object]:
     """Run the command and return the config from its resolved directory."""
     _run_write_command(command, home, config_home=config_home)
-    config_dir = config_home if config_home is not None else home / ".omnigent"
+    config_dir = config_home if config_home is not None else home / ".omnigent-mdsmithaustin"
     with open(config_dir / "config.yaml") as f:
         return yaml.safe_load(f)
 
 
 def test_render_host_config_write_command_creates_config_from_scratch(tmp_path: Path) -> None:
-    """A fresh sandbox (no ~/.omnigent at all) gets the injected config verbatim."""
+    """A fresh sandbox (no ~/.omnigent-mdsmithaustin at all) gets the injected config verbatim."""
     written = _materialize(render_host_config_write_command(_GATEWAY_HOST_CONFIG), tmp_path)
     assert written == _GATEWAY_HOST_CONFIG
 
@@ -387,7 +387,7 @@ def test_render_host_config_write_command_honors_omnigent_config_home(
 
     assert written == _GATEWAY_HOST_CONFIG
     assert (config_home / ".injected_host_config.json").exists()
-    assert not (home / ".omnigent").exists()
+    assert not (home / ".omnigent-mdsmithaustin").exists()
 
 
 def test_render_host_config_write_command_merges_providers_and_replaces_other_keys(
@@ -398,8 +398,8 @@ def test_render_host_config_write_command_merges_providers_and_replaces_other_ke
     provider entries survive, an injected entry of the same name wins
     wholesale, other top-level keys replace, untouched keys persist.
     """
-    (tmp_path / ".omnigent").mkdir()
-    (tmp_path / ".omnigent" / "config.yaml").write_text(
+    (tmp_path / ".omnigent-mdsmithaustin").mkdir()
+    (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         yaml.safe_dump(
             {
                 "providers": {
@@ -453,7 +453,7 @@ def test_materialized_config_routes_pi_to_the_gateway(
 
     from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
 
-    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / ".omnigent"))
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / ".omnigent-mdsmithaustin"))
     entry = default_provider_for_harness(load_config(), "pi")
 
     assert entry is not None
@@ -507,7 +507,7 @@ def test_start_host_without_host_config_writes_nothing() -> None:
 
 
 def _read_marker(home: Path) -> dict[str, object] | None:
-    marker = home / ".omnigent" / ".injected_host_config.json"
+    marker = home / ".omnigent-mdsmithaustin" / ".injected_host_config.json"
     if not marker.exists():
         return None
     return json.loads(marker.read_text())
@@ -523,8 +523,8 @@ def test_render_host_config_write_command_replaces_previously_injected_entries(
     top-level keys are removed before the current payload merges in;
     user-created entries survive.
     """
-    (tmp_path / ".omnigent").mkdir()
-    (tmp_path / ".omnigent" / "config.yaml").write_text(
+    (tmp_path / ".omnigent-mdsmithaustin").mkdir()
+    (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         yaml.safe_dump({"providers": {"mine": {"kind": "key"}}})
     )
     first = {
@@ -549,8 +549,8 @@ def test_render_host_config_write_command_empty_payload_removes_injected_config(
     tmp_path: Path,
 ) -> None:
     """Removing ``host_config`` from server config cleans up on the next run."""
-    (tmp_path / ".omnigent").mkdir()
-    (tmp_path / ".omnigent" / "config.yaml").write_text(
+    (tmp_path / ".omnigent-mdsmithaustin").mkdir()
+    (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         yaml.safe_dump({"host": {"name": "keep-me"}})
     )
 
@@ -574,7 +574,7 @@ def test_render_host_config_write_command_preserves_user_created_entries(
         "server": "https://injected.example.com",
     }
     _materialize(render_host_config_write_command(injected), tmp_path)
-    config_path = tmp_path / ".omnigent" / "config.yaml"
+    config_path = tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
     with open(config_path) as f:
         merged = yaml.safe_load(f)
     merged["providers"]["mine"] = {"kind": "key"}  # user-created, never injected
@@ -604,7 +604,7 @@ def test_render_host_config_write_command_rename_after_user_edit_leaves_no_stale
         ),
         tmp_path,
     )
-    config_path = tmp_path / ".omnigent" / "config.yaml"
+    config_path = tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
     with open(config_path) as f:
         edited = yaml.safe_load(f)
     edited["providers"]["gateway_a"]["base_url"] = "http://user-edited"  # user edit
@@ -635,7 +635,7 @@ def test_render_host_config_write_command_interrupted_write_keeps_complete_file(
     first = {"providers": {"gateway_a": {"kind": "gateway"}}}
     second = {"providers": {"gateway_b": {"kind": "gateway"}}}
     _materialize(render_host_config_write_command(first), tmp_path)
-    config_dir = tmp_path / ".omnigent"
+    config_dir = tmp_path / ".omnigent-mdsmithaustin"
     target = config_dir / target_name
     complete_contents = target.read_bytes()
 
@@ -685,7 +685,7 @@ def test_render_host_config_write_command_empty_payload_without_marker_is_noop(
     """The cleanup run on a sandbox that never saw an injection touches nothing."""
     _run_write_command(render_host_config_write_command({}), tmp_path)
 
-    assert not (tmp_path / ".omnigent" / "config.yaml").exists()
+    assert not (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").exists()
     assert _read_marker(tmp_path) is None
 
 
@@ -697,11 +697,11 @@ def test_render_host_config_write_command_corrupt_marker_degrades_to_additive(
     (today's additive behavior) rather than guessing what the server owns,
     and the run repairs the marker for the next cycle.
     """
-    (tmp_path / ".omnigent").mkdir()
-    (tmp_path / ".omnigent" / "config.yaml").write_text(
+    (tmp_path / ".omnigent-mdsmithaustin").mkdir()
+    (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         yaml.safe_dump({"providers": {"gateway_a": {"kind": "gateway"}}})
     )
-    (tmp_path / ".omnigent" / ".injected_host_config.json").write_text("{not json")
+    (tmp_path / ".omnigent-mdsmithaustin" / ".injected_host_config.json").write_text("{not json")
 
     written = _materialize(render_host_config_write_command(_GATEWAY_HOST_CONFIG), tmp_path)
 
