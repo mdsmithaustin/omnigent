@@ -158,7 +158,7 @@ async def test_login_redirects_to_idp_with_pkce_params() -> None:
     assert "state" in params
     assert "code_challenge" in params
     # Auth state cookie must be set.
-    assert "ap_auth_state" in resp.cookies
+    assert "mdsmithaustin_ap_auth_state" in resp.cookies
 
 
 # ── 2. CLI login ───────────────────────────────────────────────────
@@ -227,15 +227,15 @@ async def test_callback_exchanges_code_and_sets_session_cookie() -> None:
             resp = await client.get(
                 "/auth/callback",
                 params={"code": "auth-code-123", "state": state},
-                cookies={"ap_auth_state": state_cookie},
+                cookies={"mdsmithaustin_ap_auth_state": state_cookie},
             )
 
     assert resp.status_code == 302
     assert resp.headers["location"] == "/"
     # Session cookie should be set.
-    assert "ap_session" in resp.cookies
+    assert "mdsmithaustin_ap_session" in resp.cookies
     # Validate the session JWT.
-    session_jwt = resp.cookies["ap_session"]
+    session_jwt = resp.cookies["mdsmithaustin_ap_session"]
     payload = jwt.decode(session_jwt, _TEST_SECRET, algorithms=["HS256"])
     assert payload["sub"] == "alice@example.com"
 
@@ -259,7 +259,7 @@ async def test_callback_returns_400_on_state_mismatch() -> None:
         resp = await client.get(
             "/auth/callback",
             params={"code": "auth-code", "state": "wrong-state"},
-            cookies={"ap_auth_state": state_cookie},
+            cookies={"mdsmithaustin_ap_auth_state": state_cookie},
         )
 
     assert resp.status_code == 400
@@ -281,7 +281,7 @@ async def test_callback_returns_400_on_token_exchange_failure() -> None:
             resp = await client.get(
                 "/auth/callback",
                 params={"code": "bad-code", "state": state},
-                cookies={"ap_auth_state": state_cookie},
+                cookies={"mdsmithaustin_ap_auth_state": state_cookie},
             )
 
     assert resp.status_code == 400
@@ -299,7 +299,7 @@ async def test_callback_returns_400_on_non_object_token_response() -> None:
             resp = await client.get(
                 "/auth/callback",
                 params={"code": "bad-response", "state": state},
-                cookies={"ap_auth_state": state_cookie},
+                cookies={"mdsmithaustin_ap_auth_state": state_cookie},
             )
 
     assert resp.status_code == 400
@@ -321,8 +321,8 @@ async def test_logout_clears_cookie_and_redirects() -> None:
     assert resp.headers["location"] == "/"
     # The session cookie should be cleared with Max-Age=0 deletion semantics.
     set_cookie_headers = resp.headers.get_list("set-cookie")
-    session_cookies = [h for h in set_cookie_headers if "ap_session" in h]
-    assert session_cookies, "expected a Set-Cookie header for ap_session"
+    session_cookies = [h for h in set_cookie_headers if "mdsmithaustin_ap_session" in h]
+    assert session_cookies, "expected a Set-Cookie header for mdsmithaustin_ap_session"
     assert any("Max-Age=0" in h for h in session_cookies), (
         f"expected Max-Age=0 deletion cookie; got {session_cookies}"
     )

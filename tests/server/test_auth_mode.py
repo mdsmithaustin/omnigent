@@ -59,7 +59,7 @@ def test_auth_mode_names_accounts() -> None:
     )
     provider = UnifiedAuthProvider(source="accounts", accounts_config=config)
     assert auth_mode(provider) == "accounts"
-    assert provider.session_cookie_name == "__Host-ap_session"
+    assert provider.session_cookie_name == "__Host-mdsmithaustin_ap_session"
 
 
 def test_session_cookie_name_follows_redirect_scheme() -> None:
@@ -67,6 +67,6 @@ def test_session_cookie_name_follows_redirect_scheme() -> None:
     http = UnifiedAuthProvider(source="oidc", oidc_config=_oidc_config("http://a.test/cb"))
     header = UnifiedAuthProvider(source="header", local_single_user=False)
 
-    assert https.session_cookie_name == "__Host-ap_session"
-    assert http.session_cookie_name == "ap_session"
+    assert https.session_cookie_name == "__Host-mdsmithaustin_ap_session"
+    assert http.session_cookie_name == "mdsmithaustin_ap_session"
     assert header.session_cookie_name is None

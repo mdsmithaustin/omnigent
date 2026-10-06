@@ -154,7 +154,7 @@ def test_accounts_config_round_trips_required_env(
     assert cfg.cookie_secret == bytes.fromhex(secret_hex)
     assert cfg.base_url == "https://omnigent.example.com"
     assert cfg.secure_cookies is True
-    assert cfg.session_cookie_name == "__Host-ap_session"
+    assert cfg.session_cookie_name == "__Host-mdsmithaustin_ap_session"
 
 
 def test_accounts_config_missing_cookie_secret_fails_loud(
@@ -208,7 +208,7 @@ def test_accounts_config_http_base_url_uses_plain_cookie(
     cfg = AccountsConfig.from_env()
 
     assert cfg.secure_cookies is False
-    assert cfg.session_cookie_name == "ap_session"
+    assert cfg.session_cookie_name == "mdsmithaustin_ap_session"
 
 
 def test_accounts_config_rejects_non_http_scheme(
@@ -1216,7 +1216,7 @@ def test_login_correct_password_sets_cookie(accounts_app: TestClient) -> None:
     assert body["user"]["is_admin"] is True
     assert "token" in body
     # And the cookie name MUST be the HTTP variant for a localhost base_url.
-    assert "ap_session" in resp.headers.get("set-cookie", "")
+    assert "mdsmithaustin_ap_session" in resp.headers.get("set-cookie", "")
 
 
 def test_me_unauthed_returns_401(accounts_app: TestClient) -> None:

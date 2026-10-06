@@ -270,14 +270,14 @@ def test_public_pkce_ps256_login_and_code_replay(provider_client):
     state_cookies = dict(client.cookies)
     response = client.get("/auth/callback", params=params, follow_redirects=False)
     assert response.status_code == 302, response.text
-    assert response.cookies.get("ap_session")
+    assert response.cookies.get("mdsmithaustin_ap_session")
     assert len(exchanges) == 1
     assert jwks_requests == [_ENDPOINTS["jwks_uri"]]
     client.cookies.clear()
     client.cookies.update(state_cookies)
     replay = client.get("/auth/callback", params=params, follow_redirects=False)
     assert replay.status_code == 400
-    assert not replay.cookies.get("ap_session")
+    assert not replay.cookies.get("mdsmithaustin_ap_session")
 
 
 @pytest.mark.parametrize("failure", ["pkce", "state", "issuer", "audience", "expired", "email"])
@@ -299,7 +299,7 @@ def test_public_login_rejects_invalid_proofs(provider_client, failure):
         claims["email_verified"] = False
     response = client.get("/auth/callback", params=params, follow_redirects=False)
     assert response.status_code == 400
-    assert not response.cookies.get("ap_session")
+    assert not response.cookies.get("mdsmithaustin_ap_session")
     if failure == "state":
         assert exchanges == []
 

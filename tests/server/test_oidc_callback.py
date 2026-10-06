@@ -262,7 +262,7 @@ def test_callback_verified_email_mints_session(
 
     # 302 redirect (not 400) means the email was accepted as identity.
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("ap_session")
+    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
     # The session cookie must be set on success; absence would mean the
     # callback bailed before minting (the bug we're guarding against,
     # inverted).
@@ -304,7 +304,7 @@ def test_callback_unverified_email_rejected(
     assert resp.status_code == 400, resp.text
     assert "Could not determine user email" in resp.json()["error"]
     # No session was minted for the spoofable email.
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 @pytest.mark.parametrize("callback_client", [True], indirect=True)
@@ -332,7 +332,7 @@ def test_callback_skip_verification_flag_admits_unverified(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("ap_session")
+    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
     assert session_cookie is not None
     decoded = jwt.decode(session_cookie, _TEST_SECRET, algorithms=["HS256"])
     assert decoded["sub"] == "carol@example.com"
@@ -362,7 +362,7 @@ def test_callback_custom_email_claim_admits_upn(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("ap_session")
+    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
     assert session_cookie is not None
     decoded = jwt.decode(session_cookie, _TEST_SECRET, algorithms=["HS256"])
     # The UPN flowed into the session sub, normalized like an email.
@@ -393,7 +393,7 @@ def test_callback_custom_email_claim_rejects_invalid_value(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 @pytest.mark.parametrize(
@@ -433,7 +433,7 @@ def test_callback_custom_email_claim_still_requires_verification_optout(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 @pytest.mark.parametrize(
@@ -456,7 +456,7 @@ def test_callback_custom_email_claim_absent_rejected(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 @pytest.mark.parametrize("verified_value", [True, "true", "True", "TRUE"])
@@ -477,7 +477,7 @@ def test_callback_accepts_boolean_and_string_true(
 
     # Accepted as a verified identity → redirect + session.
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("ap_session") is not None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
 
 
 # ── Forced re-auth: callback verifies id_token auth_time ───────────
@@ -528,7 +528,7 @@ def test_reauth_callback_accepts_fresh_auth_time(
     resp = _do_callback_reauth(client, token, reauth_at=reauth_at)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("ap_session") is not None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
 
 
 def test_reauth_callback_rejects_stale_auth_time(
@@ -551,7 +551,7 @@ def test_reauth_callback_rejects_stale_auth_time(
 
     assert resp.status_code == 403, resp.text
     assert "did not re-authenticate" in resp.json()["error"]
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 def test_reauth_callback_rejects_missing_auth_time(
@@ -571,7 +571,7 @@ def test_reauth_callback_rejects_missing_auth_time(
 
     assert resp.status_code == 403, resp.text
     assert "did not confirm re-authentication" in resp.json()["error"]
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is None
 
 
 def test_non_reauth_callback_ignores_auth_time(
@@ -589,7 +589,7 @@ def test_non_reauth_callback_ignores_auth_time(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("ap_session") is not None
+    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
 
 
 # ── CLI login tickets + login-issued refresh grants ───────────────
