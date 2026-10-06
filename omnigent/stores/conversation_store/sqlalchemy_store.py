@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+import uuid
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import PureWindowsPath
 from typing import Any, Literal, Protocol, cast
@@ -42,6 +43,7 @@ from omnigent.db.db_models import (
     SqlConversationItem,
     SqlConversationLabel,
     SqlConversationMetadata,
+    SqlNativeSource,
     SqlPolicy,
     SqlProject,
     SqlSessionPermission,
@@ -90,6 +92,14 @@ from omnigent.entities.conversation import MessageData, SlashCommandData
 from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
 from omnigent.native.session_todos import validate_session_todos
+from omnigent.native.source_owner import (
+    NativeAdmission,
+    NativeOwner,
+    NativeSource,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopResult,
+)
 from omnigent.session_import.models import IMPORT_SOURCE_LABEL_KEY
 from omnigent.stores.conversation_store import (
     _FORK_ONLY_DROPPED_LABEL_KEYS,
@@ -977,6 +987,170 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # so the WHERE matches the binary id column.
                 {"id": uuid_to_bytes(conversation_id)},
             )
+
+    def get_native_source(self, conversation_id: str) -> NativeSource | None:
+        with self._conv_session("read_native_source") as session:
+            row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
+            return NativeSource.model_validate_json(row.state) if row is not None else None
+
+    def _write_native_source(
+        self, conversation_id: str, change: Callable[[NativeSource | None], NativeSource | None]
+    ) -> NativeSource | None:
+        def write(session: Session) -> NativeSource | None:
+            self._lock_conversation(session, conversation_id)
+            if session.get(SqlConversation, (current_workspace_id(), conversation_id)) is None:
+                raise ConversationNotFoundError(conversation_id)
+            row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
+            state = change(NativeSource.model_validate_json(row.state) if row else None)
+            if state is not None:
+                if row is None:
+                    session.add(SqlNativeSource(id=conversation_id, state=state.model_dump_json()))
+                else:
+                    row.state = state.model_dump_json()
+            return state
+
+        return run_write_transaction(self._conv_session_immediate, "update_native_source", write)
+
+    def admit_native(
+        self, conversation_id: str, owner: NativeOwner, *, expected_epoch: str | None = None
+    ) -> NativeAdmission:
+        def admit(state: NativeSource | None) -> NativeSource:
+            if expected_epoch is not None and (
+                state is None
+                or state.admission.epoch != expected_epoch
+                or state.phase not in {"admitted", "open"}
+                or state.stop is not None
+            ):
+                raise OmnigentError(
+                    "Native admission was revoked by Stop or owner replacement.",
+                    code=ErrorCode.CONFLICT,
+                )
+            if state is not None and state.phase == "stopping":
+                raise OmnigentError(
+                    "Native Stop is pending for the current owner.", code=ErrorCode.CONFLICT
+                )
+            unresolved = state.unresolved_owners if state is not None else ()
+            if state is None or state.phase == "closed" or state.stop is not None:
+                if (
+                    state is not None
+                    and state.phase != "closed"
+                    and state.admission.owner != owner
+                ):
+                    unresolved = tuple(dict.fromkeys((*unresolved, state.admission.owner)))
+                return NativeSource(
+                    admission=NativeAdmission(
+                        source_id=conversation_id, epoch=uuid.uuid4().hex, owner=owner
+                    ),
+                    unresolved_owners=unresolved,
+                )
+            if state.phase == "open" and state.admission.owner != owner:
+                unresolved = tuple(dict.fromkeys((*unresolved, state.admission.owner)))
+            return NativeSource(
+                admission=state.admission.model_copy(update={"owner": owner}),
+                unresolved_owners=unresolved,
+            )
+
+        state = self._write_native_source(conversation_id, admit)
+        assert state is not None
+        return state.admission
+
+    def invalidate_native_proof(self, conversation_id: str) -> NativeAdmission | None:
+        def invalidate(state: NativeSource | None) -> NativeSource | None:
+            if state is None:
+                return None
+            if state.phase == "stopping":
+                raise OmnigentError(
+                    "Native Stop is pending for the current owner.", code=ErrorCode.CONFLICT
+                )
+            if state.phase == "closed" or state.stop is not None:
+                return NativeSource(
+                    admission=state.admission.model_copy(update={"epoch": uuid.uuid4().hex}),
+                    phase="admitted" if state.phase == "closed" else "open",
+                    unresolved_owners=state.unresolved_owners,
+                )
+            return state
+
+        state = self._write_native_source(conversation_id, invalidate)
+        return state.admission if state is not None else None
+
+    def validate_native_admission(self, admission: NativeAdmission) -> None:
+        state = self.get_native_source(admission.source_id)
+        if (
+            state is None
+            or state.phase not in {"admitted", "open"}
+            or state.stop is not None
+            or state.admission.epoch != admission.epoch
+        ):
+            raise OmnigentError(
+                "Native admission was revoked by Stop or owner replacement.",
+                code=ErrorCode.CONFLICT,
+            )
+
+    def seal_native_stop(self, conversation_id: str) -> NativeStop | None:
+        def seal(state: NativeSource | None) -> NativeSource | None:
+            if state is None:
+                return None
+            if state.phase == "stopping":
+                raise OmnigentError(
+                    "Native Stop is pending for the current owner.", code=ErrorCode.CONFLICT
+                )
+            stop = NativeStop(
+                admission=state.admission,
+                operation_id=uuid.uuid4().hex,
+                unresolved_owners=state.unresolved_owners,
+            )
+            return NativeSource(
+                admission=state.admission,
+                phase="stopping",
+                stop=stop,
+                unresolved_owners=state.unresolved_owners,
+            )
+
+        state = self._write_native_source(conversation_id, seal)
+        return state.stop if state else None
+
+    def validate_native_stop(self, stop: NativeStop) -> None:
+        state = self.get_native_source(stop.admission.source_id)
+        if state is None or state.phase != "stopping" or state.stop != stop:
+            raise OmnigentError(
+                "Native Stop was superseded by a successor owner.", code=ErrorCode.CONFLICT
+            )
+
+    def finish_native_stop(
+        self,
+        stop: NativeStop,
+        outcome: NativeStopOutcome,
+        *,
+        pending: bool = False,
+        detail: str = "",
+    ) -> NativeStopResult:
+        if outcome == NativeStopOutcome.VERIFIED and stop.unresolved_owners:
+            outcome = NativeStopOutcome.UNKNOWN
+            detail = "Previous native ownership remains unqualified."
+        result = NativeStopResult(outcome=outcome, detail=detail)
+
+        def finish(state: NativeSource | None) -> NativeSource:
+            if state is None or state.stop != stop or state.admission != stop.admission:
+                raise OmnigentError(
+                    "Native Stop was superseded by a successor owner.", code=ErrorCode.CONFLICT
+                )
+            phase = (
+                "closed"
+                if outcome == NativeStopOutcome.VERIFIED
+                else "stopping"
+                if pending
+                else "open"
+            )
+            return NativeSource(
+                admission=state.admission,
+                phase=phase,
+                stop=stop,
+                result=result,
+                unresolved_owners=state.unresolved_owners,
+            )
+
+        self._write_native_source(stop.admission.source_id, finish)
+        return result
 
     def create_conversation(
         self,
@@ -3693,6 +3867,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             ``False`` if the row was already pinned or doesn't
             exist.
         """
+        self.invalidate_native_proof(conversation_id)
+
         from sqlalchemy import update
 
         def write(session: Session) -> bool:
@@ -3897,6 +4073,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
         """
+
+        self.invalidate_native_proof(conversation_id)
 
         def write(session: Session) -> SqlConversationMetadata:
             meta = session.get(SqlConversationMetadata, (current_workspace_id(), conversation_id))
@@ -4118,6 +4296,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             ``host_id`` is being set on a row with no ``workspace``
             and the caller did not supply one).
         """
+
+        self.invalidate_native_proof(conversation_id)
 
         def write(session: Session) -> SqlConversationMetadata:
             meta = session.get(SqlConversationMetadata, (current_workspace_id(), conversation_id))
@@ -4438,6 +4618,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         *,
         title: str | None = None,
         agent_id: str | None = None,
+        selected_agent_id: str | None = None,
+        source_is_native: bool = False,
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
@@ -4596,6 +4778,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             source_conversation_id,
             title=title,
             agent_id=agent_id,
+            selected_agent_id=selected_agent_id,
+            source_is_native=source_is_native,
             cloned_agent_name=cloned_agent_name,
             cloned_agent_bundle_location=cloned_agent_bundle_location,
             cloned_agent_description=cloned_agent_description,
@@ -4625,6 +4809,8 @@ class SqlAlchemyConversationStore(ConversationStore):
         *,
         title: str | None = None,
         agent_id: str | None = None,
+        selected_agent_id: str | None = None,
+        source_is_native: bool = False,
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
@@ -5049,14 +5235,63 @@ class SqlAlchemyConversationStore(ConversationStore):
                 fork_labels.update(extra_labels)
 
         def insert_ap(session: Session) -> SqlConversation:
-            if (
-                session.get(
-                    SqlConversation,
-                    (current_workspace_id(), source_conversation_id),
-                )
-                is None
-            ):
+            self._lock_conversation(session, source_conversation_id)
+            current_source = session.get(
+                SqlConversation, (current_workspace_id(), source_conversation_id)
+            )
+            if current_source is None:
                 raise LookupError(f"conversation not found: {source_conversation_id!r}")
+            if (
+                current_source.agent_id != source.agent_id
+                or _decode_session_overrides(current_source.session_overrides)["harness_override"]
+                != source_overrides["harness_override"]
+            ):
+                raise OmnigentError(
+                    "Source agent binding changed while preparing the fork.",
+                    code=ErrorCode.CONFLICT,
+                )
+            chosen_agent_id = (
+                selected_agent_id
+                if selected_agent_id is not None
+                else agent_id
+                if not creating_clone
+                else None
+            )
+            native_row = session.get(
+                SqlNativeSource, (current_workspace_id(), source_conversation_id)
+            )
+            native_source = (
+                source_is_native
+                or native_row is not None
+                or native_coding_agent_for_wrapper_label(
+                    _fetch_labels(session, source_conversation_id).get(WRAPPER_LABEL_KEY)
+                )
+                is not None
+            )
+            if native_source and creating_clone and selected_agent_id is None:
+                raise OmnigentError(
+                    "Native forks require the selected source agent identity.",
+                    code=ErrorCode.CONFLICT,
+                )
+            if (
+                native_source
+                and chosen_agent_id is not None
+                and chosen_agent_id != current_source.agent_id
+            ):
+                native_state = (
+                    NativeSource.model_validate_json(native_row.state) if native_row else None
+                )
+                if (
+                    native_state is None
+                    or native_state.phase != "closed"
+                    or native_state.result is None
+                    or native_state.result.outcome != NativeStopOutcome.VERIFIED
+                ):
+                    raise OmnigentError(
+                        "The source owner must use explicit Stop and verify native shutdown "
+                        "before choosing a different agent.",
+                        code=ErrorCode.CONFLICT,
+                    )
             new_conv = SqlConversation(**new_conv_values)
             session.add(new_conv)
             for item_values in prepared_item_rows:
@@ -5271,6 +5506,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 delete(SqlConversationItem).where(
                     SqlConversationItem.workspace_id == current_workspace_id(),
                     SqlConversationItem.conversation_id.in_(subtree_ids),
+                )
+            )
+            ap_sess.execute(
+                delete(SqlNativeSource).where(
+                    SqlNativeSource.workspace_id == current_workspace_id(),
+                    SqlNativeSource.id.in_(subtree_ids),
                 )
             )
             ap_sess.execute(
