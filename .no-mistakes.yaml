@@ -1,7 +1,7 @@
 # no-mistakes push gate for this fork. Gate-control fields are read from main.
 commands:
   # CI lint's dependency setup and pre-commit pass; corepack runs the pinned pnpm.
-  # CI alone runs the lockfile drift checks and installs ktlint.
+  # CI alone also checks pnpm-lock.yaml regeneration and pnpm overrides, and installs ktlint.
   prepare: >-
     OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
     && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
