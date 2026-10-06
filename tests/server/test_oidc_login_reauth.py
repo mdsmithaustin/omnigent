@@ -178,7 +178,9 @@ def test_login_with_reauth_stamps_reauth_at_in_state(login_client: TestClient) -
 
     r = login_client.get("/auth/login", params={"reauth": "1"})
     assert r.status_code == 302
-    state_cookie = r.cookies.get("ap_auth_state") or r.cookies.get("__Host-ap_auth_state")
+    state_cookie = r.cookies.get("mdsmithaustin_ap_auth_state") or r.cookies.get(
+        "__Host-mdsmithaustin_ap_auth_state"
+    )
     assert state_cookie is not None, "login must set the auth-state cookie"
     payload = jwt.decode(state_cookie, _TEST_SECRET, algorithms=["HS256"])
     assert isinstance(payload.get("reauth_at"), int), (
@@ -187,7 +189,9 @@ def test_login_with_reauth_stamps_reauth_at_in_state(login_client: TestClient) -
 
     # A plain login must NOT stamp it.
     r2 = login_client.get("/auth/login")
-    plain_cookie = r2.cookies.get("ap_auth_state") or r2.cookies.get("__Host-ap_auth_state")
+    plain_cookie = r2.cookies.get("mdsmithaustin_ap_auth_state") or r2.cookies.get(
+        "__Host-mdsmithaustin_ap_auth_state"
+    )
     assert plain_cookie is not None
     plain_payload = jwt.decode(plain_cookie, _TEST_SECRET, algorithms=["HS256"])
     assert "reauth_at" not in plain_payload

@@ -15,10 +15,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from omnigent.installation_defaults import LAUNCHD_HOST_LABEL, SYSTEMD_HOST_UNIT
 from omnigent.process_logging import data_dir
 
-LAUNCHD_LABEL = "ai.omnigent.host"
-SYSTEMD_UNIT = "omnigent-host.service"
+LAUNCHD_LABEL = LAUNCHD_HOST_LABEL
+SYSTEMD_UNIT = SYSTEMD_HOST_UNIT
 # launchctl bootout returns before the job is gone; poll for the unload to land.
 _LAUNCHD_UNLOAD_TIMEOUT = 10.0
 _LAUNCHD_UNLOAD_POLL_INTERVAL = 0.2

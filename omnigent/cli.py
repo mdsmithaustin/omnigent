@@ -88,7 +88,6 @@ from omnigent.host.local_server import (
     local_server_url_if_healthy,
     server_config_signature,
     stop_local_omnigent_server,
-    stop_untracked_local_server,
 )
 from omnigent.inner import _proc, ui
 from omnigent.installation_defaults import PROJECT_CONFIG_RELPATH, default_user_dir
@@ -4712,11 +4711,7 @@ def _stop_local_server_and_daemon(*, force: bool) -> bool:
         with contextlib.suppress(click.ClickException):
             _terminate_daemon(local_record, force=force)
     stop_local_omnigent_server()
-    # Also catch an orphan on the canonical port whose pidfile was lost, so
-    # `server stop` isn't blind to it (it reported "No background server is
-    # running" while one was still listening on the default port).
-    orphan_pid = stop_untracked_local_server()
-    return was_running or orphan_pid is not None
+    return was_running
 
 
 def _run_background_server() -> None:
@@ -4920,19 +4915,12 @@ def stop(force: bool) -> None:
             failures.append(exc.message)
     server_was_running = local_server_url_if_healthy() is not None
     stop_local_omnigent_server()
-    # Sweep the canonical port for an orphaned server the pidfile lost track
-    # of (a torn/cleared record, or a respawn that landed elsewhere). Without
-    # this, that server survives the off-switch — the exact "I ran stop and a
-    # server is still on the default port" symptom.
-    orphan_pid = stop_untracked_local_server()
 
     parts: list[str] = []
     if stopped:
         parts.append(f"{stopped} daemon(s)")
     if server_was_running:
         parts.append("the background server")
-    if orphan_pid is not None:
-        parts.append(f"an untracked server on :{_DEFAULT_LOCAL_PORT} (pid {orphan_pid})")
     if parts:
         click.echo("Stopped " + " and ".join(parts) + ".")
     else:

@@ -40,8 +40,8 @@ def test_enable_launchd_user_service(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
     payload = plistlib.loads(installed.path.read_bytes())
-    assert installed.path == tmp_path / "Library/LaunchAgents/ai.omnigent.host.plist"
-    assert payload["Label"] == "ai.omnigent.host"
+    assert installed.path == tmp_path / "Library/LaunchAgents/com.mdsmithaustin.omni.host.plist"
+    assert payload["Label"] == "com.mdsmithaustin.omni.host"
     assert payload["ProgramArguments"] == [
         "/opt/omnigent/bin/python",
         "-m",
@@ -53,7 +53,7 @@ def test_enable_launchd_user_service(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert payload["KeepAlive"] == {"SuccessfulExit": False}
     assert "ProcessType" not in payload
     assert calls == [
-        ["launchctl", "bootout", "gui/501/ai.omnigent.host"],
+        ["launchctl", "bootout", "gui/501/com.mdsmithaustin.omni.host"],
         [
             "launchctl",
             "bootstrap",
@@ -68,18 +68,21 @@ def test_disable_launchd_user_service(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(service.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(service.os, "getuid", lambda: 502)
-    path = tmp_path / "Library/LaunchAgents/ai.omnigent.host.plist"
+    path = tmp_path / "Library/LaunchAgents/com.mdsmithaustin.omni.host.plist"
     path.parent.mkdir(parents=True)
     path.write_text("old")
+    upstream = path.parent / "ai.omnigent.host.plist"
+    upstream.write_text("upstream")
     calls = _capture_runs(monkeypatch)
 
     removed = service.disable_user_host_service()
 
     assert removed.path == path
     assert not path.exists()
+    assert upstream.read_text() == "upstream"
     assert calls == [
-        ["launchctl", "bootout", "gui/502/ai.omnigent.host"],
-        ["launchctl", "print", "gui/502/ai.omnigent.host"],
+        ["launchctl", "bootout", "gui/502/com.mdsmithaustin.omni.host"],
+        ["launchctl", "print", "gui/502/com.mdsmithaustin.omni.host"],
     ]
 
 
@@ -95,7 +98,7 @@ def test_disable_launchd_tolerates_stale_print_during_async_unload(
     monkeypatch.setattr(service.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(service.os, "getuid", lambda: 502)
     monkeypatch.setattr(service, "_LAUNCHD_UNLOAD_POLL_INTERVAL", 0.0)
-    path = tmp_path / "Library/LaunchAgents/ai.omnigent.host.plist"
+    path = tmp_path / "Library/LaunchAgents/com.mdsmithaustin.omni.host.plist"
     path.parent.mkdir(parents=True)
     path.write_text("old")
     calls: list[list[str]] = []
@@ -114,9 +117,9 @@ def test_disable_launchd_tolerates_stale_print_during_async_unload(
     assert removed.path == path
     assert not path.exists()
     assert calls == [
-        ["launchctl", "bootout", "gui/502/ai.omnigent.host"],
-        ["launchctl", "print", "gui/502/ai.omnigent.host"],
-        ["launchctl", "print", "gui/502/ai.omnigent.host"],
+        ["launchctl", "bootout", "gui/502/com.mdsmithaustin.omni.host"],
+        ["launchctl", "print", "gui/502/com.mdsmithaustin.omni.host"],
+        ["launchctl", "print", "gui/502/com.mdsmithaustin.omni.host"],
     ]
 
 
@@ -133,7 +136,7 @@ def test_disable_launchd_removes_plist_even_when_job_never_unloads(
     monkeypatch.setattr(service.os, "getuid", lambda: 502)
     monkeypatch.setattr(service, "_LAUNCHD_UNLOAD_TIMEOUT", 0.0)
     monkeypatch.setattr(service, "_LAUNCHD_UNLOAD_POLL_INTERVAL", 0.0)
-    path = tmp_path / "Library/LaunchAgents/ai.omnigent.host.plist"
+    path = tmp_path / "Library/LaunchAgents/com.mdsmithaustin.omni.host.plist"
     path.parent.mkdir(parents=True)
     path.write_text("old")
     forgotten: list[service.HostService] = []
@@ -164,7 +167,7 @@ def test_enable_systemd_user_service(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
     unit = installed.path.read_text()
-    assert installed.path == tmp_path / "xdg/systemd/user/omnigent-host.service"
+    assert installed.path == tmp_path / "xdg/systemd/user/omni-mdsmithaustin-host.service"
     assert 'Environment="HOME=' in unit
     assert (
         'ExecStart="/opt/omnigent/bin/python" "-m" "omnigent.host.service_entry" "--local"'
@@ -173,7 +176,7 @@ def test_enable_systemd_user_service(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert "RestartPreventExitStatus=78 143" in unit
     assert calls == [
         ["systemctl", "--user", "daemon-reload"],
-        ["systemctl", "--user", "enable", "--now", "omnigent-host.service"],
+        ["systemctl", "--user", "enable", "--now", "omni-mdsmithaustin-host.service"],
     ]
 
 
@@ -193,9 +196,11 @@ def test_disable_systemd_user_service(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
     monkeypatch.setattr(service.platform, "system", lambda: "Linux")
-    path = tmp_path / ".config/systemd/user/omnigent-host.service"
+    path = tmp_path / ".config/systemd/user/omni-mdsmithaustin-host.service"
     path.parent.mkdir(parents=True)
     path.write_text("old")
+    upstream = path.parent / "omnigent-host.service"
+    upstream.write_text("upstream")
     calls = _capture_runs(monkeypatch)
 
     removed = service.disable_user_host_service()
@@ -203,9 +208,10 @@ def test_disable_systemd_user_service(tmp_path: Path, monkeypatch: pytest.Monkey
     assert removed.path == path
     assert not path.exists()
     assert calls == [
-        ["systemctl", "--user", "disable", "--now", "omnigent-host.service"],
+        ["systemctl", "--user", "disable", "--now", "omni-mdsmithaustin-host.service"],
         ["systemctl", "--user", "daemon-reload"],
     ]
+    assert upstream.read_text() == "upstream"
 
 
 def test_host_service_rejects_unsupported_platform(monkeypatch: pytest.MonkeyPatch) -> None:
