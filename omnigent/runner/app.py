@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from omnigent.harnesses.claude_native.bridge import ClaudeNativeToolRelay
     from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
     from omnigent.harnesses.codex_native.bridge import CodexNativeBridgeState
+    from omnigent.harnesses.prime_native.controls import ControlOutcome, SetEffort, SetModel
     from omnigent.runner.mcp_manager import RunnerMcpManager
     from omnigent.runner.policy import PolicyVerdict
     from omnigent.terminals.registry import TerminalRegistry
@@ -202,6 +203,8 @@ from omnigent.spec.types import AgentSpec, LocalToolInfo, SkillSpec
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 _logger = logging.getLogger(__name__)
+
+_PRIME_SETTINGS_TIMEOUT_S = 18.0
 
 # Allow process termination and forwarder cleanup to finish before DELETE proceeds.
 _SESSION_INIT_CANCEL_TIMEOUT_S = 20.0
@@ -1277,6 +1280,47 @@ def create_runner_app(
 
     _codex_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _pi_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
+    _prime_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
+
+    @dataclasses.dataclass
+    class _PrimeSettingsGate:
+        lock: asyncio.Lock = dataclasses.field(default_factory=asyncio.Lock)
+        entrants: int = 0
+
+    _prime_settings_gates: dict[str, _PrimeSettingsGate] = {}
+
+    async def _execute_prime_setting(
+        session_id: str, control: SetModel | SetEffort
+    ) -> ControlOutcome:
+        from omnigent.harnesses.prime_native.bridge import runtime_paths
+        from omnigent.harnesses.prime_native.controls import (
+            ControlOutcome,
+            ControlStatus,
+            PrimeExtensionBinding,
+        )
+
+        deadline = time.monotonic() + _PRIME_SETTINGS_TIMEOUT_S
+        gate = _prime_settings_gates.setdefault(session_id, _PrimeSettingsGate())
+        gate.entrants += 1
+        acquired = False
+        try:
+            try:
+                await asyncio.wait_for(gate.lock.acquire(), max(0, deadline - time.monotonic()))
+            except TimeoutError:
+                return ControlOutcome(
+                    ControlStatus.UNAVAILABLE, "Prime settings admission expired"
+                )
+            acquired = True
+            return await PrimeExtensionBinding(runtime_paths(session_id).root).execute(
+                control, timeout_s=max(0, deadline - time.monotonic())
+            )
+        finally:
+            if acquired:
+                gate.lock.release()
+            gate.entrants -= 1
+            if gate.entrants == 0:
+                del _prime_settings_gates[session_id]
+
     _opencode_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _cursor_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _kiro_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
@@ -1729,6 +1773,15 @@ def create_runner_app(
         # app-server turn; the native-terminal ensure path can recreate it.
         if event.lifecycle != TerminalLifecycle.REQUIRED:
             return
+
+        if event.terminal_name == "prime-native":
+            from omnigent.harnesses.prime_native.process import stop_session
+
+            prime_stop_task = asyncio.create_task(
+                asyncio.to_thread(stop_session, event.session_id)
+            )
+            prime_stop_task.add_done_callback(_background_tasks.discard)
+            _background_tasks.add(prime_stop_task)
 
         # A required terminal exit ends the session. Tear down any registered
         # Codex app-server alongside it; this is a no-op for other harnesses.
@@ -2592,6 +2645,7 @@ def create_runner_app(
                     "claude": _claude_terminal_ensure_locks,
                     "codex": _codex_terminal_ensure_locks,
                     "pi": _pi_terminal_ensure_locks,
+                    "prime-native": _prime_terminal_ensure_locks,
                     "cursor": _cursor_terminal_ensure_locks,
                     "kiro": _kiro_terminal_ensure_locks,
                     "antigravity": _antigravity_terminal_ensure_locks,
@@ -2795,7 +2849,7 @@ def create_runner_app(
 
                 _launch_pre = _antigravity_pre_launch
 
-            elif harness_name == "pi-native":
+            elif harness_name in {"pi-native", "prime-native"}:
                 # pi resolves its spec unwrapped — a resolution error surfaces as
                 # a terminal-start error (the resolver does not swallow it).
                 _launch_resolve_spec = lambda: _resolve_session_agent_spec(session_id)  # noqa: E731
@@ -3268,6 +3322,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)
@@ -3449,6 +3504,7 @@ def create_runner_app(
         if status != "failed" and harness in {
             "claude-native",
             "pi-native",
+            "prime-native",
             "cursor-native",
             "kiro-native",
             "goose-native",
@@ -5973,7 +6029,15 @@ def create_runner_app(
                                 _input_stable_id = body.get("input_stable_id")
                                 if isinstance(_input_stable_id, str):
                                     event["input_stable_id"] = _input_stable_id
-                            if not _defer_publish and event.get("type") != "response.created":
+                            delivery_complete = (
+                                harness_name == "prime-native"
+                                and event.get("type") == "response.completed"
+                            )
+                            if (
+                                not _defer_publish
+                                and not delivery_complete
+                                and event.get("type") != "response.created"
+                            ):
                                 _publish_event(conv_id, event)
                             if dispatch is not None and event.get(_RUNNER_DISPATCHED_FIELD):
                                 pass
@@ -6097,6 +6161,73 @@ def create_runner_app(
             body.get("model_override") if isinstance(body, dict) else None,
             extra={"session_id": conversation_id},
         )
+        if _session_harness_name(conversation_id) == "prime-native":
+            if body_type in {
+                "clear",
+                "reset",
+                "plan_mode_change",
+                "permission_mode_change",
+                "btw_dismiss",
+                "codex_approval_mode_change",
+                "cost_approval_popup",
+                "policy_blocked_notice",
+            }:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "prime_control_unsupported",
+                        "detail": f"Prime does not support {body_type}",
+                    },
+                )
+            if body_type in {"model_change", "effort_change", "compact"}:
+                from omnigent.harnesses.prime_native.bridge import runtime_paths
+                from omnigent.harnesses.prime_native.catalog import PrimeModelRef
+                from omnigent.harnesses.prime_native.controls import (
+                    Compact,
+                    Control,
+                    PrimeExtensionBinding,
+                    SetEffort,
+                    SetModel,
+                )
+
+                control: Control
+                if body_type == "model_change":
+                    model = body.get("model")
+                    try:
+                        if not isinstance(model, str):
+                            raise ValueError("Prime cannot clear the live model")
+                        control = SetModel(PrimeModelRef.parse(model))
+                    except ValueError as exc:
+                        return JSONResponse(
+                            status_code=409,
+                            content={
+                                "error": "prime_control_unsupported",
+                                "detail": str(exc),
+                            },
+                        )
+                elif body_type == "effort_change":
+                    effort = body.get("effort")
+                    if not isinstance(effort, str):
+                        return JSONResponse(
+                            status_code=409,
+                            content={
+                                "error": "prime_control_unsupported",
+                                "detail": "Prime cannot clear the live effort",
+                            },
+                        )
+                    control = SetEffort(effort)
+                else:
+                    control = Compact()
+                if isinstance(control, (SetModel, SetEffort)):
+                    outcome = await _execute_prime_setting(conversation_id, control)
+                else:
+                    outcome = await PrimeExtensionBinding(
+                        runtime_paths(conversation_id).root
+                    ).execute(control)
+                return JSONResponse(
+                    status_code=outcome.http_status, content=outcome.response_body()
+                )
+
         _side_thread_id = body.get("codex_side_thread_id") if isinstance(body, dict) else None
         if _side_thread_id:
             # Side-chat controls use the parent's bridge but target the child's
@@ -6191,7 +6322,10 @@ def create_runner_app(
             message_body = dict(body)
             message_body["conversation_id"] = conversation_id
 
-            if _is_native_harness(conversation_id):
+            if (
+                _is_native_harness(conversation_id)
+                and _session_harness_name(conversation_id) != "prime-native"
+            ):
                 resource_registry.note_session_turn_started(conversation_id)
 
             _seq = _ingest_next_seq.get(conversation_id, 0)
@@ -6204,6 +6338,25 @@ def create_runner_app(
                 while _ingest_now_serving.get(conversation_id, 0) != _seq:
                     await _cond.wait()
             try:
+                if _session_harness_name(conversation_id) == "prime-native":
+                    from omnigent.harnesses.prime_native.bridge import runtime_paths
+                    from omnigent.harnesses.prime_native.controls import (
+                        ControlOutcome,
+                        ControlStatus,
+                        PrimeExtensionBinding,
+                    )
+
+                    await _ensure_native_terminal_for_turn(conversation_id, "prime-native")
+                    binding = PrimeExtensionBinding(runtime_paths(conversation_id).root)
+                    if not await binding.wait_until_ready():
+                        unavailable = ControlOutcome(
+                            ControlStatus.UNAVAILABLE, "No live Prime extension binding"
+                        )
+                        return JSONResponse(
+                            status_code=unavailable.http_status,
+                            content=unavailable.response_body(),
+                        )
+
                 _raw_content = message_body.get("content")
                 if isinstance(_raw_content, list):
                     message_body["content"] = await _resolve_forwarded_message_content(
@@ -6323,6 +6476,8 @@ def create_runner_app(
                     _session_histories[conversation_id] = loaded
 
                 _begin_turn_slot(conversation_id)
+                if _session_harness_name(conversation_id) == "prime-native":
+                    resource_registry.note_session_turn_started(conversation_id)
                 _logger.info(
                     "post_session_events: starting background turn conv=%s",
                     conversation_id,
@@ -6331,7 +6486,7 @@ def create_runner_app(
 
                 _publish_turn_status(conversation_id, "running")
 
-                if stream:
+                if stream and _session_harness_name(conversation_id) != "prime-native":
                     response = await _stream_message_to_harness(message_body, conversation_id)
                     if not isinstance(response, StreamingResponse):
                         _on_proxy_stream_end(
@@ -6354,7 +6509,11 @@ def create_runner_app(
                     status_code=202,
                     content={
                         "status": "accepted",
-                        "detail": "Turn started.",
+                        "detail": (
+                            "Message accepted for Prime delivery."
+                            if _session_harness_name(conversation_id) == "prime-native"
+                            else "Turn started."
+                        ),
                     },
                 )
             finally:
@@ -6412,6 +6571,8 @@ def create_runner_app(
                     latest_assistant_text=output,
                     allow_history_preview_fallback=False,
                 )
+            if _session_harness_name(conversation_id) == "prime-native":
+                return Response(status_code=204)
             turn_completed = data.get("turn_completed") if isinstance(data, dict) else None
             interrupt_pending = False
             interrupt_work_id: str | None = None
@@ -7186,6 +7347,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)
@@ -7216,6 +7378,7 @@ def create_runner_app(
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
+        _prime_terminal_ensure_locks.pop(session_id, None)
         _cursor_terminal_ensure_locks.pop(session_id, None)
         _kiro_terminal_ensure_locks.pop(session_id, None)
         _antigravity_terminal_ensure_locks.pop(session_id, None)
@@ -7419,7 +7582,7 @@ def create_runner_app(
                 process_manager is not None and process_manager.has_active_turn(conv_id)
             ):
                 return True
-            if _native_pane_status.get(conv_id) == "running":
+            if _native_pane_status.get(conv_id) in _IN_FLIGHT_SESSION_STATUSES:
                 return True
             # A pane parked on a permission prompt emits nothing and reports no
             # active turn, so every signal above reads idle. Reaping it kills the

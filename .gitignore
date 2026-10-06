@@ -1,6 +1,10 @@
 # OCR needs an explicit file exception for tracked GitHub automation.
 # Keep these before generated-file exclusions so those exclusions still apply.
 .*/
+!.agents/
+!.agents/skills/
+!.agents/skills/verify-prime-native/
+!.agents/skills/verify-prime-native/**
 !.github/
 !.github/**
 .github/**/.*/

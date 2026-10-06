@@ -8415,3 +8415,28 @@ async def test_host_mcp_tools_failure_is_private(monkeypatch, caplog, error, sta
     )
     assert result.status == status
     assert "synthetic-private-config" not in encode_host_frame(result) + caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("models", [[], [{"id": "verify/fixture", "displayName": "Fixture"}]])
+async def test_prime_host_catalog_preserves_real_and_empty_results(monkeypatch, models):
+    monkeypatch.setattr("omnigent.harnesses.prime_native.catalog.model_options", lambda: models)
+    host = _make_host_process()
+    result = await host._handle_model_options(
+        HostModelOptionsFrame(request_id="prime", harness="prime-native")
+    )
+    assert result.status == "ok"
+    assert [model["id"] for model in result.models] == [model["id"] for model in models]
+
+
+@pytest.mark.asyncio
+async def test_prime_host_catalog_failure_is_not_a_curated_fallback(monkeypatch):
+    def unavailable():
+        raise FileNotFoundError("prime-agent")
+
+    monkeypatch.setattr("omnigent.harnesses.prime_native.catalog.model_options", unavailable)
+    result = await _make_host_process()._handle_model_options(
+        HostModelOptionsFrame(request_id="prime", harness="prime-native")
+    )
+    assert result.status == "failed"
+    assert result.error == "failed to resolve Prime model options"

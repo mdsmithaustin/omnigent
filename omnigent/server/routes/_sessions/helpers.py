@@ -77,6 +77,16 @@ from omnigent.harness_plugins import (
     DEVIN_NATIVE_CODING_AGENT,
     NativeCodingAgent,
 )
+from omnigent.harnesses.prime_native.catalog import PrimeModelRef
+from omnigent.harnesses.prime_native.controls import (
+    Compact,
+    Control,
+    ControlOutcome,
+    ControlStatus,
+    Interrupt,
+    SetEffort,
+    SetModel,
+)
 from omnigent.models.model_metadata import concrete_reported_model
 from omnigent.native.failure_telemetry import failure_log_attributes
 from omnigent.native.native_coding_agents import (
@@ -2475,37 +2485,12 @@ def _persist_external_model_options(
     conv: Conversation,
     body: SessionEventInput,
 ) -> None:
-    """
-    Record the model catalog a native harness's extension reported.
-
-    Sourced from the harness's live model registry (pi-native:
-    ``ctx.modelRegistry.getAvailable()``), so it reflects the models the
-    harness actually loaded no matter how it authenticated — an
-    Omnigent-configured provider OR the harness's own ``/login``. This is why
-    the pi picker populates even in the ``/login`` path, where no
-    ``models.json`` is written into the bridge dir for a file-read to find.
-
-    Gated to the pi-native wrapper: only :func:`_fetch_model_options` *serves*
-    this cache for pi-native, so accepting a push from any other session would
-    just leave a stray cache entry alive until teardown. Reject at ingest to
-    keep the contract explicit.
-
-    Stores into :data:`_pushed_model_options_cache` (which a browser reload
-    does NOT clear — the extension only pushes on session start) and publishes
-    ``session.model_options`` so open clients re-read the snapshot. An empty
-    list evicts the entry rather than caching nothing.
-
-    :param session_id: Session/conversation identifier, e.g.
-        ``"conv_abc123"``.
-    :param conv: Conversation row whose labels identify the wrapper.
-    :param body: External model-options event body. ``data.models`` must be a
-        list of ``{"id": str, ...}`` objects.
-    :raises OmnigentError: If the session is not pi-native, or ``data.models``
-        is missing or malformed.
-    """
-    if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _PI_NATIVE_WRAPPER_LABEL_VALUE:
+    native_agent = _native_coding_agent_for_session(conv)
+    if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _PI_NATIVE_WRAPPER_LABEL_VALUE and (
+        native_agent is None or native_agent.harness != "prime-native"
+    ):
         raise OmnigentError(
-            "external_model_options is only accepted for pi-native sessions",
+            "external_model_options requires a Pi or Prime Native session",
             code=ErrorCode.INVALID_INPUT,
         )
     raw_models = body.data.get("models")
@@ -4555,6 +4540,63 @@ class _RunnerForwardResult:
     body: str
 
 
+@dataclass(frozen=True)
+class _PrimeControlReceipt:
+    outcome: ControlOutcome
+    http_status: int
+
+
+def _decode_prime_control_receipt(
+    result: _RunnerForwardResult | None, *, expected: Control
+) -> _PrimeControlReceipt:
+    http_status = result.status_code if result is not None else 504
+    failed_http = 400 <= http_status < 600
+    unknown = _PrimeControlReceipt(
+        ControlOutcome(ControlStatus.UNKNOWN), http_status if failed_http else 504
+    )
+    try:
+        body = json.loads(result.body) if result is not None else None
+        if not isinstance(body, dict):
+            return unknown
+        status = ControlStatus(body["status"])
+        detail = body.get("detail", "")
+        if not isinstance(detail, str):
+            return unknown
+        if status in {ControlStatus.REJECTED, ControlStatus.UNAVAILABLE, ControlStatus.UNKNOWN}:
+            return (
+                _PrimeControlReceipt(ControlOutcome(status, detail), http_status)
+                if failed_http
+                else unknown
+            )
+        if failed_http or "error" in body:
+            return unknown
+        if isinstance(expected, Interrupt):
+            return (
+                _PrimeControlReceipt(ControlOutcome(status, detail), 202)
+                if http_status == 202 and status == ControlStatus.INTERRUPT_ACCEPTED
+                else unknown
+            )
+        if http_status != 200 or status != ControlStatus.APPLIED:
+            return unknown
+        match expected:
+            case SetModel(model):
+                if body.get("model") != model.selector:
+                    return unknown
+                outcome = ControlOutcome(status, detail, model=PrimeModelRef.parse(body["model"]))
+            case SetEffort():
+                effort = body.get("effort")
+                if not isinstance(effort, str) or effort not in EFFORT_VALUES:
+                    return unknown
+                outcome = ControlOutcome(status, detail, effort=effort)
+            case Compact():
+                outcome = ControlOutcome(status, detail)
+            case _:
+                return unknown
+        return _PrimeControlReceipt(outcome, http_status)
+    except (ValueError, TypeError, KeyError):
+        return unknown
+
+
 def _require_external_status_forward(
     session_id: str,
     status: str,
@@ -6388,34 +6430,13 @@ async def _proxy_get_session_resources_to_runner(
 
 
 def _native_coding_agent_for_session(conv: Conversation) -> NativeCodingAgent | None:
-    """
-    Resolve native terminal metadata for a session, by wrapper label OR harness.
-
-    Two independent signals identify a native session, because native message
-    handling must NOT be coupled to the terminal-first presentation labels:
-
-    * the ``omnigent.wrapper`` presentation label — set for the built-in
-      terminal-first wrapper sessions (``omnigent claude`` / ``omnigent
-      codex``); resolved directly and cheaply here (short-circuits the harness
-      load below); and
-    * the bound agent's RESOLVED harness — for a CUSTOM agent that declares a
-      native harness (e.g. a user ``polly`` orchestrator with
-      ``executor.harness: codex-native``) but is intentionally CHAT-first, so
-      it carries no wrapper label. Its runner still runs a native transcript
-      forwarder (the single writer for the conversation), so its web messages
-      must take the same native single-writer path — else the inbound user
-      message is persisted AP-side AND mirrored by the forwarder, landing
-      twice. Resolved via :func:`_resolve_harness` (honors a per-session
-      ``harness_override``), independent of the presentation labels; SDK
-      harnesses resolve to ``None``.
-
-    :param conv: Conversation row for the target session.
-    :returns: The :class:`NativeCodingAgent` for the session's harness, or
-        ``None`` when it is not a native terminal harness.
-    """
     wrapper = conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
     native_agent = native_coding_agent_for_wrapper_label(wrapper)
     if native_agent is not None:
+        if conv.harness_override:
+            harness = _resolve_harness(conv)
+            if native_agent.harness == "prime-native" or harness == "prime-native":
+                return native_coding_agent_for_harness(harness)
         return native_agent
     return native_coding_agent_for_harness(_resolve_harness(conv))
 

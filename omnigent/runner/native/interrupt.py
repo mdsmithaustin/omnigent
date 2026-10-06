@@ -32,6 +32,7 @@ import asyncio
 import contextlib
 import importlib
 import logging
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -315,7 +316,13 @@ def native_cancel_capability(wrapper_label: str | None) -> str:
     agent = native_agent_for_cancel(wrapper_label)
     if agent is None:
         return "inprocess"
-    if agent.key == "claude" or agent.key in _UNIFORM_STOP:
+    from omnigent.native.native_dispatch import resolve_hook_for_key
+
+    if (
+        agent.key == "claude"
+        or agent.key in _UNIFORM_STOP
+        or resolve_hook_for_key(agent.key, "stop_handler") is not None
+    ):
         return "stop"
     return "best_effort"
 
@@ -372,6 +379,14 @@ class NativeInterruptRunner:
         if agent is None:
             return None
         key = agent.key
+        if key == "prime-native":
+            from omnigent.harnesses.prime_native.bridge import runtime_paths
+            from omnigent.harnesses.prime_native.controls import Interrupt, PrimeExtensionBinding
+
+            outcome = await PrimeExtensionBinding(runtime_paths(conv_id).root).execute(
+                Interrupt(), timeout_s=3.0
+            )
+            return JSONResponse(status_code=outcome.http_status, content=outcome.response_body())
         if key == "claude":
             return await self._claude_interrupt(conv_id)
         if key == "codex":
@@ -396,6 +411,27 @@ class NativeInterruptRunner:
         key = agent.key
         if key == "claude":
             return await self._claude_stop(conv_id)
+        from omnigent.native.native_dispatch import resolve_hook_for_key
+
+        stop_handler = resolve_hook_for_key(key, "stop_handler")
+        if stop_handler is not None:
+            try:
+                await asyncio.to_thread(stop_handler, conv_id)
+                await self._teardown_session_terminals(conv_id, require_confirmation=True)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "native_stop_failed",
+                        "detail": self._client_safe_error_detail(
+                            exc, context=f"{harness_name} stop"
+                        ),
+                    },
+                )
+            self._publish_event(conv_id, {"type": "session.status", "status": "idle"})
+            self.clear_pending_interrupt(conv_id)
+            self._mark_subagent_terminal_and_wake(conv_id, status="cancelled", output=None)
+            return Response(status_code=204)
         if key in ("codex", "pi"):
             return await self.interrupt(harness_name, conv_id)
         spec = _UNIFORM_STOP.get(key)
@@ -521,13 +557,17 @@ class NativeInterruptRunner:
                 delivery_ack.reason,
             )
 
-    async def _teardown_session_terminals(self, conv_id: str) -> None:
+    async def _teardown_session_terminals(
+        self, conv_id: str, *, require_confirmation: bool = False
+    ) -> None:
         from omnigent.entities.session_resources import terminal_resource_id
         from omnigent.runner.tool_dispatch import _publish_terminal_deleted_event
 
         terminal_registry = self._resource_registry.terminal_registry
         if terminal_registry is None:
             return
+        if require_confirmation:
+            await terminal_registry.close_failed_launches(conv_id, terminal_name="prime-native")
         terminals = [
             (entry.terminal_name, entry.session_key)
             for entry in terminal_registry.list_for_conversation(conv_id)
@@ -535,8 +575,12 @@ class NativeInterruptRunner:
         for terminal_name, session_key in terminals:
             terminal_id = terminal_resource_id(terminal_name, session_key)
             try:
-                await self._resource_registry.close_terminal(conv_id, terminal_id)
+                closed = await self._resource_registry.close_terminal(conv_id, terminal_id)
+                if require_confirmation and not closed:
+                    raise RuntimeError(f"Terminal closure was not confirmed: {terminal_id}")
             except (RuntimeError, OSError):
+                if require_confirmation:
+                    raise
                 self._logger.warning(
                     "Failed to close terminal %s for session %s during stop",
                     terminal_id,

@@ -11,6 +11,7 @@ no-handler fall-through contract (antigravity/opencode), and the 503 mapping.
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -33,6 +34,9 @@ class _FakeAck:
 class _FakeTerminalRegistry:
     def __init__(self) -> None:
         self.closed: list[str] = []
+
+    async def close_failed_launches(self, conv_id: str, *, terminal_name: str) -> None:
+        pass
 
     def list_for_conversation(self, conv_id: str) -> list[Any]:
         return []
@@ -110,6 +114,7 @@ def _make_runner(**overrides: Any) -> tuple[NativeInterruptRunner, dict[str, Any
 def test_native_cancel_capability_follows_stop_registry() -> None:
     """Parent cancel capability must track ``_UNIFORM_STOP`` plus Claude."""
     from omnigent.native.native_coding_agents import NATIVE_CODING_AGENTS
+    from omnigent.native.native_dispatch import resolve_hook_for_key
     from omnigent.runner.native.interrupt import (
         _UNIFORM_STOP,
         native_cancel_capability,
@@ -117,7 +122,11 @@ def test_native_cancel_capability_follows_stop_registry() -> None:
 
     for agent in NATIVE_CODING_AGENTS:
         capability = native_cancel_capability(agent.wrapper_label)
-        if agent.key == "claude" or agent.key in _UNIFORM_STOP:
+        if (
+            agent.key == "claude"
+            or agent.key in _UNIFORM_STOP
+            or resolve_hook_for_key(agent.key, "stop_handler") is not None
+        ):
             assert capability == "stop", agent.key
         else:
             assert capability == "best_effort", agent.key
@@ -557,3 +566,82 @@ async def test_claude_interrupt_resolves_bridge_id_and_injects(
     # No optimistic 'cancelled': the outcome is unknown until an edge lands.
     assert captured["wakes"] == []
     assert runner.take_pending_interrupt("conv_cl")[0] is True
+
+
+@pytest.mark.asyncio
+async def test_prime_stop_dispatches_registered_runtime_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.harnesses.prime_native import process
+
+    stopped = []
+    monkeypatch.setattr(process, "stop_session", stopped.append)
+    runner, captured = _make_runner()
+    response = await runner.stop("prime-native", "conv_prime")
+    assert response is not None and response.status_code == 204
+    assert stopped == ["conv_prime"]
+    assert captured["published"] == [("conv_prime", {"type": "session.status", "status": "idle"})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("worker still running"),
+        subprocess.TimeoutExpired(["prime-agent", "shutdown"], 30),
+        subprocess.CalledProcessError(1, ["prime-agent", "shutdown"]),
+    ],
+)
+async def test_prime_stop_failure_is_not_reported_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    import json
+
+    from omnigent.harnesses.prime_native import process
+
+    def fail(_session_id: str) -> None:
+        raise error
+
+    monkeypatch.setattr(process, "stop_session", fail)
+    runner, captured = _make_runner()
+    response = await runner.stop("prime-native", "conv_prime")
+    assert response is not None and response.status_code == 503
+    assert json.loads(bytes(response.body)) == {
+        "error": "native_stop_failed",
+        "detail": "safe:prime-native stop",
+    }
+    assert captured["published"] == []
+    assert captured["wakes"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["active", "retained", "missing"])
+async def test_prime_stop_retains_terminal_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from omnigent.harnesses.prime_native import process
+
+    class FailingTerminalRegistry(_FakeTerminalRegistry):
+        async def close_failed_launches(self, conv_id: str, *, terminal_name: str) -> None:
+            assert terminal_name == "prime-native"
+            if failure == "retained":
+                raise RuntimeError("retained terminal is still owned")
+
+        def list_for_conversation(self, conv_id: str) -> list[Any]:
+            return [SimpleNamespace(terminal_name="prime-native", session_key="main")]
+
+    class FailingResourceRegistry(_FakeResourceRegistry):
+        async def close_terminal(self, conv_id: str, terminal_id: str) -> bool:
+            if failure == "missing":
+                return False
+            raise RuntimeError("active terminal is still owned")
+
+    resource_registry = FailingResourceRegistry()
+    resource_registry.terminal_registry = FailingTerminalRegistry()
+    monkeypatch.setattr(process, "stop_session", lambda _: None)
+    runner, captured = _make_runner(resource_registry=resource_registry)
+    response = await runner.stop("prime-native", "conv_prime")
+    assert response is not None and response.status_code == 503
+    assert captured["published"] == []
+    assert captured["wakes"] == []
