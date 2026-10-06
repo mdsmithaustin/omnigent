@@ -359,7 +359,6 @@ async def test_prime_delivery_does_not_publish_completed_or_idle(
     from omnigent.harnesses.prime_native import bridge
 
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
-    write_live_binding(bridge.runtime_paths("prime-delivery").root)
     app = await prime_app(
         [
             _sse({"type": "response.created", "response": {"id": "delivery"}}),
@@ -374,6 +373,7 @@ async def test_prime_delivery_does_not_publish_completed_or_idle(
 
         queue = _session_event_queues_ref.setdefault("prime-delivery", asyncio.Queue())
         _drain_session_event_queue(queue)
+        write_live_binding(bridge.runtime_paths("prime-delivery").root)
         response = await client.post(
             f"/v1/sessions/prime-delivery/events?stream={str(stream).lower()}",
             json={

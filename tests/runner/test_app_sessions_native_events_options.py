@@ -23,6 +23,7 @@ from omnigent.harnesses.qwen_native import bridge as qwen_native_bridge
 from omnigent.runner import create_runner_app, native_controls
 from omnigent.spec.types import AgentSpec, ExecutorSpec
 from omnigent.terminals import TerminalRegistry
+from tests.native_source_helpers import NativeSourceServer
 from tests.runner.conftest import (
     _build_app_for_spec,
     _drain_session_event_queue,
@@ -2094,6 +2095,8 @@ async def test_events_model_change_without_status_omits_bridge_path_from_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An unverifiable model switch logs session context without the bridge path."""
+    logger = logging.getLogger("omnigent.runner.app")
+    monkeypatch.setattr(logger, "handlers", [*logger.handlers, caplog.handler])
     with caplog.at_level(logging.WARNING, logger="omnigent.runner.app"):
         resp = await _post_model_change_with_status_sequence(monkeypatch, [None])
 
@@ -3363,10 +3366,13 @@ async def test_prime_message_preflight_exit_does_not_start_resource_turn(
         mode = preflight_exit
 
         def __init__(self) -> None:
+            self.native_sources = NativeSourceServer(tmp_path)
             super().__init__(base_url="http://server", transport=httpx.MockTransport(self.respond))
             self.awaiting_history = asyncio.Event()
 
         async def respond(self, request: httpx.Request) -> httpx.Response:
+            if "/native-admission" in request.url.path:
+                return self.native_sources.respond(request)
             if request.url.path.endswith("/items"):
                 if request.url.params.get("order") == "asc" and self.mode == "cancelled":
                     self.awaiting_history.set()

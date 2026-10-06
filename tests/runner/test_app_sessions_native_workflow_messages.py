@@ -1151,7 +1151,7 @@ async def test_cancelled_turn_publishes_idle_so_client_unsticks() -> None:
     assert "idle" in statuses, f"Cancelled turn must publish a terminal status; got: {statuses}"
 
 
-class _FakeServerClient:
+class _FakeServerClient(NullServerClient):
     """Fake server_client that returns paginated history items.
 
     Items must have an ``"id"`` field. Supports ``after`` cursor
@@ -1162,6 +1162,7 @@ class _FakeServerClient:
     def __init__(
         self, items: list[dict[str, Any]], *, session_snapshot: dict[str, Any] | None = None
     ) -> None:
+        super().__init__()
         self._items = items
         self._session_snapshot: dict[str, Any] = session_snapshot or {}
         self.get_calls: list[dict[str, str]] = []
