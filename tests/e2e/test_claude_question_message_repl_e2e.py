@@ -163,7 +163,7 @@ def _runner_lines(tmp_path: Path) -> list[str]:
 
 def _remove_test_history(prompt: str) -> None:
     """Remove only our exact input from the REPL's fixed FileHistory path."""
-    path = Path.home() / ".omnigent_history"
+    path = Path.home() / ".omnigent-mdsmithaustin_history"
     if not path.exists():
         return
     original = path.read_bytes()
