@@ -1,11 +1,15 @@
 // DOM smoke for the slash-command indicator. Pure jsdom — no
 // canvas, no clipboard, no animation timing.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { ConversationScopeContext } from "@/components/chat/conversationScope";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SlashCommandCard } from "./SlashCommandCard";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("SlashCommandCard", () => {
   it("renders the 'Skill' framing + name with no payload", () => {
@@ -71,4 +75,76 @@ describe("SlashCommandCard", () => {
     );
     expect(container.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
   });
+});
+
+it.each([
+  ["unknown", false, "Admission unknown"],
+  ["rejected", false, "Rejected before admission"],
+  ["accepted", false, "Admitted; completion not confirmed"],
+  ["accepted", true, "Historical copy"],
+] as const)("shows saved %s admission with historical=%s", (status, historical, label) => {
+  const props = {
+    kind: "skill" as const,
+    name: "review",
+    arguments: "",
+    output: null,
+    delivery: { invocation_id: "ab".repeat(16), fingerprint: "cd".repeat(32), status, historical },
+  };
+  const { container } = render(
+    <ConversationScopeContext.Provider value="conv_check">
+      <SlashCommandCard {...props} />
+    </ConversationScopeContext.Provider>,
+  );
+  expect(container.textContent).toContain(label);
+  if (historical) expect(screen.queryByRole("button", { name: "Check admission" })).toBeNull();
+});
+
+it("checks admission from a transcript card using only history reads", async () => {
+  const fetcher = vi.fn(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "claim",
+              type: "slash_command",
+              delivery: {
+                invocation_id: "ab".repeat(16),
+                fingerprint: "cd".repeat(32),
+                status: "accepted",
+              },
+            },
+          ],
+          has_more: false,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <ConversationScopeContext.Provider value="conv_check">
+      <SlashCommandCard
+        kind="skill"
+        name="review"
+        arguments="hello"
+        output={null}
+        delivery={{
+          invocation_id: "ab".repeat(16),
+          fingerprint: "cd".repeat(32),
+          status: "unknown",
+        }}
+      />
+    </ConversationScopeContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Check admission" }));
+  await waitFor(() =>
+    expect(screen.getByText("Admitted; completion not confirmed").textContent).toBe(
+      "Admitted; completion not confirmed",
+    ),
+  );
+  expect(fetcher.mock.calls).toHaveLength(1);
+  expect(String(fetcher.mock.calls[0]?.[0])).toContain("/v1/sessions/conv_check/items?");
+  expect(screen.getByRole("status").textContent).toBe(
+    "Saved admission checked. Nothing was resent.",
+  );
 });

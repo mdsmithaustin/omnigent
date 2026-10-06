@@ -250,6 +250,7 @@ class DrainedInput:
     native_turn_id: str | None = None
     lifecycle_response_id: str | None = None
     uncertain: bool = False
+    persisted_item_id: str | None = None
 
 
 @dataclass
@@ -314,6 +315,7 @@ class _Entry:
     created_by: str | None = None
     stable_id: str | None = None
     background_titles_enabled: bool = True
+    persisted_item_id: str | None = None
     # Lambda (not ``_now`` directly) so a monkeypatched ``_now`` is
     # resolved at construction time rather than bound at class def.
     created_at: float = field(default_factory=lambda: _now())
@@ -376,6 +378,7 @@ def record(
     stable_id: str | None = None,
     *,
     background_titles_enabled: bool = True,
+    persisted_item_id: str | None = None,
 ) -> str:
     """
     Record an un-consumed web-composer user message.
@@ -422,6 +425,7 @@ def record(
             created_by=created_by,
             stable_id=stable_id,
             background_titles_enabled=background_titles_enabled,
+            persisted_item_id=persisted_item_id,
         )
         entries = _pending.setdefault(conversation_id, {})
         entries[pending_id] = entry
@@ -793,6 +797,7 @@ def restore(conversation_id: str, drained: DrainedInput) -> None:
         reason_code=drained.reason_code,
         native_turn_id=drained.native_turn_id,
         lifecycle_response_id=drained.lifecycle_response_id,
+        persisted_item_id=drained.persisted_item_id,
     )
     with _lock:
         entries = _pending.get(conversation_id, {})
@@ -998,7 +1003,7 @@ def snapshot_for(conversation_id: str) -> list[dict[str, Any]]:
                 **({"created_by": entry.created_by} if entry.created_by is not None else {}),
             }
             for entry in entries.values()
-            if not entry.interrupted
+            if not entry.interrupted and entry.persisted_item_id is None
         ]
 
 
@@ -1019,6 +1024,7 @@ def _drained_input(entry: _Entry) -> DrainedInput:
         reason_code=entry.reason_code,
         native_turn_id=entry.native_turn_id,
         lifecycle_response_id=entry.lifecycle_response_id,
+        persisted_item_id=entry.persisted_item_id,
     )
 
 

@@ -289,6 +289,22 @@ class StartupInputOptions(BaseModel):
     background_titles_enabled: bool = False
 
 
+class SkillCommandDelivery(BaseModel):
+    invocation_id: str
+    fingerprint: str
+    status: Literal["unknown", "accepted", "rejected"] = "unknown"
+    context_item_id: str | None = None
+    historical: bool = False
+
+
+class SkillCommandContext(BaseModel):
+    """A paste payload enters history only after its command is admitted."""
+
+    command_item_id: str
+    status: Literal["unknown", "accepted", "rejected"] = "unknown"
+    historical: bool = False
+
+
 # Longest harness message phase kept, e.g. Codex ``"partial_answer"``.
 _MAX_MESSAGE_PHASE_LENGTH = 64
 
@@ -336,6 +352,7 @@ class MessageData(BaseModel):
     startup_options: StartupInputOptions | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    skill_context: SkillCommandContext | None = None
 
     @field_validator("content")
     @classmethod
@@ -786,6 +803,8 @@ class SlashCommandData(BaseModel):
     startup_options: StartupInputOptions | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    native_invocation: str | None = None
+    delivery: SkillCommandDelivery | None = None
 
 
 ItemData = (

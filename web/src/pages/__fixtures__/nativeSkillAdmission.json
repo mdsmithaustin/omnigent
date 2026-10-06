@@ -1,0 +1,80 @@
+[
+  {
+    "id": "4c6b894dcd2a532c8b72c2084cddc6b8",
+    "response_id": "turn_948a4ddf95ea48b6b572f57c65c2ea64",
+    "type": "slash_command",
+    "status": "completed",
+    "created_at": 1791179408,
+    "model": "recovery-command-proof",
+    "kind": "skill",
+    "name": "recovery-nonce",
+    "arguments": "EFFECT_edf9f79f312ae1a8",
+    "native_invocation": "/recovery-nonce EFFECT_edf9f79f312ae1a8",
+    "delivery": {
+      "invocation_id": "f4d13bb24fdd467db5810319cfec2f0d",
+      "fingerprint": "ac84900c26e8ba1dfaf1620d4302353f5147549ce4d8ee8ce7a761150b03b49c",
+      "status": "accepted",
+      "historical": false
+    }
+  },
+  {
+    "id": "0e6f665f38215e478801e775beadf990",
+    "response_id": "turn_948a4ddf95ea48b6b572f57c65c2ea64",
+    "type": "message",
+    "status": "completed",
+    "created_at": 1791179408,
+    "role": "user",
+    "content": [],
+    "is_meta": true
+  },
+  {
+    "id": "620c7e065322571386c70c856c460ec5",
+    "response_id": "resp_claude_bc44ef8488f77cc0db1c631a3b8b5af6",
+    "type": "message",
+    "status": "completed",
+    "created_at": 1791179408,
+    "role": "user",
+    "content": [
+      {
+        "type": "input_text",
+        "text": "Base directory for this skill: /private/tmp/omnigent-recovery/client-attach-live-qualified-v8/workspace/.claude/skills/recovery-nonce\n\nExecute the requested nonce with the Bash tool once.\n\n\nARGUMENTS: EFFECT_edf9f79f312ae1a8"
+      }
+    ],
+    "is_meta": true
+  },
+  {
+    "id": "eb083aeb34b4552fbc650aebbefee2f0",
+    "response_id": "resp_claude_e1dd251fbb51d2eaaa0d29a957766e61",
+    "type": "function_call",
+    "status": "completed",
+    "created_at": 1791179408,
+    "model": "claude-native-ui",
+    "name": "Bash",
+    "arguments": "{\"command\":\"printf '%s\\\\n' EFFECT_edf9f79f312ae1a8 >> /private/tmp/omnigent-recovery/client-attach-live-qualified-v8/native-effects.txt\",\"description\":\"Write independent recovery nonce\"}",
+    "call_id": "toolu_f75878c06d49e41e"
+  },
+  {
+    "id": "cb232392899d5ef1b99e35f8c43e72d2",
+    "response_id": "resp_claude_e1dd251fbb51d2eaaa0d29a957766e61",
+    "type": "function_call_output",
+    "status": "completed",
+    "created_at": 1791179409,
+    "call_id": "toolu_f75878c06d49e41e",
+    "output": "(Bash completed with no output)"
+  },
+  {
+    "id": "8f0f133bdfe45764b3ed17e68dc9cf4c",
+    "response_id": "resp_claude_e1dd251fbb51d2eaaa0d29a957766e61",
+    "type": "message",
+    "status": "completed",
+    "created_at": 1791179409,
+    "role": "assistant",
+    "content": [
+      {
+        "type": "output_text",
+        "text": "RECOVERY_NATIVE_DONE EFFECT_edf9f79f312ae1a8"
+      }
+    ],
+    "model": "claude-native-ui"
+  }
+]

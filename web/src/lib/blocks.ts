@@ -10,6 +10,7 @@ import type { NativePermissionDelivery } from "./nativePermissionDelivery";
 // uses camelCase fields + a `type` discriminator string equal to the
 // Python class name lowercased (e.g. ResponseStartBlock → "response_start").
 
+import type { SkillCommandDelivery } from "./skillCommandDelivery";
 import { capitalizeAgentName } from "./agentLabels";
 import { agentRootName } from "./forkHarness";
 import { nativeCodingAgentForAgentName } from "./nativeCodingAgents";
@@ -288,6 +289,7 @@ export interface NativeToolBlock {
  * frontends render slash commands via their own TUI).
  */
 export interface SlashCommandBlock {
+  delivery?: SkillCommandDelivery;
   type: "slash_command";
   ctx: BlockContext;
   /**
