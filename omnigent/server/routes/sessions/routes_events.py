@@ -1487,12 +1487,16 @@ def register_events_routes(
                 from omnigent.server.routes._sessions.native_stop import stop_native_source
 
                 _interrupt_fenced_sessions.add(session_id)
-                result = await stop_native_source(
-                    conv,
-                    conversation_store,
-                    runner_router,
-                    getattr(request.app.state, "host_registry", None),
-                )
+                try:
+                    result = await stop_native_source(
+                        conv,
+                        conversation_store,
+                        runner_router,
+                        getattr(request.app.state, "host_registry", None),
+                    )
+                except Exception:
+                    _interrupt_fenced_sessions.discard(session_id)
+                    raise
                 if result.outcome != "verified":
                     _interrupt_fenced_sessions.discard(session_id)
                 return {"queued": False, "native_stop": result.model_dump(mode="json")}

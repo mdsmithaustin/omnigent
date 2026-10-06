@@ -9511,10 +9511,9 @@ async def test_stop_session_forwards_stop_session_event_to_runner(
         )
         assert resp.status_code == 202, resp.text
         # Control event, not a persisted item.
-        assert resp.json() == {"queued": False}, (
-            f"stop_session is a control event and must return "
-            f"{{'queued': False}}; got {resp.json()!r}"
-        )
+        assert resp.json().keys() == {"queued", "native_stop"}
+        assert resp.json()["queued"] is False
+        assert resp.json()["native_stop"]["outcome"] == "unknown"
 
     # Exactly one POST to the session's /events path, carrying the
     # stop_session type. 0 = the Omnigent branch didn't forward (no-op stop

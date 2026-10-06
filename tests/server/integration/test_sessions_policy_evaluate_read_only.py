@@ -369,34 +369,22 @@ async def test_request_phase_ask_decline_collapses_to_deny(
     assert resp.json()["result"] == "POLICY_ACTION_DENY"
 
 
-async def test_request_phase_skips_gate_when_web_prompt_pending(
+async def test_request_phase_evaluates_unproven_native_prompt_when_web_prompt_pending(
     auth_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     db_uri: str,
 ) -> None:
-    """
-    A REQUEST-phase eval is skipped (ALLOW) when a web prompt is in flight.
-
-    A native session's ``UserPromptSubmit`` hook posts ``PHASE_REQUEST`` for
-    every prompt, but a web-UI prompt was already gated server-side by
-    ``_evaluate_input_policy`` before injection. The presence of a
-    ``pending_inputs`` entry marks the prompt as web-origin, so the endpoint
-    short-circuits to ALLOW rather than re-gating (which would double-prompt
-    the human). If the dedup regressed, the ASK policy below would enter the
-    gate instead of returning a clean ALLOW.
-    """
     from omnigent.runtime import pending_inputs
 
-    # If the dedup is bypassed and the gate runs, this records the failure.
     gate_ran = {"called": False}
 
-    async def _fail_hold(_request: Any, **_kwargs: Any) -> bool:
+    async def _deny_hold(_request: Any, **_kwargs: Any) -> bool:
         gate_ran["called"] = True
-        return True
+        return False
 
     monkeypatch.setattr(
         "omnigent.server.routes.sessions._hold_native_ask_gate",
-        _fail_hold,
+        _deny_hold,
     )
     ask_policy = FunctionPolicySpec(
         name="admin__ask",
@@ -415,8 +403,6 @@ async def test_request_phase_skips_gate_when_web_prompt_pending(
     agent = await create_test_agent(auth_client, user=OWNER)
     session_id = await _create_session_as(auth_client, OWNER, agent["id"])
 
-    # Mark a web-composer prompt as in flight (recorded at POST /events for a
-    # native session, before the runner forward).
     pending_inputs.record(session_id, [{"type": "input_text", "text": "delete prod"}])
     try:
         resp = await auth_client.post(
@@ -428,6 +414,5 @@ async def test_request_phase_skips_gate_when_web_prompt_pending(
         pending_inputs.reset_for_tests()
 
     assert resp.status_code == 200, resp.text
-    # Skipped → clean ALLOW, and the ASK gate was never entered.
-    assert resp.json()["result"] == "POLICY_ACTION_ALLOW"
-    assert gate_ran["called"] is False, "dedup must skip the gate when a web prompt is pending"
+    assert resp.json()["result"] == "POLICY_ACTION_DENY"
+    assert gate_ran["called"] is True
