@@ -256,7 +256,7 @@ def bridge_root() -> Path:
     there. Tests may monkeypatch :data:`_BRIDGE_ROOT` to isolate bridge files.
 
     :returns: Absolute root for OpenCode-native bridge directories, e.g.
-        ``Path("~/.omnigent/opencode-native")``.
+        ``Path("~/.omnigent-mdsmithaustin/opencode-native")``.
     """
     return _BRIDGE_ROOT
 

@@ -138,7 +138,7 @@ def bridge_root() -> Path:
     Tests may monkeypatch :data:`_BRIDGE_ROOT` to isolate bridge files.
 
     :returns: Absolute root for Codex-native bridge directories, e.g.
-        ``Path("~/.omnigent/codex-native")``.
+        ``Path("~/.omnigent-mdsmithaustin/codex-native")``.
     """
     return _BRIDGE_ROOT
 
@@ -182,11 +182,11 @@ class CodexNativeBridgeState:
     :param session_id: Omnigent conversation id, e.g.
         ``"conv_abc123"``.
     :param socket_path: Unix socket path for the Codex app-server,
-        e.g. ``"/home/user/.omnigent/codex-native/x/app-server.sock"``.
+        e.g. ``"/home/user/.omnigent-mdsmithaustin/codex-native/x/app-server.sock"``.
     :param thread_id: Codex app-server thread id, e.g.
         ``"0196..."``.
     :param codex_home: Private per-session ``CODEX_HOME`` path, e.g.
-        ``"/home/user/.omnigent/codex-native/x/codex-home"``.
+        ``"/home/user/.omnigent-mdsmithaustin/codex-native/x/codex-home"``.
     :param cwd: Native Codex thread working directory, e.g.
         ``"/home/user/project"``.
     :param active_turn_id: Current Codex turn id, if one is running,
@@ -230,7 +230,7 @@ def bridge_dir_for_bridge_id(bridge_id: str) -> Path:
 
     :param bridge_id: Opaque bridge id, e.g. ``"bridge_abc123"``.
     :returns: Absolute bridge directory under
-        ``~/.omnigent/codex-native``.
+        ``~/.omnigent-mdsmithaustin/codex-native``.
     """
     digest = hashlib.sha256(bridge_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest
@@ -378,7 +378,7 @@ def write_mcp_bridge_config(bridge_dir: Path) -> None:
     a token that the relay HTTP server was started with).
 
     :param bridge_dir: Codex bridge directory, e.g.
-        ``Path("~/.omnigent/codex-native/<hash>")``.
+        ``Path("~/.omnigent-mdsmithaustin/codex-native/<hash>")``.
     """
     config_path = bridge_dir / _MCP_CONFIG_FILE
     if config_path.exists():
@@ -454,7 +454,7 @@ def write_policy_hook_config(
     here and read by :func:`read_policy_hook_config` at hook time.
 
     :param bridge_dir: Native Codex bridge directory, e.g.
-        ``Path("~/.omnigent/codex-native/<hash>")``.
+        ``Path("~/.omnigent-mdsmithaustin/codex-native/<hash>")``.
     :param ap_server_url: Omnigent server base URL the hook POSTs to, e.g.
         ``"http://127.0.0.1:8787"``.
     :param ap_auth_headers: Outbound auth headers for Omnigent requests, e.g.

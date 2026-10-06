@@ -161,7 +161,7 @@ def bridge_root() -> Path:
     Tests may monkeypatch :data:`_BRIDGE_ROOT` to isolate bridge files.
 
     :returns: Absolute root for Antigravity-native bridge directories, e.g.
-        ``Path("~/.omnigent/antigravity-native")``.
+        ``Path("~/.omnigent-mdsmithaustin/antigravity-native")``.
     """
     return _BRIDGE_ROOT
 
@@ -216,7 +216,7 @@ def bridge_dir_for_bridge_id(bridge_id: str) -> Path:
 
     :param bridge_id: Opaque bridge id, e.g. ``"bridge_abc123"``.
     :returns: Absolute bridge directory under
-        ``~/.omnigent/antigravity-native``.
+        ``~/.omnigent-mdsmithaustin/antigravity-native``.
     """
     digest = hashlib.sha256(bridge_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest

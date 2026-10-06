@@ -93,7 +93,7 @@ class TestConnectJcodeGatewayEnv:
 
         home = Path(result["JCODE_HOME"])
         assert home.exists() and str(tmp_path) in str(home)
-        assert "/omnigent-jcode-run/" in str(home)
+        assert "/mdma-jcode-run/" in str(home)
         assert "sess-abc" not in str(home)  # raw session id never in the path
         # Runtime dir is under the private home.
         assert result["JCODE_RUNTIME_DIR"] == str(home / "run")
@@ -176,7 +176,7 @@ class TestConnectJcodeGatewayEnv:
         _mock_broker(monkeypatch, workspace="https://ws.example")
         result = jd.connect_jcode_gateway_env(session_id="../../etc/evil")
         assert result is not None
-        root = os.path.realpath(str(tmp_path / "omnigent-jcode-run"))
+        root = os.path.realpath(str(tmp_path / "mdma-jcode-run"))
         assert os.path.realpath(result["JCODE_HOME"]).startswith(root + os.sep)
 
 

@@ -11,13 +11,14 @@ if TYPE_CHECKING:
     from omnigent.inner.terminal import TerminalInstance
 
 from omnigent._platform import stable_user_id
+from omnigent.installation_defaults import PRIME_TMP_PREFIX
 from omnigent.process_logging import data_dir
 
 PRIME_NATIVE_BRIDGE_DIR_ENV_VAR = "HARNESS_PRIME_NATIVE_BRIDGE_DIR"
 PRIME_NATIVE_CONFIG_ENV_VAR = "OMNIGENT_EXTENSION_NATIVE_CONFIG"
 KERNEL_PROCESS_NAMES_FILE = "kernel-process-names.json"
 _DATA_ROOT = data_dir()
-_COMPACT_ROOT = Path("/tmp") / f"ogp-{stable_user_id()}"
+_COMPACT_ROOT = Path("/tmp") / f"{PRIME_TMP_PREFIX}-{stable_user_id()}"
 
 
 def bridge_roots() -> tuple[Path, Path]:
