@@ -6,7 +6,7 @@ Omnigent continues to use canonical harness identifiers internally.
 
 from __future__ import annotations
 
-from omnigent.harness_plugins import harness_aliases, native_harnesses
+from omnigent.harness_plugins import harness_aliases, native_agents, native_harnesses
 
 HARNESS_ALIASES: dict[str, str] = harness_aliases()
 
@@ -58,21 +58,24 @@ def is_native_harness(harness: str | None) -> bool:
 
 
 def native_terminal_name(harness: str | None) -> str | None:
-    """Return the tmux terminal short-name a native harness runs its CLI in.
+    """Return the terminal resource name registered for a native harness.
 
-    Native CLI panes are keyed ``(conversation_id, <short-name>, "main")`` in the
-    terminal registry, where the short name is the canonical native harness id
-    with the ``-native`` suffix dropped — e.g. ``"claude-native"`` -> ``"claude"``,
-    ``"native-codex"`` -> ``"codex"``, ``"opencode-native"`` -> ``"opencode"``.
+    Native CLI panes are keyed ``(conversation_id, terminal_name, "main")``.
+    Native agent metadata owns the terminal name, such as ``"claude"`` for
+    ``"claude-native"`` and ``"prime-native"`` for ``"prime-native"``. Native
+    harnesses without matching metadata retain the historical affix-derived name.
 
     :param harness: A harness id (canonical or reversed alias), e.g.
         ``"cursor-native"``; ``None`` or a non-native harness returns ``None``.
-    :returns: The terminal short-name, e.g. ``"cursor"``, or ``None`` when
+    :returns: The terminal resource name, e.g. ``"cursor"``, or ``None`` when
         *harness* is not a native CLI harness.
     """
     if harness is None or not is_native_harness(harness):
         return None
     canonical = canonicalize_harness(harness) or harness
+    for agent in native_agents():
+        if agent.harness == canonical:
+            return agent.terminal_name
     # Canonical native ids are ``<name>-native``; some accepted aliases keep the
     # reversed ``native-<name>`` spelling (not all are folded by
     # ``canonicalize_harness``), so strip either affix.
