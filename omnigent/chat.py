@@ -3596,8 +3596,8 @@ def _start_local_server(
     Launch a local Omnigent server.
 
     Server stdout/stderr are routed to ``server.log`` in a
-    per-run directory under ``~/.omnigent-mdsmithaustin/logs`` so concurrent Omnigent sessions don't
-    interleave. The log path is returned to the caller (via
+    per-run directory under ``~/.omnigent-mdsmithaustin/logs`` so concurrent
+    Omnigent sessions do not interleave. The log path is returned to the caller (via
     :class:`LocalServer`) so :func:`_raise_server_failed`
     can surface it in its error message — critical because
     the REPL only surfaces the wrapped ``PermanentLLMError``

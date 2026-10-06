@@ -1,5 +1,3 @@
-"""Behavioral checks for independent core and UI SDK defaults."""
-
 from __future__ import annotations
 
 import os

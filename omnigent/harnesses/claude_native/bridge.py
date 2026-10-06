@@ -714,7 +714,6 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     from omnigent.harnesses.antigravity_native.bridge import bridge_root as antigravity_bridge_root
 
-    # Trust HOME for the default layout and the direct parent for a custom root.
     antigravity_root = _absolute_syntactic_path(antigravity_bridge_root())
     if target.is_relative_to(antigravity_root):
         trusted_parent = antigravity_root.parent
@@ -745,7 +744,6 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     from omnigent.harnesses.opencode_native.bridge import bridge_root as opencode_bridge_root
 
-    # Trust HOME for the default layout and the direct parent for a custom root.
     opencode_root = _absolute_syntactic_path(opencode_bridge_root())
     if target.is_relative_to(opencode_root):
         trusted_parent = opencode_root.parent
