@@ -276,16 +276,16 @@ async def test_prime_reverse_uuid_files_follow_runner_admission(monkeypatch, tmp
 
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     root = bridge.runtime_paths("uuid-order").root
-    write_live_binding(root)
     request_dir = root / "controls" / "requests"
     result_dir = root / "controls" / "results"
-    request_dir.mkdir()
+    request_dir.mkdir(parents=True)
     result_dir.mkdir()
     native = {"effort": "medium"}
     applied = []
     app = await prime_app()
     async with _runner_client(app) as client:
         await client.post("/v1/sessions", json={"session_id": "uuid-order", "agent_id": "agent"})
+        write_live_binding(root)
         ids = iter(["f".zfill(32), "1".zfill(32)])
         monkeypatch.setattr(
             controls, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=next(ids)))
@@ -502,7 +502,6 @@ async def test_delivery_stream_end_preserves_native_ownership_and_accepts_steeri
 
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     session_id = "prime-native-ownership"
-    write_live_binding(bridge.runtime_paths(session_id).root)
     app = await prime_app(
         [_sse({"type": "response.completed", "response": {"id": "delivery"}})],
         terminal_registry=TerminalRegistry(),
@@ -520,6 +519,7 @@ async def test_delivery_stream_end_preserves_native_ownership_and_accepts_steeri
         pane = PaneRef(session_id, "prime-native:main", "prime-native", tmp_path / "missing.sock")
         delivered = []
         for text in ("first input", "steer the active native loop"):
+            write_live_binding(bridge.runtime_paths(session_id).root)
             response = await client.post(
                 f"/v1/sessions/{session_id}/events",
                 json={"type": "message", "content": [{"type": "input_text", "text": text}]},
