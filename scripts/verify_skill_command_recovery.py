@@ -1063,6 +1063,11 @@ def run(args):
                 "item_id": recovered_card["id"],
                 "completion_item_id": completed(recovery),
             }
+            pane = json.loads((bridge / "tmux.json").read_text())
+            tmux = ["tmux", "-S", pane["socket_path"]]
+            target = pane["tmux_target"]
+            summary["restarted_tmux_socket"] = pane["socket_path"]
+            native_owners.capture_tmux(tmux, target)
 
             final_items = items()
             for invocation_id in (identity, ambiguous_request["data"]["stable_id"]):
