@@ -26,6 +26,7 @@ from cachetools import TTLCache
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.models import model_catalog
 from omnigent.models.model_fallbacks import CODEX_DEFAULT_MODEL
 from omnigent.util.json_types import JsonObject as _JsonObject
@@ -1392,7 +1393,7 @@ def _probe_codex_home(config_overrides: Sequence[str]) -> Path:
     key = hashlib.sha256(
         "\n".join((str(source_home.resolve()), *config_overrides)).encode("utf-8")
     ).hexdigest()[:12]
-    home = Path.home() / ".omnigent" / "cache" / "codex-model-probe" / key
+    home = default_user_dir() / "cache" / "codex-model-probe" / key
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     # The bridge skips files that already exist, and config.toml is copied
     # (not symlinked), so drop the copy to re-read an edited source config.

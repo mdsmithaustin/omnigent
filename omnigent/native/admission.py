@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import psutil
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.native.native_bridge_common import async_bridge_dir_preparation_lock
 from omnigent.native.native_dispatch import resolve_hook_for_key
 from omnigent.native.source_owner import (
@@ -30,7 +31,7 @@ def native_owner(source_id: str, provider: str) -> NativeOwner:
     runtime = (
         bridge(source_id)
         if bridge
-        else Path.home() / ".omnigent" / "native-owners" / provider / source_id
+        else default_user_dir() / "native-owners" / provider / source_id
     )
     identity = f"{platform.node()}:{psutil.boot_time()}:{getattr(os, 'getuid', lambda: -1)()}"
     return NativeOwner(

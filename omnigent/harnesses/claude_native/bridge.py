@@ -73,6 +73,7 @@ from omnigent.harnesses.claude_native.message_display_hook import MESSAGE_DELTAS
 from omnigent.harnesses.claude_native.status import CONTEXT_RAW_FILE
 from omnigent.harnesses.diagnostics import detect_sign_in_prompt, sign_in_next_step
 from omnigent.harnesses.kiro_native import bridge as kiro_bridge
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX, USER_DIRNAME
 from omnigent.models.claude_model_vocabulary import MODEL_VOCABULARY_ENV_VARS
 from omnigent.models.model_metadata import concrete_reported_model
 from omnigent.native.failure_telemetry import FailureContext
@@ -178,7 +179,7 @@ DEFAULT_BRIDGE_PORT_POOL: tuple[int, ...] = tuple(range(28700, 28716))
 # `_BRIDGE_ROOT_PARENT` must be owned by the current uid and not be a
 # symlink — see :func:`_ensure_secure_dir`.
 _TRUSTED_PARENT = Path(tempfile.gettempdir())
-_BRIDGE_ROOT_PARENT = _TRUSTED_PARENT / f"omnigent-{stable_user_id()}"
+_BRIDGE_ROOT_PARENT = _TRUSTED_PARENT / f"{NATIVE_TMP_PREFIX}-{stable_user_id()}"
 _BRIDGE_ROOT = _BRIDGE_ROOT_PARENT / "claude-native"
 # Markers for permission hooks parked on a verdict, keyed by SESSION id: the
 # idle pane reaper's busy check holds a pane's conversation id, and resolving
@@ -636,7 +637,7 @@ def _absolute_syntactic_path(path: Path) -> Path:
     that inspection, so this helper only expands ``~`` and normalizes
     ``.`` / ``..`` components.
 
-    :param path: Path to normalize, e.g. ``Path("~/.omnigent/x")``.
+    :param path: Path to normalize, e.g. ``Path("~/.omnigent-mdsmithaustin/x")``.
     :returns: Absolute path with syntactic normalization applied.
     """
     return Path(os.path.abspath(os.fspath(path.expanduser())))
@@ -653,7 +654,7 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
     anchor differs.
 
     :param target: Normalized bridge directory path being created or validated,
-        e.g. ``Path("/tmp/omnigent-501/claude-native/abc")``.
+        e.g. ``Path("/tmp/mdma-501/claude-native/abc")``.
     :returns: Absolute parent at which ancestor validation stops, e.g.
         ``Path("/tmp")``.
     :raises RuntimeError: If ``target`` is not below a known bridge root.
@@ -667,10 +668,10 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
     codex_root = _absolute_syntactic_path(bridge_root())
     if target.is_relative_to(codex_root):
         # In production, trust $HOME and validate/chmod the two bridge-owned
-        # directories below it: .omnigent and codex-native. In tests, the
+        # directories below it: .omnigent-mdsmithaustin and codex-native. In tests, the
         # monkeypatched root may not use that shape, so trust the direct parent.
         trusted_parent = codex_root.parent
-        if codex_root.name == "codex-native" and codex_root.parent.name == ".omnigent":
+        if codex_root.name == "codex-native" and codex_root.parent.name == USER_DIRNAME:
             trusted_parent = codex_root.parent.parent
         return _absolute_syntactic_path(trusted_parent)
 
@@ -678,11 +679,11 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     pi_root = _absolute_syntactic_path(pi_bridge_root())
     if target.is_relative_to(pi_root):
-        # Pi-native uses the same $HOME/.omnigent/<harness>-native layout as
+        # Pi-native uses the same $HOME/.omnigent-mdsmithaustin/<harness>-native layout as
         # Codex-native. Trust $HOME in production, while allowing tests to
         # monkeypatch the bridge root to a different shape.
         trusted_parent = pi_root.parent
-        if pi_root.name == "pi-native" and pi_root.parent.name == ".omnigent":
+        if pi_root.name == "pi-native" and pi_root.parent.name == USER_DIRNAME:
             trusted_parent = pi_root.parent.parent
         return _absolute_syntactic_path(trusted_parent)
 
@@ -692,7 +693,7 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
         prime_root = _absolute_syntactic_path(root)
         if target.is_relative_to(prime_root):
             trusted_parent = prime_root.parent
-            if prime_root.parent.name == ".omnigent":
+            if prime_root.parent.name == USER_DIRNAME:
                 trusted_parent = prime_root.parent.parent
             return _absolute_syntactic_path(trusted_parent)
 
@@ -706,24 +707,20 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     devin_root = _absolute_syntactic_path(devin_bridge_root())
     if target.is_relative_to(devin_root):
-        # Same shape as cursor-native ($TMPDIR/omnigent-<uid>/devin-native): trust
+        # Same shape as cursor-native ($TMPDIR/mdma-<uid>/devin-native): trust
         # the uid-scoped temp dir's parent and validate/chmod the two
         # bridge-owned directories below it.
         return _absolute_syntactic_path(devin_root.parent.parent)
 
     from omnigent.harnesses.antigravity_native.bridge import bridge_root as antigravity_bridge_root
 
-    # antigravity-native keeps its bridge files below ``~/.omnigent/antigravity-native``,
-    # the same ``$HOME/.omnigent/<harness>-native`` shape codex uses, so apply the
-    # identical anchor logic: in production trust ``$HOME`` and validate/chmod the
-    # two bridge-owned dirs below it (``.omnigent`` and ``antigravity-native``); in
-    # tests the monkeypatched root may differ, so trust the direct parent.
+    # Trust HOME for the default layout and the direct parent for a custom root.
     antigravity_root = _absolute_syntactic_path(antigravity_bridge_root())
     if target.is_relative_to(antigravity_root):
         trusted_parent = antigravity_root.parent
         if (
             antigravity_root.name == "antigravity-native"
-            and antigravity_root.parent.name == ".omnigent"
+            and antigravity_root.parent.name == USER_DIRNAME
         ):
             trusted_parent = antigravity_root.parent.parent
         return _absolute_syntactic_path(trusted_parent)
@@ -732,7 +729,7 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     qwen_root = _absolute_syntactic_path(qwen_bridge_root())
     if target.is_relative_to(qwen_root):
-        # Same shape as cursor-native ($TMPDIR/omnigent-<uid>/qwen-native): trust
+        # Same shape as cursor-native ($TMPDIR/mdma-<uid>/qwen-native): trust
         # the uid-scoped temp dir's parent and validate/chmod the two
         # bridge-owned directories below it.
         return _absolute_syntactic_path(qwen_root.parent.parent)
@@ -741,42 +738,37 @@ def _trusted_parent_for_bridge_dir(target: Path) -> Path:
 
     hermes_root = _absolute_syntactic_path(hermes_bridge_root())
     if target.is_relative_to(hermes_root):
-        # Same shape as cursor-native ($TMPDIR/omnigent-<uid>/hermes-native): trust
+        # Same shape as cursor-native ($TMPDIR/mdma-<uid>/hermes-native): trust
         # the uid-scoped temp dir's parent and validate/chmod the two
         # bridge-owned directories below it.
         return _absolute_syntactic_path(hermes_root.parent.parent)
 
     from omnigent.harnesses.opencode_native.bridge import bridge_root as opencode_bridge_root
 
-    # opencode-native keeps its bridge files below ``~/.omnigent/opencode-native``
-    # (the same ``$HOME/.omnigent/<harness>-native`` shape codex/antigravity use),
-    # so apply the identical anchor logic: in production trust ``$HOME`` and
-    # validate/chmod the two bridge-owned dirs below it (``.omnigent`` and
-    # ``opencode-native``); in tests the monkeypatched root may differ, so trust
-    # the direct parent.
+    # Trust HOME for the default layout and the direct parent for a custom root.
     opencode_root = _absolute_syntactic_path(opencode_bridge_root())
     if target.is_relative_to(opencode_root):
         trusted_parent = opencode_root.parent
-        if opencode_root.name == "opencode-native" and opencode_root.parent.name == ".omnigent":
+        if opencode_root.name == "opencode-native" and opencode_root.parent.name == USER_DIRNAME:
             trusted_parent = opencode_root.parent.parent
         return _absolute_syntactic_path(trusted_parent)
 
     kiro_root = _absolute_syntactic_path(kiro_bridge.bridge_root())
     if target.is_relative_to(kiro_root):
-        # Same shape as cursor-native ($TMPDIR/omnigent-<uid>/kiro-native): trust
+        # Same shape as cursor-native ($TMPDIR/mdma-<uid>/kiro-native): trust
         # the uid-scoped temp dir's parent and validate/chmod the two
         # bridge-owned directories below it.
         return _absolute_syntactic_path(kiro_root.parent.parent)
 
     # Headless ACP harnesses (acp / goose / qwen) put their Omnigent-MCP relay
-    # bridge below ``$TMPDIR/omnigent-<uid>/acp-mcp`` (same uid-scoped shape as
+    # bridge below ``$TMPDIR/mdma-<uid>/acp-mcp`` (same uid-scoped shape as
     # cursor/qwen/hermes-native), so trust the uid-scoped temp dir's parent.
     acp_root = _absolute_syntactic_path(acp_mcp_bridge_root())
     if target.is_relative_to(acp_root):
         return _absolute_syntactic_path(acp_root.parent.parent)
 
     # The subagent router's per-session dirs sit beside the native bridges
-    # ($TMPDIR/omnigent-<uid>/subagent-router), so trust the same parent.
+    # ($TMPDIR/mdma-<uid>/subagent-router), so trust the same parent.
     router_root = _absolute_syntactic_path(subagent_router_bridge_root())
     if target.is_relative_to(router_root):
         return _absolute_syntactic_path(router_root.parent.parent)
@@ -1324,7 +1316,7 @@ def _ensure_secure_dir(target: Path) -> None:
     ``Path.mkdir(mode=0o700, parents=True, exist_ok=True)`` only applies
     the mode to the leaf and silently trusts any pre-existing ancestor.
     On a shared host, an attacker could pre-create
-    ``/tmp/omnigent-<UID>`` (Claude-native), ``~/.omnigent``
+    ``/tmp/mdma-<UID>`` (Claude-native), ``~/.omnigent-mdsmithaustin``
     (Codex-native), or a deeper ancestor as a symlink — or as a 0o777
     directory — and redirect the bridge tree (which stores bearer
     tokens in JSON files).
@@ -1339,7 +1331,7 @@ def _ensure_secure_dir(target: Path) -> None:
     ownership model, directory protection relies on the OS ACLs instead.
 
     :param target: Final bridge directory path to ensure, e.g.
-        ``Path("/tmp/omnigent-501/claude-native/abc")``.
+        ``Path("/tmp/mdma-501/claude-native/abc")``.
     :raises RuntimeError: If validation fails for any ancestor.
     """
     target = _absolute_syntactic_path(target)
@@ -1404,7 +1396,7 @@ def subagent_router_bridge_root() -> Path:
     """Root for the subagent router's own advertisement directories.
 
     Shares the uid-scoped temp parent with claude-native
-    (``$TMPDIR/omnigent-<uid>/subagent-router``) so per-session router dirs
+    (``$TMPDIR/mdma-<uid>/subagent-router``) so per-session router dirs
     pass the :func:`_trusted_parent_for_bridge_dir` secure-root check.
 
     :returns: The subagent-router root directory (not created here).
@@ -1416,7 +1408,7 @@ def acp_mcp_bridge_root() -> Path:
     """Bridge root for the headless ACP harnesses' Omnigent-MCP relay.
 
     Shares the uid-scoped temp parent with claude-native
-    (``$TMPDIR/omnigent-<uid>/acp-mcp``). Used by the acp / goose / qwen
+    (``$TMPDIR/mdma-<uid>/acp-mcp``). Used by the acp / goose / qwen
     executors' ``OmnigentAcpMcp`` relay so ``serve-mcp``'s bridge dir passes the
     :func:`_trusted_parent_for_bridge_dir` secure-root check.
 
@@ -1450,7 +1442,7 @@ def bridge_dir_for_bridge_id(bridge_id: str) -> Path:
 
     :param bridge_id: Opaque bridge id, e.g. ``"bridge_abc123"``.
     :returns: Absolute bridge directory under
-        ``/tmp/omnigent-<UID>/claude-native``.
+        ``/tmp/mdma-<UID>/claude-native``.
     """
     digest = hashlib.sha256(bridge_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest
@@ -1463,7 +1455,7 @@ def bridge_dir_for_conversation_id(conversation_id: str) -> Path:
     :param conversation_id: Omnigent conversation id used as bridge id, e.g.
         ``"conv_abc123"``.
     :returns: Absolute bridge directory under
-        ``/tmp/omnigent-<UID>/claude-native``.
+        ``/tmp/mdma-<UID>/claude-native``.
     """
     return bridge_dir_for_bridge_id(conversation_id)
 
@@ -1489,7 +1481,7 @@ def approval_wait_marker_path(session_id: str, *, bridge_dir: Path | None = None
     :param session_id: Omnigent session id whose verdict a hook is waiting
         on, e.g. ``"conv_abc123"``.
     :param bridge_dir: The caller's own bridge directory, e.g.
-        ``/tmp/omnigent-501/claude-native/<digest>``. When given, the marker
+        ``/tmp/mdma-501/claude-native/<digest>``. When given, the marker
         root is derived from it instead of from this process's own temp root: a
         hook subprocess is *told* its bridge dir, so deriving from it cannot
         disagree with the runner about ``$TMPDIR`` the way an independently
