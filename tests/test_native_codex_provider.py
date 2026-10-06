@@ -309,7 +309,7 @@ def test_resolve_native_codex_launch_subscription_ignores_private_inherited_home
         },
     )
     _write_codex_login(_isolated, logged_in=True)
-    inherited = _isolated / ".omnigent" / "codex-native" / "abc123" / "codex-home"
+    inherited = _isolated / ".omnigent-mdsmithaustin" / "codex-native" / "abc123" / "codex-home"
     inherited.mkdir(parents=True)
     monkeypatch.setenv("CODEX_HOME", str(inherited))
 

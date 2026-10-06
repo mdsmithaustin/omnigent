@@ -27,6 +27,7 @@ import tomllib
 
 from omnigent.harnesses.codex_native.app_server import client_for_transport
 from omnigent.harnesses.codex_native.bridge import read_bridge_state
+from omnigent.installation_defaults import USER_DIRNAME
 from tests._helpers.live_server import terminate_process
 from tests._helpers.native_session import create_native_session
 from tests._helpers.server_runner import ServerRunner, server_runner
@@ -196,7 +197,7 @@ def _session(rig: _Rig, model: str, effort: str, *, inherited: bool = False) -> 
     )
     session_id = created["session_id"]
     bridge_id = hashlib.sha256(session_id.encode()).hexdigest()[:32]
-    bridge = rig.stack.runner_home / ".omnigent" / "codex-native" / bridge_id
+    bridge = rig.stack.runner_home / USER_DIRNAME / "codex-native" / bridge_id
     try:
         _json(rig.api.patch(f"/v1/sessions/{session_id}", json={"runner_id": rig.stack.runner_id}))
         session = _Session(session_id, bridge, {})

@@ -116,7 +116,7 @@ def test_runner_can_read_keyring_from_cli_desktop_session(
     monkeypatch.setenv("XDG_UNRELATED_SECRET", "must-not-forward")
 
     def get_password(service: str, username: str) -> str:
-        assert (service, username) == ("omnigent", "openrouter")
+        assert (service, username) == ("mdsmithaustin-omni", "openrouter")
         if any(os.environ.get(name) != value for name, value in session_env.items()):
             raise keyring.errors.KeyringError("desktop session unavailable")
         return "test-openrouter-key"

@@ -29,6 +29,7 @@ from omnigent._wrapper_labels import (
 from omnigent.harnesses.codex_native.app_server import client_for_transport
 from omnigent.harnesses.codex_native.bridge import read_bridge_state
 from omnigent.harnesses.codex_native.main import _materialize_codex_agent_spec
+from omnigent.installation_defaults import USER_DIRNAME
 from tests._helpers.live_server import terminate_process
 from tests._helpers.server_runner import server_runner
 from tests._helpers.session import bundle_files, post_session_bundle
@@ -143,7 +144,7 @@ def test_connected_codex_resume_routes_to_configured_provider(
             headers={"x-omnigent-background-session-titles": "off"},
         ) as client,
     ):
-        state_root = stack.runner_home / ".omnigent" / "codex-native"
+        state_root = stack.runner_home / USER_DIRNAME / "codex-native"
         stack.start_runner(env=native_env, cwd=_REPO_ROOT)
         spec = yaml.safe_load(_materialize_codex_agent_spec(tmp_path, model=_MODEL).read_text())
         if selection == "agent-pinned":

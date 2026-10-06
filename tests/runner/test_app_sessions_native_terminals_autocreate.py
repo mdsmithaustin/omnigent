@@ -49,6 +49,7 @@ from omnigent.harnesses.cursor_native import bridge as cursor_native_bridge
 from omnigent.harnesses.kiro_native import bridge as kiro_native_bridge
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.terminal import TerminalInstance
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner import create_runner_app, subagent_work
 from omnigent.runner.app import (
     ResolvedSpec,
@@ -1090,8 +1091,8 @@ async def test_auto_create_claude_terminal_passes_session_effort(
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://127.0.0.1:8000")
 
     workspace = tmp_path / "workspace"
-    (workspace / ".omnigent").mkdir(parents=True)
-    (workspace / ".omnigent" / "config.yaml").write_text(
+    (workspace / USER_DIRNAME).mkdir(parents=True)
+    (workspace / USER_DIRNAME / "config.yaml").write_text(
         "harness:\n  claude-native:\n    command: workspace-claude\n"
     )
     monkeypatch.setenv("OMNIGENT_RUNNER_WORKSPACE", str(workspace))
@@ -4307,8 +4308,8 @@ async def test_codex_tui_launch_reads_project_config_from_session_workspace(
     )
 
     workspace = tmp_path / "workspace"
-    (workspace / ".omnigent").mkdir(parents=True)
-    (workspace / ".omnigent" / "config.yaml").write_text(
+    (workspace / USER_DIRNAME).mkdir(parents=True)
+    (workspace / USER_DIRNAME / "config.yaml").write_text(
         "harness:\n  codex-native:\n    command: workspace-codex\n    args: [--workspace-arg]\n"
     )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / "config-home"))
