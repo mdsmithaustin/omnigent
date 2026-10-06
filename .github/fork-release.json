@@ -167,9 +167,33 @@
       "name": "codex-launch-admission-fixtures",
       "reason": "Supply the existing typed source admission server to Codex startup tests so catalog, policy, MCP, and cancellation cleanup assertions execute.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "51e9c29e19fb431d8bb78ca5d2e6a3c9d517bb07",
+      "name": "ci-inventory-reopening",
+      "reason": "Retain the prior CI inventory commit in the linear payload while incorporating final fixture and installed-verifier repairs.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c1e079833570fafe91233625ab3b14df8cc71fe7",
+      "name": "installed-native-verifier-identities",
+      "reason": "Refresh the actual Claude terminal locator after runner restart and compare selected target agent bundle bytes instead of upstream session-scoped clone IDs.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "eaa95cfd8e8f22336c7bd6dc229468c768778b76",
+      "name": "claude-catalog-subscription-fixtures",
+      "reason": "Supply explicit subscription configuration so literal model source metadata assertions are independent of host credentials.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "837bb3f00fbb368334eec140d9ec2b74579fd00a",
+      "name": "prime-proof-timing-fixtures",
+      "reason": "Refresh fixture binding proof after setup and before each delivery while preserving the production heartbeat window and literal assertions.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "18d273db1560803ac7de3bb31271682cdd3abacd",
+  "payload_commit": "837bb3f00fbb368334eec140d9ec2b74579fd00a",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
