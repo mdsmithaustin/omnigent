@@ -9,8 +9,8 @@ commands:
 ignore_patterns:
   - "uv.lock"
   - "pnpm-lock.yaml"
-  - "**/*_pb2.py"
-  - "**/*_pb2.pyi"
+  - "omnigent/api/routing/v1/routing_pb2.py"
+  - "omnigent/api/routing/v1/routing_pb2.pyi"
 
 protected_paths:
   - ".github/workflows/**"
@@ -26,3 +26,21 @@ test:
   instructions: |
     Start a local pod with `just dev`, then follow the matching verification skill in .claude/skills
     (verify-prime-native, <harness>-e2e-dev, or cli-setup-verify). Docs-only changes need no live run.
+
+review:
+  path_instructions:
+    - path: "*"
+      instructions: |
+        Fork seam check. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
+        Run `git fetch --quiet https://github.com/omnigent-ai/omnigent.git main`; a path is upstream-owned when `git cat-file -e FETCH_HEAD:<path>` succeeds.
+        For each upstream-owned file the change edits, flag the edit when fork behavior could live in a new fork-owned file reached through an existing extension point (harness registry, adapter, config, hook),
+        when it renames, moves, reorders, or reformats upstream code beyond what the behavior needs,
+        when it changes a signature or shared type that other upstream modules depend on,
+        or when the fork-only logic is spread across the file instead of isolated behind one small, clearly named call site.
+        If the fetch fails, report that ownership could not be checked instead of guessing.
+    - path: "*"
+      instructions: |
+        Test value check. For each added or changed test, confirm it calls the code the way real callers do and asserts a concrete expected result.
+        Flag a test that would still pass if the code under test returned None or did nothing, that only asserts a mock was called,
+        that restates the implementation, that duplicates coverage an existing test already provides, or that depends on sleeps or wall-clock timing.
+        For each behavior change in non-test code, flag it when no test in the change would fail without it, unless the PR explains why a test is impractical.
