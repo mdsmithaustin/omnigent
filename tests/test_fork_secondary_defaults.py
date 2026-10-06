@@ -1,5 +1,3 @@
-"""Behavioral checks for secondary fork storage and target config writers."""
-
 from __future__ import annotations
 
 import json

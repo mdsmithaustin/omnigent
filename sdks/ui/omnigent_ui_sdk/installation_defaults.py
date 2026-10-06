@@ -1,5 +1,3 @@
-"""Standalone UI SDK defaults, checked against the core installation."""
-
 from pathlib import Path
 from typing import Final
 
