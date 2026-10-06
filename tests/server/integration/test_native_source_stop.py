@@ -67,6 +67,52 @@ async def test_native_owner_admission_requires_current_runner_proof(auth_client,
     assert validated.json() == {"current": True}
 
 
+@pytest.mark.parametrize("host_bound", [False, True])
+async def test_legacy_owner_stop_attempts_shutdown_without_qualifying_fork(
+    client, db_uri, monkeypatch, host_bound
+):
+    import json
+
+    from tests.server.integration.test_sessions_endpoints import _route_to_runner
+
+    source_id, target_id = await source_and_target(client)
+    store = SqlAlchemyConversationStore(db_uri)
+    if host_bound:
+        store.replace_runner_id(source_id, "legacy-runner")
+        store.set_host_id(source_id, "cd" * 16, workspace="/legacy")
+    running = True
+    host_running = host_bound
+    forwarded = []
+
+    def respond(request):
+        nonlocal running
+        forwarded.append(json.loads(request.content))
+        running = False
+        return httpx.Response(204)
+
+    async def stop_host(session_id, host_id, runner_id, registry, conversation_store):
+        nonlocal host_running
+        assert (session_id, host_id, runner_id) == (source_id, "cd" * 16, "legacy-runner")
+        host_running = False
+        return True
+
+    monkeypatch.setattr(native_stop, "_stop_host_runner_intentionally", stop_host)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        response = await client.post(
+            f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+        )
+    assert response.status_code == 202, response.text
+    assert response.json()["native_stop"]["outcome"] == "unknown"
+    assert running is False
+    assert host_running is False
+    assert forwarded == [{"type": "stop_session"}]
+    blocked = await client.post(f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id})
+    assert blocked.status_code == 409, blocked.text
+
+
 async def source_and_target(client, *, user=None, wrapper=False):
     source_agent = await create_test_agent(
         client,
