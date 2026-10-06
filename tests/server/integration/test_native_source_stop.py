@@ -17,6 +17,56 @@ from tests.server.helpers import create_test_agent
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.mark.parametrize("level", [2, 4])
+async def test_native_owner_admission_requires_current_runner_proof(auth_client, db_uri, level):
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+
+    source_id, _ = await source_and_target(auth_client, user="owner@example.com")
+    caller = "editor@example.com" if level == 2 else "owner@example.com"
+    headers = {"X-Forwarded-Email": caller}
+    await auth_client.get("/v1/sessions", headers=headers)
+    if level == 2:
+        grant = await auth_client.put(
+            f"/v1/sessions/{source_id}/permissions",
+            json={"user_id": caller, "level": level},
+            headers={"X-Forwarded-Email": "owner@example.com"},
+        )
+        assert grant.status_code == 200, grant.text
+    store = SqlAlchemyConversationStore(db_uri)
+    store.replace_runner_id(source_id, token_bound_runner_id("current-runner-secret"))
+    owner = NativeOwner(provider="prime-native", environment="fixture", runtime="private-owner")
+    url = f"/v1/sessions/{source_id}/native-admission"
+    for proof in ({}, {RUNNER_TUNNEL_TOKEN_HEADER: "different-runner-secret"}):
+        rejected = await auth_client.post(
+            url, json={"owner": owner.model_dump()}, headers={**headers, **proof}
+        )
+        assert rejected.status_code == 403, rejected.text
+        assert store.get_native_source(source_id) is None
+    admitted = await auth_client.post(
+        url,
+        json={"owner": owner.model_dump()},
+        headers={**headers, RUNNER_TUNNEL_TOKEN_HEADER: "current-runner-secret"},
+    )
+    assert admitted.status_code == 200, admitted.text
+    assert admitted.json()["owner"] == {
+        "provider": "prime-native",
+        "environment": "fixture",
+        "runtime": "private-owner",
+        "coordinator": "",
+    }
+    rejected_validation = await auth_client.post(
+        f"{url}/validate", json=admitted.json(), headers=headers
+    )
+    assert rejected_validation.status_code == 403, rejected_validation.text
+    validated = await auth_client.post(
+        f"{url}/validate",
+        json=admitted.json(),
+        headers={**headers, RUNNER_TUNNEL_TOKEN_HEADER: "current-runner-secret"},
+    )
+    assert validated.status_code == 200, validated.text
+    assert validated.json() == {"current": True}
+
+
 async def source_and_target(client, *, user=None, wrapper=False):
     source_agent = await create_test_agent(
         client,

@@ -45,6 +45,7 @@ from omnigent.models.model_override import validate_model_override
 from omnigent.native.source_owner import NativeAdmission, NativeAdmissionRequest, NativeStop
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
+    token_bound_runner_id,
 )
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runner.session_init_protocol import build_runner_session_init_payload
@@ -337,17 +338,35 @@ def register_core_routes(
 ) -> None:
     """Register the core session routes on router."""
 
-    @router.post("/sessions/{session_id}/native-admission", include_in_schema=False)
-    async def admit_native_owner(
-        session_id: str, body: NativeAdmissionRequest, request: Request
-    ) -> dict[str, Any]:
-        await _require_access(
+    async def require_native_runner(session_id: str, request: Request) -> None:
+        access = await _require_access_and_level(
             _get_user_id(request, auth_provider),
             session_id,
             LEVEL_EDIT,
             permission_store,
             conversation_store,
         )
+        if permission_store is None:
+            return
+        conv = access.conversation
+        if conv is None:
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        token = (request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER) or "").strip()
+        if token and (
+            (runner_tunnel_tokens is not None and token in runner_tunnel_tokens)
+            or (conv is not None and token_bound_runner_id(token) == conv.runner_id)
+        ):
+            return
+        raise OmnigentError(
+            "Native ownership requires the session's authenticated runner.",
+            code=ErrorCode.FORBIDDEN,
+        )
+
+    @router.post("/sessions/{session_id}/native-admission", include_in_schema=False)
+    async def admit_native_owner(
+        session_id: str, body: NativeAdmissionRequest, request: Request
+    ) -> dict[str, Any]:
+        await require_native_runner(session_id, request)
         admission = await asyncio.to_thread(
             conversation_store.admit_native,
             session_id,
@@ -360,13 +379,7 @@ def register_core_routes(
     async def validate_native_owner(
         session_id: str, body: NativeAdmission | NativeStop, request: Request
     ) -> dict[str, bool]:
-        await _require_access(
-            _get_user_id(request, auth_provider),
-            session_id,
-            LEVEL_EDIT,
-            permission_store,
-            conversation_store,
-        )
+        await require_native_runner(session_id, request)
         source_id = (
             body.source_id if isinstance(body, NativeAdmission) else body.admission.source_id
         )
