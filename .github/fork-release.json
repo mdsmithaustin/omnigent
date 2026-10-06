@@ -107,9 +107,69 @@
       "name": "required-codex-parity-certification",
       "reason": "Build and run canonical Codex parity inside the certificate workflow and reject empty, all-skipped, failed, or errored results.",
       "source_commit": "620607bd067655872f4516f550dc8217deb1ea0d"
+    },
+    {
+      "applied_commit": "d62d1b5b08820dc97617602262e79ef419ec35f7",
+      "name": "reviewed-release-pin",
+      "reason": "Record the eighteen-commit source pin and decision trail before CI. Subsequent CI repairs reopen the inventory.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2f78def1c324b266dfce4fd24290fd47c8ef69f7",
+      "name": "native-stop-error-fence-repair",
+      "reason": "Clear the output fence when legacy Stop fails, preserve the runner error, and assert REQUEST denial when plaintext does not prove invocation identity.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "161dec2e808998f8480d118fdda113c5de025ff4",
+      "name": "snapshot-native-source-fixture",
+      "reason": "Supply the existing native source lookup in the snapshot store fake without changing response assertions.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "082f1d9340f47e99ff20358eca77190094feb71b",
+      "name": "runner-native-admission-fixtures",
+      "reason": "Supply typed native admission collaborators and fresh Prime heartbeat setup while preserving runner behavior assertions.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8c397c07f6aef0d61f93048c8dccf555ed4a2a01",
+      "name": "prime-and-model-source-fixtures",
+      "reason": "Provide real admission configuration for Prime wrapper tests and control ambient provider metadata in model catalog fixtures.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3a88dd598ce25169ae9da40f5b1a13d76cdc15bd",
+      "name": "runner-launch-admission-fixtures",
+      "reason": "Initialize existing typed admission clients in launch, recovery, and inbox test fixtures while preserving all behavioral assertions.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "538f1fa53b509580d732e6b9b4d239740cc78daf",
+      "name": "runner-control-contract-fixtures",
+      "reason": "Exercise actual native readiness and control signatures, assert rejected native transfer with unchanged ownership, and retain exact model source metadata.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3287a856cf87d5f10bdeb567711f1d818e06f23b",
+      "name": "resource-native-proof-fixture",
+      "reason": "Supply absent-native-source proof invalidation in the resource route store fake without changing runtime behavior.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7587324e4a536021405408eb57d24e954826bb7f",
+      "name": "fork-explicit-stop-fixtures",
+      "reason": "Admit source ownership and perform public Stop with exact mock receipts before downstream alias and upload fork assertions. This does not qualify real non-Prime shutdown.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "18d273db1560803ac7de3bb31271682cdd3abacd",
+      "name": "codex-launch-admission-fixtures",
+      "reason": "Supply the existing typed source admission server to Codex startup tests so catalog, policy, MCP, and cancellation cleanup assertions execute.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "3410864a7f14462e690918b74f7a43ae1fe270ee",
+  "payload_commit": "18d273db1560803ac7de3bb31271682cdd3abacd",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
