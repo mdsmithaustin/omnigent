@@ -3530,6 +3530,16 @@
             "title": "Role",
             "type": "string"
           },
+          "skill_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillCommandContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "stream_message_id": {
             "anyOf": [
               {
@@ -8243,6 +8253,79 @@
         "title": "SetSharingRequest",
         "type": "object"
       },
+      "SkillCommandContext": {
+        "description": "A paste payload enters history only after its command is admitted.",
+        "properties": {
+          "command_item_id": {
+            "title": "Command Item Id",
+            "type": "string"
+          },
+          "historical": {
+            "default": false,
+            "title": "Historical",
+            "type": "boolean"
+          },
+          "status": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "accepted",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_item_id"
+        ],
+        "title": "SkillCommandContext",
+        "type": "object"
+      },
+      "SkillCommandDelivery": {
+        "properties": {
+          "context_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Item Id"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "historical": {
+            "default": false,
+            "title": "Historical",
+            "type": "boolean"
+          },
+          "invocation_id": {
+            "title": "Invocation Id",
+            "type": "string"
+          },
+          "status": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "accepted",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "invocation_id",
+          "fingerprint"
+        ],
+        "title": "SkillCommandDelivery",
+        "type": "object"
+      },
       "SkillContentResponse": {
         "properties": {
           "content": {
@@ -8322,6 +8405,16 @@
             "title": "Arguments",
             "type": "string"
           },
+          "delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillCommandDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kind": {
             "default": "skill",
             "description": "`\"skill\"` for plugin/Skill invocations, `\"command\"` for surfaced CLI built-ins (`/effort`, `/clear`, `/compact`, `/model`, `/ultrareview`). The web renderer uses this to pick the prefix label and icon. Defaults to `\"skill\"` so persisted items predating this field deserialize without backfill.",
@@ -8340,6 +8433,17 @@
             "description": "Command name with leading `/` stripped, e.g. `\"dev-productivity:simplify\"`.",
             "title": "Name",
             "type": "string"
+          },
+          "native_invocation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Invocation"
           },
           "output": {
             "anyOf": [

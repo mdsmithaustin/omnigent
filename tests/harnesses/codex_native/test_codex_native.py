@@ -13071,3 +13071,56 @@ def test_codex_discover_thread_login_required_clears_error_on_thread_start(
     state = read_bridge_state(bridge_dir)
     assert state is not None
     assert state.thread_id == "thread_after_signin"
+
+
+def test_native_skill_replay_keeps_hidden_expansion_without_visible_mirror(tmp_path: Path) -> None:
+    from omnigent.harnesses.codex_native.main import _codex_rollout_records_from_session_items
+
+    items = [
+        {
+            "id": "command",
+            "type": "slash_command",
+            "kind": "skill",
+            "name": "review",
+            "arguments": "first",
+            "native_invocation": "$review first",
+            "response_id": "turn_1",
+        },
+        {
+            "id": "expansion",
+            "type": "message",
+            "role": "user",
+            "is_meta": True,
+            "content": [
+                {"type": "input_text", "text": "<skill>CLI-authored historical sentinel</skill>"}
+            ],
+            "response_id": "turn_1",
+        },
+        {
+            "id": "reply",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Historical result"}],
+            "response_id": "turn_1",
+        },
+    ]
+    records = _codex_rollout_records_from_session_items(
+        items,
+        session_id="conv_test",
+        external_session_id="native_test",
+        cwd=tmp_path,
+        model_provider="test",
+        cli_version="0.160.0",
+    )
+    assert [
+        r["payload"]["content"][0]["text"] for r in records if r["type"] == "response_item"
+    ] == [
+        "$review first",
+        "<skill>CLI-authored historical sentinel</skill>",
+        "Historical result",
+    ]
+    assert [
+        r["payload"]["message"]
+        for r in records
+        if r["type"] == "event_msg" and r["payload"]["type"] == "user_message"
+    ] == ["$review first"]

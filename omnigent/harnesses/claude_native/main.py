@@ -5578,6 +5578,15 @@ def _claude_transcript_records_from_session_items(
     :param bridge_dir: Launch bridge path identifying the attachment cache.
     :returns: Claude JSONL record dictionaries.
     """
+    from omnigent.native.skill_history import missing_skill_expansions
+
+    for command in missing_skill_expansions(items):
+        _logger.warning(
+            "Native skill context is incomplete for session %s: the expansion for %r "
+            "was not preserved. Resume retains history without re-running the command.",
+            session_id,
+            command,
+        )
     records: list[_JsonObject] = []
     parent_uuid: str | None = None
     tool_parent_by_call_id: dict[str, str] = {}
@@ -5721,7 +5730,10 @@ def _claude_transcript_record_from_session_item(
     message: _JsonObject | None = None
     record_type: str | None = None
     extra: _JsonObject = {}
-    if item_type == "message":
+    if item_type == "slash_command" and isinstance(item.get("native_invocation"), str):
+        record_type = "user"
+        message = {"role": "user", "content": item["native_invocation"]}
+    elif item_type == "message":
         role = item.get("role")
         if role == "user":
             user_content = _claude_user_content_from_api_blocks(item.get("content"), bridge_dir)
@@ -5731,6 +5743,8 @@ def _claude_transcript_record_from_session_item(
                 return None
             record_type = "user"
             message = {"role": "user", "content": user_content}
+            if item.get("is_meta") is True:
+                extra["isMeta"] = True
         elif role == "assistant":
             assistant_content = _claude_assistant_content_from_api_blocks(item.get("content"))
             if assistant_content is None and allow_native_message_content:

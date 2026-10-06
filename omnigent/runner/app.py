@@ -475,6 +475,7 @@ class _SessionSnapshot:
     sub_agent_name: str | None = None
     parent_session_id: str | None = None
     agent_name: str | None = None
+    terminal_launch_args: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1896,6 +1897,7 @@ def create_runner_app(
             sub_agent_name: str | None = None
             parent_session_id: str | None = None
             agent_name: str | None = None
+            terminal_launch_args: tuple[str, ...] = ()
             try:
                 resp = await server_client.get(
                     f"/v1/sessions/{session_id}", params=_SESSION_METADATA_PARAMS
@@ -1903,6 +1905,12 @@ def create_runner_app(
                 status_code = resp.status_code
                 if resp.status_code == 200:
                     body = resp.json()
+                    _note_session_harness_override(session_id, body.get("harness_override"))
+                    raw_launch_args = body.get("terminal_launch_args")
+                    if isinstance(raw_launch_args, list) and all(
+                        isinstance(arg, str) for arg in raw_launch_args
+                    ):
+                        terminal_launch_args = tuple(raw_launch_args)
                     raw_created = body.get("created_at")
                     if raw_created is not None:
                         created_at = float(raw_created)
@@ -1930,6 +1938,7 @@ def create_runner_app(
                 sub_agent_name=sub_agent_name,
                 parent_session_id=parent_session_id,
                 agent_name=agent_name,
+                terminal_launch_args=terminal_launch_args,
             )
             if snapshot.ok and snapshot.agent_id is not None:
                 if _session_cache_generation_is_current(session_id, generation):
@@ -2015,6 +2024,7 @@ def create_runner_app(
             agent_id=agent_id,
             sub_agent_name=envelope.sub_agent_name,
             parent_session_id=snapshot.parent_session_id,
+            terminal_launch_args=tuple(snapshot.terminal_launch_args or ()),
         )
         _session_start_cache[session_id] = float(snapshot.created_at)
         _session_workspace_cache[session_id] = snapshot.workspace
@@ -2931,7 +2941,11 @@ def create_runner_app(
             last_type = last.get("type")
             last_role = last.get("role")
             needs_turn = (
-                (last_type == "message" and last_role == "user")
+                (
+                    last_type == "message"
+                    and last_role == "user"
+                    and last.get("skill_context") is None
+                )
                 or last_type == "function_call"
                 or last_type == "function_call_output"
             )
@@ -3425,7 +3439,7 @@ def create_runner_app(
         spec = _session_spec_cache.get(conv_id)
         if spec is None:
             return None
-        h = spec.executor.config.get("harness") or spec.executor.type
+        h = _unwrap_resolved_spec(spec).executor.harness_kind
         return canonicalize_harness(h) or h
 
     def _native_turn_outcome_is_forwarder_confirmed(conv_id: str) -> bool:
@@ -4981,7 +4995,15 @@ def create_runner_app(
                     format_supported(_supported) if _supported else "no effort override",
                 )
         if _session_histories[conv]:
-            harness_body["content"] = _session_histories[conv]
+            history = _session_histories[conv]
+            harness_body["content"] = (
+                [
+                    {key: value for key, value in item.items() if key != "skill_context"}
+                    for item in history
+                ]
+                if any("skill_context" in item for item in history)
+                else history
+            )
         else:
             harness_body["content"] = msg_body.get(
                 "content",
@@ -6084,6 +6106,20 @@ def create_runner_app(
 
         body = await request.json()
         body_type = body.get("type") if isinstance(body, dict) else None
+        command_admission = body.get("command_admission") if isinstance(body, dict) else None
+        admission_receipt: dict[str, Any] = {}
+        if command_admission is not None:
+            if (
+                not isinstance(command_admission, dict)
+                or not isinstance(command_admission.get("item_id"), str)
+                or re.fullmatch(r"[0-9a-f]{32}", command_admission["item_id"]) is None
+                or not isinstance(command_admission.get("fingerprint"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", command_admission["fingerprint"]) is None
+            ):
+                return JSONResponse(
+                    status_code=400, content={"error": "invalid_command_admission"}
+                )
+            admission_receipt = {"delivery": {**command_admission, "status": "accepted"}}
         _logger.info(
             "post_session_events: conv=%s type=%s active=%s buffer_len=%d content_types=%s "
             "model_override=%s",
@@ -6271,6 +6307,7 @@ def create_runner_app(
                         status_code=202,
                         content={
                             "status": "buffered",
+                            **admission_receipt,
                             "detail": ("Message buffered; active turn will process it."),
                         },
                     )
@@ -6302,6 +6339,7 @@ def create_runner_app(
                             status_code=202,
                             content={
                                 "status": "buffered",
+                                **admission_receipt,
                                 "detail": "Message buffered until the pending prompt is resolved.",
                             },
                         )
@@ -6354,6 +6392,7 @@ def create_runner_app(
                     status_code=202,
                     content={
                         "status": "accepted",
+                        **admission_receipt,
                         "detail": "Turn started.",
                     },
                 )
@@ -6936,7 +6975,11 @@ def create_runner_app(
             roots.append(Path.cwd())
 
         skills = await asyncio.to_thread(
-            resolve_session_skills, spec, tuple(roots), _resolved_spec_workdir(entry)
+            resolve_session_skills,
+            spec,
+            tuple(roots),
+            _resolved_spec_workdir(entry),
+            harness=_session_harness_name(session_id),
         )
         _session_skills_cache[session_id] = (
             time.monotonic() + _SESSION_SKILLS_CACHE_TTL_SECONDS,
@@ -6983,6 +7026,46 @@ def create_runner_app(
     _ensure_native_terminal_for_turn = _resource_routes.ensure_native_terminal_for_turn
     _require_os_env = _resource_routes.require_os_env
     _resolve_conversation_id = _resource_routes.resolve_conversation_id
+
+    async def _native_skill_invocation(session_id: str, selected: SkillSpec) -> str | None:
+        from omnigent.native.native_dispatch import resolve_hook_for_key
+        from omnigent.spec.skill_sources import skill_source_context_from_env
+
+        entry = await _resolve_session_spec_entry(session_id)
+        spec = _unwrap_spec_entry(entry)
+        harness = _session_harness_name(session_id)
+        native = native_coding_agent_for_harness(harness)
+        hook = resolve_hook_for_key(native.key, "native_skill_invocation") if native else None
+        if hook is None or spec is None:
+            return None
+        await _ensure_native_terminal_for_turn(session_id, harness)
+        workspace = await _session_workspace_value(session_id)
+        cwd = (
+            Path(workspace)
+            if workspace
+            else runner_workspace or _resolved_spec_workdir(entry) or Path.cwd()
+        )
+        context = skill_source_context_from_env(
+            roots=(cwd,),
+            harness=harness,
+            skills_filter=spec.skills_filter,
+            bundle_dir=_resolved_spec_workdir(entry),
+        )
+        if native is not None and native.key == "codex":
+            state = await _codex_native_bridge_state_for_session(
+                session_id, action="skill invocation", missing_state_log_level=logging.DEBUG
+            )
+            if state is None:
+                registry = resource_registry.terminal_registry
+                instance = registry.get(session_id, "codex", "main") if registry else None
+                home = instance.env.get("CODEX_HOME") if instance else None
+                if not home:
+                    return None
+            else:
+                home = state.codex_home
+            context = dataclasses.replace(context, codex_home=Path(home))
+        snapshot = await _session_snapshot(session_id)
+        return await asyncio.to_thread(hook, selected, context, snapshot.terminal_launch_args)
 
     _native_controls = build_native_controls(
         _active_turns=_active_turns,
@@ -7063,6 +7146,9 @@ def create_runner_app(
         _resolve_session_agent_spec=_resolve_session_agent_spec,
         _resolve_session_claude_launch_config=_resolve_session_claude_launch_config,
         _resolve_session_skills=_resolve_session_skills,
+        _native_skill_invocation=_native_skill_invocation,
+        _load_history_as_input=_load_history_as_input,
+        _session_histories=_session_histories,
         _session_cursor_model_names=_session_cursor_model_names,
         _session_harness_name=_session_harness_name,
         _session_spec_cache=_session_spec_cache,
@@ -7357,6 +7443,7 @@ def create_runner_app(
                     session_id not in _active_turns
                     and new_items
                     and new_items[-1].get("role") == "user"
+                    and new_items[-1].get("skill_context") is None
                 ):
                     _begin_turn_slot(session_id)
                     _publish_turn_status(session_id, "running")

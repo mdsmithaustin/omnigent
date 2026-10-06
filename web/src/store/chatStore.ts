@@ -42,6 +42,11 @@
 //     stream, fetches the items snapshot, and merges into blocks
 //     deduping by item id.
 
+import {
+  saveSkillSubmission,
+  removeSkillSubmission,
+  recordSkillAdmission,
+} from "@/lib/skillCommandRecovery";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import type {
@@ -513,6 +518,7 @@ export function removeLocalConversation(tempConvId: string): boolean {
  * real id comes from the consumed event when we promote into `blocks`.
  */
 export interface PendingUserMessage {
+  skillInvocation?: { stableId: string; name: string; arguments: string };
   tempId: string;
   content: MessageContentBlock[];
   /** Unsent draft awaiting session/model readiness, including unuploaded files. */
@@ -2621,6 +2627,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
     // optimistic bubble swaps for the committed one in the same flush.
     pendingSeq += 1;
     const tempId = `pend_${pendingSeq}`;
+    const stableId = randomUUID().replace(/-/g, "");
     const commandText = args ? `/${name} ${args}` : `/${name}`;
     const selfAuthor = getCurrentAuthorId();
     pinnedSetter((s) => ({
@@ -2628,6 +2635,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
         ...s.pendingUserMessages,
         {
           tempId,
+          skillInvocation: { stableId, name, arguments: args },
           content: [{ type: "input_text" as const, text: commandText }],
           createdAtS: Math.floor(Date.now() / 1000),
           ...(selfAuthor !== null ? { author: selfAuthor } : {}),
@@ -2643,6 +2651,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
 
     // The session this command actually posts to, once resolved.
     let postedSessionId: string | null = null;
+    let submissionSaved = false;
 
     try {
       await waitForPrior();
@@ -2652,11 +2661,30 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // Same wire shape the REPL sends (repl/_repl.py). The server resolves
       // the skill, persists a visible receipt + hidden `<skill>` meta
       // message, and forwards the meta to the runner.
-      const postResult = await postEvent(sessionId, {
-        type: "slash_command",
-        data: { kind: "skill", name, arguments: args },
-      });
-      if (postResult.denied) {
+      const event = {
+        type: "slash_command" as const,
+        data: { kind: "skill" as const, name, arguments: args, stable_id: stableId },
+      };
+      const submissionKey = saveSkillSubmission(sessionId, event);
+      submissionSaved = true;
+      const postResult = await postEvent(sessionId, event);
+      if (postResult.delivery) recordSkillAdmission(sessionId, postResult.delivery);
+      if (postResult.denied) removeSkillSubmission(submissionKey);
+      if (postResult.delivery && postResult.delivery.status !== "accepted") {
+        const admission = postResult.delivery.status;
+        const message =
+          postResult.delivery.status === "rejected"
+            ? "The skill was rejected before admission."
+            : "Skill admission is unknown. Check the conversation before starting another invocation.";
+        setterFor(sessionId)((s) => ({
+          blocks: [...s.blocks, makeClientErrorBlock(message, `skill_admission_${admission}`)],
+          pendingUserMessages: s.pendingUserMessages.map((p) =>
+            p.tempId === tempId ? { ...p, posted: true } : p,
+          ),
+          sendLatchedAt: null,
+          status: alreadyStreaming ? s.status : "idle",
+        }));
+      } else if (postResult.denied) {
         // Denied commands publish no receipt, so nothing will pop the
         // optimistic echo — roll it back here alongside the status settle.
         // Targets the session the command posted to: a backgrounded
@@ -2690,27 +2718,24 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       queryClient?.invalidateQueries({ queryKey: ["conversations"] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Settle the conversation this command targeted, wherever the user is
-      // now: its echo must roll back and its status must not stay "streaming"
-      // forever. Target `postedSessionId ?? submitConversationId` (mirrors
-      // `send`'s catch): a bind failure throws before `postedSessionId` is set,
-      // but the pin/submit id already names the session, so a failed pinned
-      // command settles the real session, not the visible one. Null → active.
       const failTarget = postedSessionId ?? submitConversationId;
       const failSet = failTarget === null ? setActive : setterFor(failTarget);
-      // Roll back the optimistic echo — no receipt will reconcile it.
       failSet((s) => ({
-        pendingUserMessages: s.pendingUserMessages.filter((p) => p.tempId !== tempId),
+        pendingUserMessages: submissionSaved
+          ? s.pendingUserMessages
+          : s.pendingUserMessages.filter((pending) => pending.tempId !== tempId),
+        blocks: [
+          ...s.blocks,
+          makeClientErrorBlock(
+            submissionSaved
+              ? `${message}. Skill admission is unknown. Use Check admission before starting another invocation.`
+              : `${message}. Skill was not sent.`,
+            "skill_admission_unknown",
+          ),
+        ],
+        sendLatchedAt: null,
+        status: alreadyStreaming ? s.status : "idle",
       }));
-      if (!alreadyStreaming) {
-        finalizeActive(failSet, "failed", message, null);
-        failSet({ status: "idle" });
-      } else {
-        // Same as `send`: surface the failure without settling a turn that may
-        // still be live, so a failed command can't vanish silently.
-        const { code } = describeSendFailure(err);
-        failSet((s) => ({ blocks: [...s.blocks, makeClientErrorBlock(message, code)] }));
-      }
     } finally {
       releaseSend();
     }
@@ -7465,17 +7490,17 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       });
       return;
     case "slash_command":
-      // Claude-native: a `/skill-name` or surfaced CLI command typed
-      // in the web composer round-trips through tmux → Claude TUI →
-      // transcript → `external_conversation_item` (type=slash_command)
-      // → `response.output_item.done`. The Omnigent server bypasses
-      // persistence for these (no `session.input.consumed` fires),
-      // so the optimistic bubble in `pendingUserMessages` would
-      // otherwise linger next to the rendered SlashCommandBlock
-      // until refresh. Pop the FIFO head here to ack the local
-      // send; observing clients and drafts still held locally cannot
-      // acknowledge a send, so they just render the block.
+      if (event.delivery && sourceConversationId) {
+        recordSkillAdmission(sourceConversationId, event.delivery);
+      }
       applyToConversation((s) => {
+        if (event.delivery) {
+          return {
+            pendingUserMessages: s.pendingUserMessages.filter(
+              (pending) => pending.skillInvocation?.stableId !== event.delivery!.invocation_id,
+            ),
+          };
+        }
         if (s.pendingUserMessages.length === 0 || s.pendingUserMessages[0]?.initialDraft) return {};
         const [, ...rest] = s.pendingUserMessages;
         return { pendingUserMessages: rest };

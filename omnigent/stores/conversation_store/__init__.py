@@ -6,7 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from omnigent.entities import (
     Agent,
@@ -698,6 +698,24 @@ class ConversationStore(ABC):
         :returns: Mapping ``{conversation_id: [ConversationItem, ...]}``.
             Input ids with no matching messages map to an empty list.
         """
+        ...
+
+    @abstractmethod
+    def claim_skill_command(
+        self, conversation_id: str, items: list[NewConversationItem]
+    ) -> ConversationItem:
+        """Atomically elect a command and append only its own context."""
+        ...
+
+    @abstractmethod
+    def settle_skill_command(
+        self,
+        conversation_id: str,
+        item_id: str,
+        fingerprint: str,
+        status: Literal["accepted", "rejected"],
+    ) -> ConversationItem:
+        """Set definitive admission once, including its bound context."""
         ...
 
     @abstractmethod

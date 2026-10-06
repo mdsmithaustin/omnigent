@@ -10,6 +10,8 @@
 //             conversation state (effort level, context reset,
 //             compaction, model swap), so a web observer needs them.
 
+import type { SkillCommandDelivery } from "@/lib/skillCommandDelivery";
+import { SkillAdmission } from "./SkillAdmission";
 import { ChevronRightIcon, CommandIcon, WandSparklesIcon, type LucideIcon } from "lucide-react";
 import { useMemo } from "react";
 import { CodeBlock, CodeBlockHeader, CodeBlockTitle } from "@/components/ai-elements/code-block";
@@ -41,6 +43,7 @@ const KIND_STYLES: Record<SlashCommandKind, KindStyle> = {
 };
 
 interface SlashCommandCardProps {
+  delivery?: SkillCommandDelivery;
   /** Discriminator: Skill vs surfaced CLI command. Picks prefix + icon. */
   kind: SlashCommandKind;
   /** Command name with leading `/` stripped, e.g. `dev-productivity:simplify`. */
@@ -51,7 +54,13 @@ interface SlashCommandCardProps {
   output: string | null;
 }
 
-export function SlashCommandCard({ kind, name, arguments: args, output }: SlashCommandCardProps) {
+export function SlashCommandCard({
+  kind,
+  name,
+  arguments: args,
+  output,
+  delivery,
+}: SlashCommandCardProps) {
   const hasArgs = args.length > 0;
   const hasOutput = output !== null && output.length > 0;
   const canExpand = hasArgs || hasOutput;
@@ -85,20 +94,36 @@ export function SlashCommandCard({ kind, name, arguments: args, output }: SlashC
     </span>
   );
 
+  const admission = delivery && (
+    <SkillAdmission
+      key={delivery.invocation_id}
+      invocationId={delivery.invocation_id}
+      delivery={delivery}
+    />
+  );
+
   // Static row when there's nothing to expand — a chevron-less row
   // that opens an empty panel is a UX papercut.
   if (!canExpand) {
-    return <div className="group not-prose w-full">{trigger}</div>;
+    return (
+      <div className="group not-prose w-full">
+        {trigger}
+        {admission}
+      </div>
+    );
   }
 
   return (
-    <Collapsible defaultOpen={false} className="group not-prose w-full">
-      <CollapsibleTrigger className="w-full cursor-pointer">{trigger}</CollapsibleTrigger>
-      <CollapsibleContent className="mt-1 ml-2 space-y-2 border-l pl-3 py-1 data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
-        {hasArgs && <ArgsPanel args={args} />}
-        {hasOutput && <OutputPanel output={output as string} />}
-      </CollapsibleContent>
-    </Collapsible>
+    <div className="w-full">
+      <Collapsible defaultOpen={false} className="group not-prose w-full">
+        <CollapsibleTrigger className="w-full cursor-pointer">{trigger}</CollapsibleTrigger>
+        <CollapsibleContent className="mt-1 ml-2 space-y-2 border-l pl-3 py-1 data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=open]:animate-in">
+          {hasArgs && <ArgsPanel args={args} />}
+          {hasOutput && <OutputPanel output={output as string} />}
+        </CollapsibleContent>
+      </Collapsible>
+      {admission}
+    </div>
   );
 }
 

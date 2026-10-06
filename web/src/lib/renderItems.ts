@@ -18,6 +18,7 @@
 //
 // Pure function. No React, no DOM. Tested in `renderItems.test.ts`.
 
+import type { SkillCommandDelivery } from "./skillCommandDelivery";
 import type {
   AnyBlock,
   ErrorBlock,
@@ -99,6 +100,7 @@ export type RenderItem =
     }
   | {
       kind: "slash_command";
+      delivery?: SkillCommandDelivery;
       itemId: string | null;
       /** `"skill"` for Skills, `"command"` for surfaced CLI built-ins. */
       slashKind: "skill" | "command";
@@ -1582,6 +1584,7 @@ function buildAssistantItems(
     if (b.type === "slash_command") {
       items.push({
         kind: "slash_command",
+        delivery: b.delivery,
         itemId: b.ctx.itemId,
         slashKind: b.kind,
         name: b.name,

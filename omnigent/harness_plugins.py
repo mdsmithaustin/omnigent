@@ -111,6 +111,7 @@ class NativeHarnessProvider:
     stop_handler: str | None = None
     materialize_agent_spec: str | None = None  # built-in agent seeding
     bridge_dir: str | None = None  # cost-popup bridge-dir lookup
+    native_skill_invocation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -301,6 +302,9 @@ def _builtin_native_provider(key: str) -> NativeHarnessProvider:
         ),
         materialize_agent_spec=f"{module}:_materialize_{key}_agent_spec",
         input_ready_probe=f"{pkg}.bridge:native_input_ready",
+        native_skill_invocation=(
+            f"{pkg}.skills:native_skill_invocation" if key in {"claude", "codex"} else None
+        ),
     )
 
 

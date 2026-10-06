@@ -171,7 +171,7 @@ def _write_discovery_skill(root: Path, name: str, *, visible: bool = True) -> No
     "harness,expected",
     [
         ("claude-native", {"project", "user", "toolkit:review"}),
-        ("codex-native", {"codex-user"}),
+        ("codex-native", {"codex-user", "agents"}),
     ],
 )
 async def test_host_discovers_harness_skills_without_a_runner(
@@ -425,6 +425,7 @@ async def test_handle_model_options_serves_the_claude_catalog(
                 "model": "system.ai.claude-sonnet-5",
                 "displayName": "Sonnet 5",
                 "isDefault": True,
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
             }
         ],
         routable_models=[
@@ -6294,8 +6295,17 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
         request_id="req_1",
         status="ok",
         models=[
-            {"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"},
-            {"id": "gpt-5.4", "displayName": "gpt-5.4", "isDefault": True},
+            {
+                "id": "gpt-5.6-sol",
+                "displayName": "GPT-5.6-Sol",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "codex"},
+            },
+            {
+                "id": "gpt-5.4",
+                "displayName": "gpt-5.4",
+                "isDefault": True,
+                "source": {"kind": "subscription", "label": "Subscription", "name": "codex"},
+            },
         ],
         routable_models=["gpt-5.6-sol", "gpt-5.4"],
     )
@@ -6334,8 +6344,16 @@ async def test_handle_model_options_serves_claude_sdk_endpoint_listing(
         request_id="req_sdk",
         status="ok",
         models=[
-            {"id": "databricks-claude-sonnet-5", "displayName": "databricks-claude-sonnet-5"},
-            {"id": "databricks-claude-opus-4-8", "displayName": "databricks-claude-opus-4-8"},
+            {
+                "id": "databricks-claude-sonnet-5",
+                "displayName": "databricks-claude-sonnet-5",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
+            },
+            {
+                "id": "databricks-claude-opus-4-8",
+                "displayName": "databricks-claude-opus-4-8",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
+            },
         ],
         routable_models=["databricks-claude-sonnet-5", "databricks-claude-opus-4-8"],
     )
@@ -6381,7 +6399,14 @@ async def test_handle_model_options_claude_sdk_rides_the_probe_when_endpoints_li
     assert result == HostModelOptionsResultFrame(
         request_id="req_sdk_sub",
         status="ok",
-        models=[{"id": "sonnet", "model": "claude-sonnet-5", "displayName": "Sonnet 5"}],
+        models=[
+            {
+                "id": "sonnet",
+                "model": "claude-sonnet-5",
+                "displayName": "Sonnet 5",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
+            }
+        ],
         routable_models=[],
     )
     _cleanup_host(host)
@@ -6430,7 +6455,13 @@ async def test_model_options_frame_replies_off_the_receive_loop(
     assert isinstance(reply, HostModelOptionsResultFrame)
     assert reply.request_id == "req_slow"
     assert reply.status == "ok"
-    assert reply.models == [{"id": "gpt-5.6-sol", "displayName": "GPT-5.6-Sol"}]
+    assert reply.models == [
+        {
+            "id": "gpt-5.6-sol",
+            "displayName": "GPT-5.6-Sol",
+            "source": {"kind": "subscription", "label": "Subscription", "name": "codex"},
+        }
+    ]
     _cleanup_host(host)
 
 

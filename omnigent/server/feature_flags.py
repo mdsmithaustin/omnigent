@@ -24,6 +24,7 @@ class Feature(StrEnum):
     HARNESS_INSTALL = "harness_install"
     CANVAS = "canvas"
     HARNESS_SETTINGS_UI = "harness_settings_ui"
+    NATIVE_SKILL_ROUTING = "native_skill_routing"
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,13 @@ FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
         description="Web Harnesses settings page with per-harness MCPs, skills, and plugins",
         owner="web",
         review_by_release="0.15.0",
+    ),
+    FeatureDefinition(
+        feature=Feature.NATIVE_SKILL_ROUTING,
+        description="Route eligible skill commands through native CLI skill loading",
+        owner="runtime",
+        review_by_release="0.17.0",
+        frontend_visible=False,
     ),
 )
 

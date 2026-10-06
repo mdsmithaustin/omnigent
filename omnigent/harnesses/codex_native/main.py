@@ -2224,6 +2224,15 @@ def _codex_rollout_records_from_session_items(
     :param terminal_launch_args: Persisted Codex approval/sandbox launch args.
     :returns: Codex rollout record dictionaries.
     """
+    from omnigent.native.skill_history import missing_skill_expansions
+
+    for command in missing_skill_expansions(items):
+        _logger.warning(
+            "Native skill context is incomplete for session %s: the expansion for %r "
+            "was not preserved. Resume retains history without re-running the command.",
+            session_id,
+            command,
+        )
     timestamp = _codex_rollout_timestamp()
     turn_context_policy_fields = _codex_turn_context_policy_fields_from_launch_args(
         terminal_launch_args
@@ -2349,7 +2358,7 @@ def _codex_rollout_records_from_session_items(
             }
         )
         event_msg = _codex_event_msg_record_for_message(payload, timestamp=timestamp)
-        if event_msg is not None:
+        if event_msg is not None and item.get("is_meta") is not True:
             records.append(event_msg)
     return records
 
@@ -2571,6 +2580,12 @@ def _codex_response_item_payload(item: _JsonObject) -> _JsonObject | None:
         unsupported / empty Omnigent items.
     """
     item_type = item.get("type")
+    if item_type == "slash_command" and isinstance(item.get("native_invocation"), str):
+        return {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": item["native_invocation"]}],
+        }
     if item_type == "message":
         return _codex_message_payload_from_session_item(item)
     if item_type == "function_call":

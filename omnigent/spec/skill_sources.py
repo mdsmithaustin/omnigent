@@ -247,7 +247,11 @@ def resolve_harness_skills(ctx: SkillSourceContext, harness: str | None) -> list
 
 
 def resolve_session_skills(
-    spec: AgentSpec, roots: tuple[Path, ...], bundle_dir: Path | None
+    spec: AgentSpec,
+    roots: tuple[Path, ...],
+    bundle_dir: Path | None,
+    *,
+    harness: str | None = None,
 ) -> list[SkillSpec]:
     """Use identical precedence and filters for menu discovery and invocation."""
     from omnigent.harness_aliases import canonicalize_harness
@@ -255,7 +259,7 @@ def resolve_session_skills(
     merged = [s for s in spec.skills if s.user_invocable]
     seen = {s.name for s in spec.skills}
     seen_dirs = {s.skill_dir.resolve() for s in spec.skills if s.skill_dir is not None}
-    harness = canonicalize_harness(spec.executor.harness_kind)
+    harness = canonicalize_harness(harness or spec.executor.harness_kind)
     ctx = skill_source_context_from_env(
         roots=roots, harness=harness, skills_filter=spec.skills_filter, bundle_dir=bundle_dir
     )
@@ -510,7 +514,12 @@ def codex_host_skills(ctx: SkillSourceContext) -> list[SkillSpec]:
     from omnigent.inner.codex_executor import codex_skill_sources, select_codex_skill_dirs
     from omnigent.spec.codex_plugin_skills import discover_codex_plugin_skills
 
-    host_override = ctx.codex_home if ctx.is_native else None
+    if ctx.is_native:
+        from omnigent.harnesses.codex_native.skills import discover_native_skills
+
+        return discover_native_skills(ctx)
+
+    host_override = None
     sources = codex_skill_sources(ctx.bundle_dir, ctx.home, codex_home=host_override)
     out: list[SkillSpec] = []
     for name, skill_dir in select_codex_skill_dirs(ctx.skills_filter, sources).items():

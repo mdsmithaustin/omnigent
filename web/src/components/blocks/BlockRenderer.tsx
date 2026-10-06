@@ -1,29 +1,3 @@
-// Dispatch from a `RenderItem` to the right component. Pure switch on
-// `item.kind`. Compaction renders as a standalone `Bubble` in
-// `ChatPage`, not as an inline render item — no case for it here.
-//
-// Two levels of collapsing keep a turn readable:
-//
-// 1. Tool-run folding: within a contiguous run of tool / native_tool
-//    items, tools fold into a single summary line describing what's
-//    hidden ("Read 2 files", rendered by `ToolGroupSummary`). While
-//    the run is the live activity, the trailing `STREAMING_TAIL`
-//    tools stay visible as individual rows so the user can watch
-//    recent steps. Still-in-progress spinners and durable
-//    routing/fan-out cards never fold regardless of position.
-//
-// 2. Turn folding: once the turn settles (`turnLifecycle` leaves
-//    "streaming"), the whole process trace — interstitial narration,
-//    tool folds, reasoning — collapses behind one muted "Worked for
-//    Xs" row (`TurnWorkedFold`), leaving only the trailing final
-//    answer visible. This mirrors the Codex desktop treatment: the
-//    demarcation makes "where do I start reading" obvious instead of
-//    a wall of uniform prose. Resolved approval cards fold with the
-//    trace in document order; pending elicitations and persistent
-//    routing/dispatch cards stay visible outside the fold; a turn
-//    with no trailing answer (interrupted / failed / tool-only step
-//    bubbles) keeps its trace expanded.
-
 import type { ReactNode } from "react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronRightIcon } from "lucide-react";
@@ -461,23 +435,6 @@ function isTrailingWrapup(item: RenderItem): boolean {
   return item.kind === "tool" && TRAILING_WRAPUP_TOOLS.has(item.execution.name);
 }
 
-/**
- * Split a settled turn into the foldable process trace, the always-
- * visible exempt items, and the trailing final answer.
- *
- * `final` is the trailing run of text items — the turn's answer —
- * looking past any trailing bookkeeping tools (`turn_diff`), which
- * fold as process. Everything before the answer is process too —
- * including resolved approval cards, which are part of the work's
- * history and fold in document order — except items the user must
- * keep seeing without an extra click: still-PENDING elicitations
- * (normally floated out of the bubble by ChatPage, exempted here
- * defensively so an actionable card can never be hidden), persistent
- * routing/dispatch cards, and (defensively) tools still in progress.
- * Errors, retries and policy denials DO fold — when the turn still
- * produced an answer they're recovered noise, and a turn that ended
- * on one has no trailing text so it never folds in the first place.
- */
 function partitionTurn(items: RenderItem[]): TurnPartition {
   let end = items.length;
   const wrapup: RenderItem[] = [];
@@ -491,7 +448,12 @@ function partitionTurn(items: RenderItem[]): TurnPartition {
   const exempt: { item: RenderItem; index: number }[] = [];
   for (let i = 0; i < finalStart; i += 1) {
     const item = items[i]!;
-    if (isPendingElicitation(item) || isPersistentToolCard(item) || isInProgressTool(item)) {
+    if (
+      isPendingElicitation(item) ||
+      isPersistentToolCard(item) ||
+      isInProgressTool(item) ||
+      (item.kind === "slash_command" && item.slashKind === "skill" && item.delivery)
+    ) {
       exempt.push({ item, index: i });
     } else {
       process.push(item);
@@ -845,6 +807,7 @@ function renderItem(
       return (
         <SlashCommandCard
           key={key}
+          delivery={item.delivery}
           kind={item.slashKind}
           name={item.name}
           arguments={item.arguments}

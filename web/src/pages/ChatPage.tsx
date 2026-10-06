@@ -1,3 +1,4 @@
+import { SkillCommandRecovery } from "@/components/composer/SkillCommandRecovery";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useSkills } from "@/hooks/useSkills";
 import {
@@ -1380,12 +1381,6 @@ interface MainAgentSurfaceProps {
   agentsError: unknown;
   disabled: boolean;
   onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
-  /**
-   * Invoke a skill via the `slash_command` event path. Gated off inside
-   * `MainAgentSurface` for terminal-first (native) sessions, where `/skill`
-   * is sent as plaintext for the vendor TUI to handle. See
-   * `ComposerProps.onSendSlashCommand`.
-   */
   onSendSlashCommand?: (name: string, args: string) => void;
   onStop: () => void;
   onShowReconnectHelp: () => void;
@@ -1688,25 +1683,17 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
     },
     [onSend],
   );
-  // Wrap the slash-command sender the same way (scroll to bottom on send).
-  // Gated off for native-wrapper sessions (claude-native / codex-native):
-  // there the composer's `/skill` must reach the vendor TUI as plaintext
-  // (the server has no slash_command path for native sessions). Undefined
-  // → the composer falls through to the plaintext send for these. Keyed
-  // on the wrapper label, NOT `isTerminalFirst` — a terminal-first SDK
-  // session (embedded Omnigent REPL terminal) runs an in-process harness
-  // with the full server-side slash_command path.
   const isTerminalFirst = terminalFirst?.isTerminalFirst === true;
   const isNativeWrapper = terminalFirst?.isNativeWrapper === true;
   const handleSendSlashCommand = useMemo(
     () =>
-      onSendSlashCommand && !isNativeWrapper
+      onSendSlashCommand
         ? (name: string, args: string) => {
             setSendScrollNonce((n) => n + 1);
             onSendSlashCommand(name, args);
           }
         : undefined,
-    [onSendSlashCommand, isNativeWrapper],
+    [onSendSlashCommand],
   );
 
   // Synchronous bottom re-pin for the composer's growth, called in the same
@@ -1849,6 +1836,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             }
           />
 
+          <SkillCommandRecovery conversationId={conversationId} />
           <Composer
             ref={composerRef}
             disabled={disabled}
@@ -1959,14 +1947,7 @@ interface ComposerProps {
   isWorking: boolean;
   disabled: boolean;
   onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
-  /**
-   * Send a recognised skill as a `slash_command` event (the REPL's wire
-   * shape) instead of plaintext. When present and the typed command names
-   * a known session skill, `submit()` routes through this; otherwise the
-   * command falls through to `onSend` as plaintext. Undefined for
-   * native-terminal sessions, which always send `/skill` as plaintext so
-   * the vendor TUI loads the skill itself.
-   */
+  /** Invoke a catalog skill through structured admission when provided. */
   onSendSlashCommand?: (name: string, args: string) => void;
   onStop: () => void;
   agents: Agent[] | undefined;
@@ -2117,8 +2098,7 @@ export function buildSlashCommandMap(
  * Includes the arg-taking built-ins (each gated on its own capability
  * flag) plus every session skill — skills never auto-execute on
  * selection; the user sends them, and :func:`Composer.submit` routes a
- * known skill to a ``slash_command`` event (in-process) or plaintext
- * (native sessions).
+ * known skill through the optional structured-command callback.
  *
  * :param skills: Session skill metadata returned by host discovery.
  * :param showEffort: Whether ``/effort`` should be selectable.
@@ -3337,24 +3317,21 @@ function ComposerImpl(
       );
     };
 
-    // Slash command path: the first token must read as "/name" (the shared
-    // isSlashCommandText guard — file paths like "/Users/foo/bar.txt" don't
-    // match, while args after the name may carry paths or URLs, e.g.
-    // "/review-pr https://github.com/...").
-    // Commands don't mix with file attachments — require no files. Built-ins
-    // run locally; a known skill routes through ``onSendSlashCommand`` (a
-    // ``slash_command`` event) when that's wired — i.e. in-process sessions.
-    // Anything else (unknown command, or a skill on a native-terminal
-    // session where ``onSendSlashCommand`` is undefined) falls through to the
-    // plaintext send path below.
+    const parts = trimmed.split(/\s+/);
+    const token = parts[0];
+    const knownSkill = Object.hasOwn(skillCommands, token);
+    const knownDollarSkill =
+      skillPrefix === "$" &&
+      token.startsWith("$") &&
+      knownSkill &&
+      isSlashCommandText("/" + trimmed.slice(1));
     if (
       draft.quotes.length === 0 &&
-      isSlashCommandText(trimmed) &&
+      (isSlashCommandText(trimmed) || knownDollarSkill) &&
       files.length === 0 &&
       mentionedItems.length === 0
     ) {
-      const parts = trimmed.split(/\s+/);
-      const cmd = parts[0].toLowerCase();
+      const cmd = token.toLowerCase();
       const arg = parts[1] ?? "";
       // Bare "/model" when the session has a switchable model (claude-native):
       // sent as plaintext it would open Claude's interactive selector inside the
@@ -3395,17 +3372,12 @@ function ComposerImpl(
         openGenericSideChat(trimmed.slice(cmd.length).trim());
         return;
       }
-      // Known skill on an in-process session: send a `slash_command` event
-      // (the REPL's wire shape) so the server resolves the skill and
-      // injects its instructions, instead of the agent seeing the literal
-      // "/name" text. `parts[0]` keeps the original case for the server's
-      // exact-name lookup. `onSendSlashCommand` is undefined for
-      // native-terminal sessions, so those fall through to the plaintext
-      // path below and the vendor TUI loads the skill itself.
-      if (onSendSlashCommand && parts[0] in slashCommands) {
-        const skillArgs = trimmed.slice(parts[0].length).trim();
+      const vendorOwnsToken =
+        (showBtw && cmd === "/btw") || (usesNativeSideChatFork(sessionHarness) && cmd === "/side");
+      if (onSendSlashCommand && knownSkill && !vendorOwnsToken) {
+        const skillArgs = trimmed.slice(token.length).trim();
         appendEntry(trimmed);
-        onSendSlashCommand(parts[0].slice(1), skillArgs);
+        onSendSlashCommand(token.slice(1), skillArgs);
         dirtyRef.current = true;
         setValue("");
         setCommandError(null);

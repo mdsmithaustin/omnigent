@@ -56,6 +56,16 @@ def _text_block(text: str) -> dict[str, object]:
     return {"type": "input_text", "text": text}
 
 
+def test_native_receipt_correlation_survives_queue_restore() -> None:
+    pending_inputs.record("conv_native", [_text_block("$review")], persisted_item_id="visible")
+    drained = pending_inputs.resolve_oldest("conv_native")
+    assert drained is not None
+    pending_inputs.restore("conv_native", drained)
+    assert pending_inputs.snapshot_for("conv_native") == []
+    restored = pending_inputs.resolve_oldest("conv_native")
+    assert restored is not None and restored.persisted_item_id == "visible"
+
+
 def test_record_then_snapshot_preserves_order_and_content() -> None:
     """
     Snapshot replays recorded messages FIFO with content verbatim.
