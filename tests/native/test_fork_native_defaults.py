@@ -1,5 +1,3 @@
-"""Native default path isolation and the paired private-directory checks."""
-
 from __future__ import annotations
 
 import hashlib
