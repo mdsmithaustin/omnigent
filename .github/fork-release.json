@@ -245,9 +245,21 @@
       "name": "fork-isolation-beffdc4b4459",
       "reason": "Audit isolation comments and wrap the default log path contract.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "a196af0537b6734515974eeb3908c0c68e680474",
+      "name": "fork-isolation-a196af0537b6",
+      "reason": "Pin revision .2 to the complete default-isolation payload.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "cb8e95f4e0a400c7146b88cf41d97fee0f101d92",
+      "name": "fork-isolation-cb8e95f4e0a4",
+      "reason": "Qualify fork identities and install released upstream outside source.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "beffdc4b4459a0f5df81645c42c276a8bb8859c5",
+  "payload_commit": "cb8e95f4e0a400c7146b88cf41d97fee0f101d92",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
