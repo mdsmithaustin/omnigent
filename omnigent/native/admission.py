@@ -1,5 +1,3 @@
-"""Validate source admission at native creation and deferred input boundaries."""
-
 from __future__ import annotations
 
 import hashlib
@@ -119,9 +117,9 @@ def validate_native_sync(
 async def native_spawn(
     client: httpx.AsyncClient | None, source_id: str, provider: str
 ) -> AsyncIterator[NativeAdmission]:
+    wrapper_owns_creation_lock = provider == "prime-native"
     async with native_operation(client, source_id, provider) as admission:
-        if provider == "prime-native":
-            # Prime's wrapper consumes its reservation under this lock after tmux launch.
+        if wrapper_owns_creation_lock:
             yield admission
             return
         async with async_bridge_dir_preparation_lock(Path(admission.owner.runtime)):
