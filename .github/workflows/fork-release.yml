@@ -79,7 +79,7 @@ jobs:
           raw = subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"])
           canonical = yaml.safe_load(raw)["jobs"]["pytest"]["strategy"]["matrix"]["include"]
           assert len(canonical) == 16 and len({row["group"] for row in canonical}) == 16
-          rows = [*canonical, {"group": "codex-default", "paths": "tests/codex_parity"}]
+          rows = [*canonical, {"group": "codex-parity", "paths": "tests/codex_parity"}]
           assert len(rows) == 17 and len({row["group"] for row in rows}) == 17
           assert rows[:16] == canonical
           changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
@@ -181,6 +181,33 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
         with:
           cache: ''
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+        if: matrix.group == 'codex-parity'
+      - name: Capture Rust version
+        id: rustc
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+        if: matrix.group == 'codex-parity'
+      - name: Cache parity sidecar binary
+        id: sidecar-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: .tmp-codex-parity-target/debug/codex-parity-sidecar
+          key: codex-parity-bin-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
+        if: matrix.group == 'codex-parity'
+      - name: Install codex CLI
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@aa5736c38f5c1258ee29452c6825d75033b952d7
+        with:
+          harness: codex
+        if: matrix.group == 'codex-parity'
+      - name: Cache virtualenv
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+        if: matrix.group == 'codex-parity'
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
@@ -190,7 +217,14 @@ jobs:
           fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+      - name: Build parity sidecar
+        if: matrix.group == 'codex-parity' && steps.sidecar-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo build \
+            --manifest-path tests/codex_parity/sidecar/Cargo.toml \
+            --target-dir .tmp-codex-parity-target
       - name: Run canonical Python shard
+        if: matrix.group != 'codex-parity'
         env:
           PYTHONFAULTHANDLER: '1'
           OMNIGENT_TEST_TIMEOUT_SCALE: '4'
@@ -204,6 +238,34 @@ jobs:
             --dist=${{ matrix.dist || 'loadfile' }} \
             --timeout=${{ matrix.timeout || '300' }} \
             --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Run codex parity tests
+        if: matrix.group == 'codex-parity'
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: '1'
+          CODEX_PARITY_SIDECAR_BIN: ${{ github.workspace }}/.tmp-codex-parity-target/debug/codex-parity-sidecar
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN \
+            uv run pytest ${{ matrix.paths }} \
+              --codex-parity \
+              --timeout=300 \
+              --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" \
+              -v --tb=long --showlocals --log-level=INFO -r a 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Require executed Codex parity tests
+        if: matrix.group == 'codex-parity'
+        run: |
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = Path(os.environ["RUNNER_TEMP"]) / "fork-pytest/junit.xml"
+          cases = ET.parse(report).getroot().findall(".//testcase")
+          assert cases, "Codex parity collected no tests"
+          assert any(case.find("skipped") is None for case in cases), "Codex parity skipped every test"
+          assert all(case.find("failure") is None and case.find("error") is None for case in cases), "Codex parity contains failed tests"
+          PYCODE
       - name: Capture failed worker resource diagnostics
         if: failure()
         run: |
@@ -293,6 +355,33 @@ jobs:
       - uses: ./.github/actions/setup-pnpm
         with:
           cache: ''
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+        if: matrix.group == 'codex-parity'
+      - name: Capture Rust version
+        id: rustc
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+        if: matrix.group == 'codex-parity'
+      - name: Cache parity sidecar binary
+        id: sidecar-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: .tmp-codex-parity-target/debug/codex-parity-sidecar
+          key: codex-parity-bin-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
+        if: matrix.group == 'codex-parity'
+      - name: Install codex CLI
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@aa5736c38f5c1258ee29452c6825d75033b952d7
+        with:
+          harness: codex
+        if: matrix.group == 'codex-parity'
+      - name: Cache virtualenv
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+        if: matrix.group == 'codex-parity'
       - name: Install upstream test prerequisites
         run: |
           sudo apt-get update
@@ -302,7 +391,14 @@ jobs:
           fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           uv sync --locked --extra all --group test
+      - name: Build parity sidecar
+        if: matrix.group == 'codex-parity' && steps.sidecar-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo build \
+            --manifest-path tests/codex_parity/sidecar/Cargo.toml \
+            --target-dir .tmp-codex-parity-target
       - name: Run changed addon shard
+        if: matrix.group != 'codex-parity'
         env:
           PYTHONFAULTHANDLER: '1'
           OMNIGENT_TEST_TIMEOUT_SCALE: '4'
@@ -316,6 +412,34 @@ jobs:
             --dist=${{ matrix.dist || 'loadfile' }} \
             --timeout=${{ matrix.timeout || '300' }} \
             --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Run codex parity tests
+        if: matrix.group == 'codex-parity'
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: '1'
+          CODEX_PARITY_SIDECAR_BIN: ${{ github.workspace }}/.tmp-codex-parity-target/debug/codex-parity-sidecar
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN \
+            uv run pytest ${{ matrix.paths }} \
+              --codex-parity \
+              --timeout=300 \
+              --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" \
+              -v --tb=long --showlocals --log-level=INFO -r a 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Require executed Codex parity tests
+        if: matrix.group == 'codex-parity'
+        run: |
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = Path(os.environ["RUNNER_TEMP"]) / "fork-pytest/junit.xml"
+          cases = ET.parse(report).getroot().findall(".//testcase")
+          assert cases, "Codex parity collected no tests"
+          assert any(case.find("skipped") is None for case in cases), "Codex parity skipped every test"
+          assert all(case.find("failure") is None and case.find("error") is None for case in cases), "Codex parity contains failed tests"
+          PYCODE
       - name: Capture failed worker resource diagnostics
         if: failure()
         run: |
