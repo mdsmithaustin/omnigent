@@ -257,9 +257,21 @@
       "name": "fork-isolation-cb8e95f4e0a4",
       "reason": "Qualify fork identities and install released upstream outside source.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "b4eae4f39fe644204c203731fc83614c4f1bece7",
+      "name": "fork-isolation-b4eae4f39fe6",
+      "reason": "Inventory the reviewed qualification repairs for revision .2.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7f2e76ed50c7880b3947bd4c0848dbdbb75c0bbd",
+      "name": "fork-isolation-7f2e76ed50c7",
+      "reason": "Align regression fixtures with isolated fork defaults.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "cb8e95f4e0a400c7146b88cf41d97fee0f101d92",
+  "payload_commit": "7f2e76ed50c7880b3947bd4c0848dbdbb75c0bbd",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
