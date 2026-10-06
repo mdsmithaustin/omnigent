@@ -10,10 +10,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -833,10 +835,61 @@ def _wrapper_command(paths: PrimeRuntimePaths, *child_command: str) -> list[str]
     ]
 
 
-def test_terminal_wrapper_owns_runtime_until_terminal_exits(tmp_path: Path) -> None:
+@pytest.fixture
+def admitted_wrapper_paths() -> Iterator[PrimeRuntimePaths]:
+    from omnigent.native.admission import native_owner
+    from omnigent.native.source_owner import NativeAdmission
+
+    source_id = "conv_wrapper"
+    paths = bridge.runtime_paths(source_id)
+    paths.prepare()
+    (paths.root / "executable").write_text("/opt/prime-agent")
+    (paths.session_dir / "saved.jsonl").write_text("saved transcript")
+    admission = NativeAdmission(
+        source_id=source_id, epoch="fixture-epoch", owner=native_owner(source_id, "prime-native")
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            submitted = NativeAdmission.model_validate_json(
+                self.rfile.read(int(self.headers["Content-Length"]))
+            )
+            current = (
+                self.path == f"/v1/sessions/{source_id}/native-admission/validate"
+                and submitted == admission
+            )
+            body = json.dumps({"current": current}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        (paths.root / "config.json").write_text(
+            json.dumps(
+                {
+                    "nativeAdmission": admission.model_dump(),
+                    "serverUrl": f"http://127.0.0.1:{server.server_port}",
+                    "authHeaders": {},
+                }
+            )
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield paths
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+
+def test_terminal_wrapper_owns_runtime_until_terminal_exits(
+    admitted_wrapper_paths: PrimeRuntimePaths, tmp_path: Path
+) -> None:
     from omnigent.native.owner_claim import read_owner_claim
 
-    paths = _maintenance_paths(tmp_path)
+    paths = admitted_wrapper_paths
     launch = build_prime_launch(
         paths,
         executable=(paths.root / "executable").read_text(),
@@ -875,12 +928,12 @@ def test_terminal_wrapper_owns_runtime_until_terminal_exits(tmp_path: Path) -> N
 
 
 def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
-    tmp_path: Path,
+    admitted_wrapper_paths: PrimeRuntimePaths,
 ) -> None:
     from omnigent.harnesses.pi_native.bridge import _atomic_json
     from omnigent.native.owner_claim import read_owner_claim
 
-    paths = _maintenance_paths(tmp_path)
+    paths = admitted_wrapper_paths
     launch = build_prime_launch(
         paths,
         executable=(paths.root / "executable").read_text(),
@@ -928,8 +981,10 @@ def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
             replacement.wait(timeout=5)
 
 
-def test_public_stop_and_wrapper_finalization_do_not_deadlock(tmp_path: Path) -> None:
-    paths = _maintenance_paths(tmp_path)
+def test_public_stop_and_wrapper_finalization_do_not_deadlock(
+    admitted_wrapper_paths: PrimeRuntimePaths, tmp_path: Path
+) -> None:
+    paths = admitted_wrapper_paths
     launch = build_prime_launch(
         paths,
         executable=(paths.root / "executable").read_text(),

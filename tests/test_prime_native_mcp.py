@@ -11,6 +11,7 @@ import pytest
 from omnigent.entities.session_resources import SessionResourceView
 from omnigent.harnesses.prime_native import bridge, main, process
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
+from omnigent.native.source_owner import NativeAdmission, NativeAdmissionRequest
 from omnigent.runner.native.orchestration import NativeLaunchContext
 from omnigent.spec.types import AgentSpec, MCPServerConfig
 
@@ -47,6 +48,14 @@ async def _launch(
 
     async def server(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path == "/v1/sessions/conv_prime/native-admission":
+            admission_request = NativeAdmissionRequest.model_validate_json(request.content)
+            return httpx.Response(
+                200,
+                json=NativeAdmission(
+                    source_id="conv_prime", epoch="fixture-epoch", owner=admission_request.owner
+                ).model_dump(),
+            )
         if request.url.path.endswith("/mcp"):
             assert mcp_response is not None
             if isinstance(mcp_response, httpx.Response):
