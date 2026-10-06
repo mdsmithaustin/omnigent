@@ -2140,6 +2140,7 @@ _CLICK_SUBCOMMANDS: frozenset[str] = frozenset(
         "pane-split",
         "pi",
         "polly",
+        "prime-native",
         "qwen",
         "resume",
         "run",
@@ -8152,6 +8153,11 @@ class _NativeTerminalDispatchSpec:
 
 
 _NATIVE_TERMINAL_DISPATCH_SPECS: dict[str, _NativeTerminalDispatchSpec] = {
+    "prime-native": _NativeTerminalDispatchSpec(
+        module="omnigent.harnesses.prime_native.main",
+        function="run_prime_native",
+        args_param="extra_args",
+    ),
     "claude": _NativeTerminalDispatchSpec(
         module="omnigent.harnesses.claude_native.main",
         function="run_claude_native",

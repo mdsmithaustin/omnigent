@@ -29,9 +29,12 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import click
 
 import omnigent.onboarding.kimi_auth as _kimi_auth
 from omnigent._platform import IS_WINDOWS, resolve_cli_binary
@@ -232,6 +235,14 @@ def _harness_availability_core(harness: str) -> HarnessAvailability:
     if IS_WINDOWS and canonical in NATIVE_HARNESSES:
         # Native harnesses require tmux/PTY, which the runner does not support on Windows.
         return False
+    if canonical == "prime-native":
+        from omnigent.harnesses.prime_native.process import resolve_prime_executable
+
+        try:
+            resolve_prime_executable()
+        except (OSError, subprocess.SubprocessError, click.ClickException):
+            return False
+        return True
     if canonical == "acp":
         # The generic ACP harness has no fixed binary — "configured" means at
         # least one agent is registered in the ``acp:`` config block. Each

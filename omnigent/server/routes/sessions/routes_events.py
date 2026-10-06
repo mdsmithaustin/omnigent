@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import json
 import secrets
 import time
 import weakref
@@ -43,6 +44,7 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_plugins import NativeCodingAgent
 from omnigent.harnesses.codex_native.shell_input import shell_command_from_input
 from omnigent.harnesses.codex_native.side_chat import is_side_chat_child
+from omnigent.harnesses.prime_native.controls import Compact, ControlStatus, Interrupt
 from omnigent.host.frames import (
     HARNESS_NOT_CONFIGURED_ERROR_CODE as _HARNESS_NOT_CONFIGURED_ERROR_CODE,
 )
@@ -189,6 +191,7 @@ from omnigent.server.routes._sessions.helpers import (
     _background_task_delivery_status,
     _build_actor,
     _build_skill_slash_command_policy_body,
+    _decode_prime_control_receipt,
     _dispatch_skill_slash_command_to_runner,
     _evaluate_output_policy,
     _extract_user_text_from_event,
@@ -1782,6 +1785,19 @@ def register_events_routes(
         )
         if stop_codex_side_chat and is_session_closed(conv.labels, conv.title):
             return {"queued": False}
+        if body.type == _INTERRUPT_TYPE:
+            native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
+            if native_agent is not None and native_agent.harness == "prime-native":
+                result = await _forward_session_change_to_runner(
+                    session_id, runner_router, {"type": "interrupt"}, timeout_s=5.0
+                )
+                receipt = _decode_prime_control_receipt(result, expected=Interrupt())
+                if receipt.outcome.status != ControlStatus.INTERRUPT_ACCEPTED:
+                    raise HTTPException(
+                        status_code=receipt.http_status,
+                        detail={"error": f"prime_control_{receipt.outcome.status.value}"},
+                    )
+                return {"queued": True, "status": "interrupt_accepted"}
         if body.type == _INTERRUPT_TYPE or stop_codex_side_chat:
             target_session_id = session_id
             interrupt_payload: dict[str, Any] = {"type": "interrupt"}
@@ -2059,6 +2075,21 @@ def register_events_routes(
             )
             return {"queued": False, "elicitation_id": elicit_id}
         if body.type == _COMPACT_TYPE:
+            native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
+            if native_agent is not None and native_agent.harness == "prime-native":
+                result = await _forward_session_change_to_runner(
+                    session_id,
+                    runner_router,
+                    {"type": "compact"},
+                    timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                )
+                receipt = _decode_prime_control_receipt(result, expected=Compact())
+                if receipt.outcome.status != ControlStatus.APPLIED:
+                    raise HTTPException(
+                        status_code=receipt.http_status,
+                        detail={"error": f"prime_control_{receipt.outcome.status.value}"},
+                    )
+                return {"queued": False}
             # Unified control dispatch (designs/CLAUDE_NATIVE.md
             # "Control events dispatch on the runner"): forward /compact
             # to the bound runner first, regardless of harness. The

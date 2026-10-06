@@ -379,6 +379,7 @@ def write_extension_files(
     auth_headers: dict[str, str] | None = None,
     tools: list[_JsonObject] | None = None,
     usage_baseline: dict[str, int | float] | None = None,
+    agent_label: str | None = None,
 ) -> tuple[Path, Path]:
     """
     Write the Pi extension and config used by a native Pi terminal.
@@ -414,6 +415,8 @@ def write_extension_files(
         payload["usageBaseline"] = usage_baseline
     # A marker left by a previous Pi process would report this launch ready early.
     (bridge_dir / _INPUT_READY_FILE).unlink(missing_ok=True)
+    if agent_label is not None:
+        payload["agentLabel"] = agent_label
     _atomic_json(config_path(bridge_dir), payload)
     _atomic_text(extension_path(bridge_dir), _extension_source())
     return extension_path(bridge_dir), config_path(bridge_dir)
