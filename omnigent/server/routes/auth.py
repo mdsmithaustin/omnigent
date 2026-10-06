@@ -36,6 +36,7 @@ import jwt
 from fastapi import APIRouter, Query, Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from omnigent.installation_defaults import AUTH_STATE_COOKIE_NAME
 from omnigent.server.accounts_store import SqlAlchemyAccountStore
 from omnigent.server.admin_list import AdminList, promote_if_listed
 from omnigent.server.auth import (
@@ -57,8 +58,8 @@ from omnigent.stores.permission_store import PermissionStore
 _logger = logging.getLogger(__name__)
 
 # Short-lived cookie for PKCE state during the login flow.
-_AUTH_STATE_COOKIE_SECURE = "__Host-ap_auth_state"
-_AUTH_STATE_COOKIE_PLAIN = "ap_auth_state"
+_AUTH_STATE_COOKIE_SECURE = f"__Host-{AUTH_STATE_COOKIE_NAME}"
+_AUTH_STATE_COOKIE_PLAIN = AUTH_STATE_COOKIE_NAME
 _AUTH_STATE_TTL_SECONDS = 300  # 5 minutes
 _CLI_TICKET_TTL_SECONDS = 300  # 5 minutes
 # A native sign-in code is exchanged by the app right after the browser

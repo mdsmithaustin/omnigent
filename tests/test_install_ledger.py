@@ -181,7 +181,7 @@ def test_deep_backfill_observes_external_config_and_launch_agents(
     (state / "installation_id").write_text("install-123\n")
     cursor_config = cursor_dir / "mcp.json"
     cursor_config.write_text('{"mcpServers": {"omnigent": {"command": "python"}}}\n')
-    launch_agent = launch_dir / "ai.omnigent.local.plist"
+    launch_agent = launch_dir / "com.mdsmithaustin.omni.host.plist"
     launch_agent.write_text("plist\n")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(state))

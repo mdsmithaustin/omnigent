@@ -47,8 +47,8 @@ def _oidc_config(redirect_uri: str) -> OIDCConfig:
 @pytest.mark.parametrize(
     ("redirect_uri", "cookie"),
     [
-        ("https://omni.example/auth/callback", "__Host-ap_session"),
-        ("http://localhost:8000/auth/callback", "ap_session"),
+        ("https://omni.example/auth/callback", "__Host-mdsmithaustin_ap_session"),
+        ("http://localhost:8000/auth/callback", "mdsmithaustin_ap_session"),
     ],
 )
 async def test_oidc_manifest_names_mode_and_cookie(

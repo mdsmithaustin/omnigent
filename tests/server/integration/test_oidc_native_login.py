@@ -103,7 +103,7 @@ async def _start(client: httpx.AsyncClient) -> tuple[str, str]:
     resp = await client.get("/auth/login", params=_native_params())
     assert resp.status_code == 302
     idp_state = parse_qs(urlparse(resp.headers["location"]).query)["state"][0]
-    return idp_state, resp.cookies["ap_auth_state"]
+    return idp_state, resp.cookies["mdsmithaustin_ap_auth_state"]
 
 
 async def _callback(
@@ -114,7 +114,7 @@ async def _callback(
     params: dict[str, str] | None = None,
 ) -> httpx.Response:
     client.cookies.clear()
-    client.cookies.set("ap_auth_state", state_cookie)
+    client.cookies.set("mdsmithaustin_ap_auth_state", state_cookie)
     with patch("omnigent.server.routes.auth.httpx.AsyncClient", return_value=idp or _idp_client()):
         return await client.get(
             "/auth/callback",
@@ -147,7 +147,7 @@ async def test_native_sign_in_delivers_code_and_exchanges_for_session() -> None:
             callback = await _callback(client, idp_state, state_cookie)
             query = _loopback_query(callback)
             assert query["state"] == _NATIVE_STATE
-            assert "ap_session" not in callback.cookies
+            assert "mdsmithaustin_ap_session" not in callback.cookies
 
             resp = await _exchange(
                 client, code=query["code"], code_verifier=_VERIFIER, redirect_uri=_REDIRECT
@@ -284,7 +284,9 @@ async def test_login_accepts_ipv6_loopback() -> None:
         resp = await client.get("/auth/login", params=_native_params(native_redirect_uri=redirect))
 
     assert resp.status_code == 302
-    state = jwt.decode(resp.cookies["ap_auth_state"], _TEST_SECRET, algorithms=["HS256"])
+    state = jwt.decode(
+        resp.cookies["mdsmithaustin_ap_auth_state"], _TEST_SECRET, algorithms=["HS256"]
+    )
     assert state["native"]["redirect_uri"] == redirect
 
 
@@ -359,11 +361,11 @@ async def test_browser_login_is_unchanged_by_native_support() -> None:
     async with _client(_transport()) as client:
         resp = await client.get("/auth/login", params={"return_to": "/c/1"})
         idp_state = parse_qs(urlparse(resp.headers["location"]).query)["state"][0]
-        callback = await _callback(client, idp_state, resp.cookies["ap_auth_state"])
+        callback = await _callback(client, idp_state, resp.cookies["mdsmithaustin_ap_auth_state"])
 
     assert callback.status_code == 302
     assert callback.headers["location"] == "/c/1"
-    assert "ap_session" in callback.cookies
+    assert "mdsmithaustin_ap_session" in callback.cookies
 
 
 async def test_redirect_query_round_trips() -> None:

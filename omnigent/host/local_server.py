@@ -33,7 +33,7 @@ import psutil  # type: ignore[import-untyped]
 
 from omnigent.config import global_config_path
 from omnigent.inner import _proc
-from omnigent.installation_defaults import default_user_dir
+from omnigent.installation_defaults import DEFAULT_LOCAL_PORT, default_user_dir
 from omnigent.process_logging import (
     PROCESS_LOG_FILE_ENV_VAR,
     child_logging_popen_kwargs,
@@ -451,8 +451,6 @@ _STOP_POLL_INTERVAL_S = 0.1
 def _terminate_pid(pid: int) -> None:
     """SIGTERM a pid, wait up to the grace period, then SIGKILL if needed.
 
-    Shared by :func:`stop_local_omnigent_server` (the pidfile-tracked server) and
-    :func:`stop_untracked_local_server` (an orphan whose pidfile was lost).
     Waits for the process to exit so the listening socket is released and the
     port becomes immediately re-bindable. Best-effort: a dead pid is a no-op.
 
@@ -494,9 +492,7 @@ def stop_local_omnigent_server() -> None:
     server rather than reusing the stopped one. Best-effort: a missing or
     dead server is a no-op.
 
-    This is pidfile-scoped by design. An orphan whose pidfile was lost is
-    NOT visible here — :func:`stop_untracked_local_server` covers that, and
-    the off-switch (``omnigent stop`` / ``server stop``) calls both.
+    Only the recorded PID is selected. Untracked listeners remain running.
 
     :returns: None.
     """
@@ -720,8 +716,7 @@ def _foreign_port_owner(port: int, own_pid: int) -> int | None:
 
     Best-effort via ``lsof`` (:func:`_pid_listening_on_port`): when ``lsof``
     is missing or reports nothing, ownership cannot be disproven and the
-    caller proceeds, matching the pre-existing degraded behavior of
-    :func:`stop_untracked_local_server`.
+    caller proceeds.
 
     :param port: Loopback TCP port the child was asked to bind, e.g. ``6767``.
     :param own_pid: Our spawned child's pid.
@@ -865,21 +860,21 @@ def _find_free_local_port() -> int:
 # kept landing on a random fallback port — breaking bookmarked URLs.
 # Deployments (Databricks Apps, Docker) pin their own port (typically 8000,
 # the platform convention) and do NOT read this constant.
-_DEFAULT_LOCAL_PORT = 6767
+_DEFAULT_LOCAL_PORT = DEFAULT_LOCAL_PORT
 
 
 def pick_local_port(preferred: int = _DEFAULT_LOCAL_PORT) -> int:
     """Return ``preferred`` if it's bindable on loopback, else a free port.
 
-    The local server prefers a stable, predictable port (6767) so the
+    The local server prefers a stable, predictable port (6768) so the
     URL is the same across ``omnigent server`` and daemon spawns —
-    but falls back to a free port when 6767 is already taken (another
+    but falls back to a free port when 6768 is already taken (another
     app, a second OS user on a shared box). Reuse of an existing
     omnigent server happens via the pidfile (:func:`register_local_server`
     / :func:`local_server_url_if_healthy`), NOT by assuming the port, so
     the fallback never breaks discovery.
 
-    :param preferred: The port to try first, e.g. ``6767``.
+    :param preferred: The port to try first, e.g. ``6768``.
     :returns: ``preferred`` if free, otherwise an OS-assigned free port.
     """
     import socket
@@ -900,10 +895,8 @@ def pick_local_port(preferred: int = _DEFAULT_LOCAL_PORT) -> int:
 def _pid_listening_on_port(port: int) -> int | None:
     """Return the PID listening on loopback *port*, via ``lsof``.
 
-    Used to find an untracked local server (one whose pidfile was lost) so
-    the off-switch can stop it. Cross-platform across macOS + Linux where
-    ``lsof`` is present; returns ``None`` when ``lsof`` is missing, errors,
-    or nothing is listening — the caller then degrades to a manual hint.
+    Checks port ownership during startup. Returns ``None`` when ``lsof``
+    is missing, errors, or reports no listener.
 
     :param port: Loopback TCP port, e.g. ``6767``.
     :returns: The first listening PID, or ``None``.
@@ -922,58 +915,6 @@ def _pid_listening_on_port(port: int) -> int | None:
         with contextlib.suppress(ValueError):
             return int(line)
     return None
-
-
-def _local_server_health_ok(base_url: str) -> bool:
-    """Return ``True`` if *base_url* answers ``/health`` as an Omnigent server.
-
-    Confirms a listener is actually an Omnigent server (``GET /health`` →
-    200 with ``{"status": "ok"}``) before the off-switch stops it, so we
-    never kill an unrelated process that happens to hold the port.
-
-    :param base_url: Loopback URL, e.g. ``"http://127.0.0.1:6767"``.
-    :returns: ``True`` only on a 200 ``{"status": "ok"}`` response.
-    """
-    import httpx
-
-    try:
-        resp = httpx.get(f"{base_url}/health", timeout=2.0, trust_env=False)
-    except httpx.HTTPError:
-        return False
-    if resp.status_code != 200:
-        return False
-    try:
-        body = resp.json()
-    except ValueError:
-        return False
-    return isinstance(body, dict) and body.get("status") == "ok"
-
-
-def stop_untracked_local_server(port: int = _DEFAULT_LOCAL_PORT) -> int | None:
-    """Stop an orphaned local server on *port* that the pidfile doesn't track.
-
-    The pidfile can be lost while the server process lives (a torn/cleared
-    record, a respawn that landed on a different port, a crash). Such a
-    server then escapes :func:`stop_local_omnigent_server`, which only knows the
-    pidfile PID — so ``omnigent stop`` / ``server stop`` would leave it
-    running. This sweep covers that hole: if a live Omnigent server answers
-    ``/health`` on the canonical loopback *port*, find its PID and terminate
-    it. Call it AFTER :func:`stop_local_omnigent_server` so a normally-tracked
-    server is already gone and ``/health`` no longer answers (this is a
-    no-op). Best-effort: returns ``None`` when nothing untracked is found or
-    ``lsof`` is unavailable.
-
-    :param port: Canonical loopback port to sweep, e.g. ``6767``.
-    :returns: The PID stopped, or ``None`` if there was nothing to stop.
-    """
-    base_url = f"http://127.0.0.1:{port}"
-    if not _local_server_health_ok(base_url):
-        return None
-    pid = _pid_listening_on_port(port)
-    if pid is None or not _pid_alive(pid):
-        return None
-    _terminate_pid(pid)
-    return pid
 
 
 def register_local_server(port: int) -> None:

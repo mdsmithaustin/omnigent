@@ -43,7 +43,7 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 _TEST_SECRET = bytes.fromhex("aa" * 32)
 # The plain (non-__Host-) state cookie name, used because the test
 # config runs over http:// so secure_cookies is False.
-_STATE_COOKIE = "ap_auth_state"
+_STATE_COOKIE = "mdsmithaustin_ap_auth_state"
 
 
 def _oidc_config() -> OIDCConfig:
@@ -51,7 +51,7 @@ def _oidc_config() -> OIDCConfig:
 
     HTTP (not HTTPS) keeps ``secure_cookies`` False, which the
     ``TestClient`` needs to send the state cookie back on the callback
-    request, and selects the plain ``ap_auth_state`` cookie name.
+    request, and selects the plain ``mdsmithaustin_ap_auth_state`` cookie name.
 
     :returns: A generic-OIDC config pointing at Google's endpoints (no
         network is touched — the token exchange is mocked in tests).

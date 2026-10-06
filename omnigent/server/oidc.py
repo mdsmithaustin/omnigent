@@ -22,6 +22,8 @@ from urllib.parse import urlsplit
 import httpx
 import jwt
 
+from omnigent.installation_defaults import SESSION_COOKIE_NAME
+
 _logger = logging.getLogger(__name__)
 
 # ── PKCE helpers (RFC 7636) ──────────────────────────────────────
@@ -235,7 +237,7 @@ class OIDCConfig:
 
         :returns: Cookie name string.
         """
-        return "__Host-ap_session" if self.secure_cookies else "ap_session"
+        return f"__Host-{SESSION_COOKIE_NAME}" if self.secure_cookies else SESSION_COOKIE_NAME
 
     @staticmethod
     def from_env() -> OIDCConfig:
