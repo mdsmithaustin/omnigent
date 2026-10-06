@@ -1,5 +1,3 @@
-"""Qualify an explicit Stop against the sealed current native source owner."""
-
 from __future__ import annotations
 
 import asyncio

@@ -3755,6 +3755,32 @@
         "title": "NativeReasoningEffortOption",
         "type": "object"
       },
+      "NativeStopOutcome": {
+        "enum": [
+          "verified",
+          "unknown",
+          "failed"
+        ],
+        "title": "NativeStopOutcome",
+        "type": "string"
+      },
+      "NativeStopResult": {
+        "properties": {
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NativeStopOutcome"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "NativeStopResult",
+        "type": "object"
+      },
       "NativeToolData": {
         "description": "A provider-native tool output item (e.g. `web_search_call`).\n\nThese are executed server-side by the LLM provider and returned\nas opaque dicts. Agent-plane persists and replays them so the\nLLM sees its own tool results on subsequent iterations.",
         "properties": {
@@ -7308,6 +7334,16 @@
             ],
             "description": "Per-session LLM model override, e.g. `\"claude-opus-4-7\"`. `None` means no override is active (the agent's `llm_model` applies). Set via `PATCH /v1/sessions/{id}` or the REPL's `/model` command; both write the same column so the web UI and the TUI stay in sync.",
             "title": "Model Override"
+          },
+          "native_stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeStopResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "parent_session_id": {
             "anyOf": [

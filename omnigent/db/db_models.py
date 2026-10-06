@@ -968,8 +968,6 @@ class SqlConversation(ConversationBase):
 
 
 class SqlNativeSource(ConversationBase):
-    """Current native owner authority beside the guarded conversation insertion."""
-
     __tablename__ = "conversation_native_sources"
 
     workspace_id: Mapped[int] = mapped_column(
