@@ -1,0 +1,13 @@
+phase	decision	evidence	result
+source	Base the fork on published upstream v0.17.0	12b5f67d2529b43eab7366a7288fb89f7587e48b; release404171628; published2026-10-06T02:02:33Z	Pinned source identity; not a certification verdict
+version	Use 0.17.0+mdsmithaustin.1 for all four distributions	4c7b7bced234c7cc375459c31bc135af1cd2b14e	Keep resolved upstream third-party artifacts
+retry	Reconcile the original skill invocation after an ambiguous acknowledgment	e7e4568c80999c034e91a8074602a078f598ac04	Return saved admission or unknown; a deliberate new invocation uses a new identity
+request	Evaluate REQUEST again when native prompt identity is unproven	e7e4568c80999c034e91a8074602a078f598ac04	An earlier server approval does not authorize an unrelated native prompt
+stop	Require owner Stop before a different-agent fork	ccea8ae71a33b09d0945b4efb8c1a8dfb146a340; 8185a4cef706e82ec91c49dcce229f4a9d00a51f	Verify the current recorded owner at destination insertion; keep upstream switch-agent HTTP410
+review-repair	Require runner proof for owner admission on authenticated servers	da04e6ef3e4c9203d9619f8db2356cf1afd10378	User edit or owner permission alone cannot supply native owner proof
+review-repair	Carry original admission through delayed skill resolution	b2052ee515386d51a9e80103ad6456c5b66f1a71; ffc0abcdcaa5b92019fd77ded7884f079a3a5675	Revoked or absent admission settles rejected before delivery; startup or resume precedes a new invocation
+review-repair	Attempt legacy shutdown without upgrading missing proof to verified	b2052ee515386d51a9e80103ad6456c5b66f1a71	Keep unknown closure and block a different-agent fork
+qualification	Limit live fault qualification to the approved 60-minute total	User-approved budget; deterministic source and ordinary tests are outside it	Prioritize wrong acknowledgments, skipped REQUEST, duplicate effects, stuck ownership and owned-process leaks
+certificate	Run canonical Codex parity inside the required fork workflow	3410864a7f14462e690918b74f7a43ae1fe270ee	Reject empty, all-skipped, failed or errored parity results before emitting job identity
+certificate	Bind the final source and hosted checks to the actual distribution bytes	scripts/fork_release.py; .github/workflows/fork-release.yml	The Python distribution profile excludes independent third-party approval and unsupported runtime qualification
+publication	Retain original addon Git objects and release history	.github/fork-release.json; docs/FORK_RELEASES.md	Publish only the approved certified bytes; do not replace an existing release tag or asset

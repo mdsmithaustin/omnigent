@@ -71,9 +71,45 @@
       "name": "native-stop-schema-and-comment-audit",
       "reason": "Regenerate the published Stop result schema, remove seven scoped prose units, and name the existing wrapper lock ownership predicate without changing the lock protocol.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "349285ca2862ba1e80929b79d61713dfd03efcb2",
+      "name": "initial-release-pin",
+      "reason": "Record the first twelve ordered addon commits. Later repairs reopen the inventory.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "19382443d15c7663ae7134fb68259bbeac1976e4",
+      "name": "prime-and-switch-workflow-documentation",
+      "reason": "Preserve the upstream switch-agent HTTP 410 contract and remove a link to an absent lifecycle verifier.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "da04e6ef3e4c9203d9619f8db2356cf1afd10378",
+      "name": "authenticated-native-owner-admission",
+      "reason": "Require the current runner proof before recording or validating an owner on authenticated servers. Preserve existing local single-user trust.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b2052ee515386d51a9e80103ad6456c5b66f1a71",
+      "name": "original-skill-admission-and-legacy-stop",
+      "reason": "Carry admission captured before skill resolution to dispatch. Reject revoked or missing owner admission durably, and attempt legacy shutdown without reporting verified closure.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ffc0abcdcaa5b92019fd77ded7884f079a3a5675",
+      "name": "native-skill-readiness-regressions",
+      "reason": "Exercise the native writer boundary and document that missing owner admission requires startup or resume followed by a new invocation.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3410864a7f14462e690918b74f7a43ae1fe270ee",
+      "name": "required-codex-parity-certification",
+      "reason": "Build and run canonical Codex parity inside the certificate workflow and reject empty, all-skipped, failed, or errored results.",
+      "source_commit": "620607bd067655872f4516f550dc8217deb1ea0d"
     }
   ],
-  "payload_commit": "2b99dd3e6421b8f78ec5973b17ee55ad203849c1",
+  "payload_commit": "3410864a7f14462e690918b74f7a43ae1fe270ee",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
