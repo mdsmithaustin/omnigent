@@ -27,6 +27,8 @@ from tests.harnesses.codex_native.app_server._support import (
     _set_codex_version,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 _ROUTED_TOOL_APPROVALS = {
     "sys_session_rename": {"approval_mode": "approve"},
@@ -88,6 +90,7 @@ def _stub_model_catalog_probe(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 async def _start_codex_home(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -116,6 +119,8 @@ async def _start_codex_home(
     probes = _stub_model_catalog_probe(monkeypatch)
 
     server = _test_app_server(tmp_path, codex_home, tmp_path / "bridge", workspace, env)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
     return codex_home, probes
@@ -136,9 +141,11 @@ def _hook_matchers(codex_home: Path, event: str) -> list[str | None]:
 
 
 async def test_a_plain_codex_native_session_looks_like_a_plain_codex_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    codex_home, probes = await _start_codex_home(tmp_path, monkeypatch, env={})
+    codex_home, probes = await _start_codex_home(
+        native_source_server, tmp_path, monkeypatch, env={}
+    )
 
     assert probes == []
     assert not (codex_home / "model_catalog.json").exists()
@@ -151,7 +158,7 @@ async def test_a_plain_codex_native_session_looks_like_a_plain_codex_session(
 
 
 async def test_a_smart_routing_codex_native_session_gains_the_spawn_apparatus(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pinned and auto-harness alike: the routed spawn has to be able to run.
 
@@ -169,6 +176,7 @@ async def test_a_smart_routing_codex_native_session_gains_the_spawn_apparatus(
     router_dir = tmp_path / "router"
     router_dir.mkdir()
     codex_home, probes = await _start_codex_home(
+        native_source_server,
         tmp_path,
         monkeypatch,
         env={
@@ -187,7 +195,7 @@ async def test_a_smart_routing_codex_native_session_gains_the_spawn_apparatus(
 
 
 async def test_an_old_codex_degrades_a_routed_session_to_catalog_only(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Below the spawn gate's CLI floor the session launches, unrouted.
 
@@ -206,6 +214,7 @@ async def test_an_old_codex_degrades_a_routed_session_to_catalog_only(
     router_dir.mkdir()
     _set_codex_version(monkeypatch, (0, 144, 9))
     codex_home, probes = await _start_codex_home(
+        native_source_server,
         tmp_path,
         monkeypatch,
         env={
@@ -222,7 +231,7 @@ async def test_an_old_codex_degrades_a_routed_session_to_catalog_only(
 
 
 async def test_native_codex_materializes_provider_auth_for_app_server_and_tui(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Native app-server and remote TUI argv contain no provider secret."""
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
@@ -242,6 +251,8 @@ async def test_native_codex_materializes_provider_auth_for_app_server_and_tui(
     _disable_codex_startup_rpc(monkeypatch)
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.config_overrides = [
         *_provider_codex_config_overrides(
             model="test-model",

@@ -23,10 +23,12 @@ from tests.harnesses.codex_native.app_server._support import (
     _disable_codex_startup_rpc,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 async def test_start_upserts_mcp_server_config_across_relaunches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     Codex native startup upserts MCP config across relaunches.
@@ -66,6 +68,8 @@ args = []
     _disable_codex_startup_rpc(monkeypatch)
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
     await server.start()
@@ -95,7 +99,7 @@ args = []
 
 
 async def test_cold_start_refreshes_user_mcp_inventory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A new app-server reads current MCPs without resetting session settings."""
     source = tmp_path / "source"
@@ -109,6 +113,8 @@ async def test_cold_start_refreshes_user_mcp_inventory(
     monkeypatch.setenv("CODEX_HOME", str(source))
     _disable_codex_startup_rpc(monkeypatch)
     server = _test_app_server(tmp_path, private, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
     assert server.proc is None
@@ -142,7 +148,10 @@ async def test_cold_start_refreshes_user_mcp_inventory(
 
 @pytest.mark.parametrize("empty_source", [None, "[mcp_servers]\n"])
 async def test_cold_start_removes_all_user_mcps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty_source: str | None
+    native_source_server: NativeSourceServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    empty_source: str | None,
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -152,6 +161,8 @@ async def test_cold_start_removes_all_user_mcps(
     monkeypatch.setenv("CODEX_HOME", str(source))
     _disable_codex_startup_rpc(monkeypatch)
     server = _test_app_server(tmp_path, private, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
     if empty_source is None:
@@ -168,7 +179,10 @@ async def test_cold_start_removes_all_user_mcps(
 
 @pytest.mark.parametrize("version", [(0, 133, 0), (0, 154, 0)])
 async def test_cold_start_refreshes_mcps_across_profile_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: tuple[int, int, int]
+    native_source_server: NativeSourceServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: tuple[int, int, int],
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -177,6 +191,8 @@ async def test_cold_start_refreshes_mcps_across_profile_changes(
     monkeypatch.setattr(app_server, "_codex_cli_version", AsyncMock(return_value=version))
     _disable_codex_startup_rpc(monkeypatch)
     server = _test_app_server(tmp_path, private, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     for generation, profile in enumerate(("work", "work", "other", None)):
         base = {"mcp_servers": {"shared": {"command": "base", "args": [str(generation)]}}}
         overlays = {
@@ -219,6 +235,7 @@ async def test_cold_start_refreshes_mcps_across_profile_changes(
     ],
 )
 async def test_cold_start_invalid_mcp_source_preserves_private_config(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     invalid: str | bytes | OSError,
@@ -252,6 +269,8 @@ async def test_cold_start_invalid_mcp_source_preserves_private_config(
     spawn = AsyncMock()
     monkeypatch.setattr(app_server.asyncio, "create_subprocess_exec", spawn)
     server = _test_app_server(tmp_path, private, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.config_profile = profile
 
     with pytest.raises(ValueError, match=r"Codex.*config") as caught:
@@ -307,7 +326,7 @@ def test_mcp_parse_diagnostic_does_not_expose_config_values(tmp_path: Path) -> N
 
 
 async def test_cold_start_rejects_shared_home_before_modifying_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "source"
     source.mkdir(mode=0o755)
@@ -319,6 +338,8 @@ async def test_cold_start_rejects_shared_home_before_modifying_it(
     spawn = AsyncMock()
     monkeypatch.setattr(app_server.asyncio, "create_subprocess_exec", spawn)
     server = _test_app_server(tmp_path, source, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     with pytest.raises(ValueError, match="Please report this as a bug"):
         await server.start()
@@ -337,6 +358,7 @@ async def test_cold_start_rejects_shared_home_before_modifying_it(
     ],
 )
 async def test_cold_start_minimal_config_preserves_explicit_profile_mcps(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     profile: str | None,
@@ -356,6 +378,8 @@ async def test_cold_start_minimal_config_preserves_explicit_profile_mcps(
     _disable_codex_startup_rpc(monkeypatch)
     private = tmp_path / "private"
     server = _test_app_server(tmp_path, private, tmp_path / "bridge", tmp_path)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.config_profile = profile
 
     await server.start()
@@ -418,7 +442,7 @@ def test_failed_mcp_refresh_preserves_private_file(
 
 
 async def test_start_writes_fresh_mcp_config_without_leading_blanks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     Codex native startup writes fresh MCP config without leading blanks.
@@ -437,6 +461,8 @@ async def test_start_writes_fresh_mcp_config_without_leading_blanks(
     _disable_codex_startup_rpc(monkeypatch)
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
 
