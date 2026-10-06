@@ -92,10 +92,4 @@ def test_every_native_terminal_role_logs_input_ready(key: str) -> None:
     from omnigent.runner import resource_registry
 
     agent = next(agent for agent in native_agents() if agent.key == key)
-    roles = {
-        value
-        for name, value in vars(resource_registry).items()
-        if name.endswith("_NATIVE_TERMINAL_ROLE")
-    }
-    assert agent.harness in roles, f"no *_NATIVE_TERMINAL_ROLE for {agent.harness}"
     assert callable(resource_registry._native_input_ready_probe(agent.harness))

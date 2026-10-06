@@ -727,7 +727,7 @@ async def test_relay_executor_routes_through_omnigent_in_omnigent_mode(
     # Records every POST sent to the fake Omnigent server.
     ap_mcp_posts: list[dict[str, Any]] = []
 
-    class _FakeApClient:
+    class _FakeApClient(NullServerClient):
         """Fake Omnigent server client that captures /mcp calls and returns a fixed result.
 
         Appends each POST request body to the outer ``ap_mcp_posts`` list via
@@ -754,7 +754,7 @@ async def test_relay_executor_routes_through_omnigent_in_omnigent_mode(
             json: dict[str, Any],
             timeout: float = 60.0,
             headers: dict[str, str] | None = None,
-        ) -> httpx.Response:
+        ) -> NullServerClient._Response | httpx.Response:
             """Record the request and return a valid MCP tools/call response.
 
             :param url: Target URL, e.g. ``"/v1/sessions/conv_x/mcp"``.
@@ -762,7 +762,8 @@ async def test_relay_executor_routes_through_omnigent_in_omnigent_mode(
             :param timeout: Request timeout (unused).
             :returns: 200 response with a fixed MCP result.
             """
-            del timeout
+            if "/native-admission" in url:
+                return await super().post(url, json=json, timeout=timeout, headers=headers)
             ap_mcp_posts.append({"url": url, "json": json})
             req = httpx.Request("POST", f"http://ap-server{url}")
             return httpx.Response(
@@ -1115,7 +1116,7 @@ async def test_relay_policy_evaluate_truncates_long_upstream_error(
 # ---------------------------------------------------------------------------
 
 
-class _SwitchableServerClient:
+class _SwitchableServerClient(NullServerClient):
     """Server client stub whose bound agent and bridge id can be reassigned.
 
     Mutating :attr:`agent_id` / :attr:`bridge_id` between requests simulates
@@ -1134,10 +1135,11 @@ class _SwitchableServerClient:
             the session id.
         :returns: None.
         """
+        super().__init__()
         self.agent_id = agent_id
         self.bridge_id = bridge_id
 
-    class _Response:
+    class _SnapshotResponse:
         """Stub 200 response carrying a caller-supplied JSON body."""
 
         status_code = 200
@@ -1158,7 +1160,7 @@ class _SwitchableServerClient:
         def raise_for_status(self) -> None:
             """No-op: stub always succeeds."""
 
-    async def get(self, url: str, **kwargs: Any) -> _Response:
+    async def get(self, url: str, **kwargs: Any) -> _SnapshotResponse:
         """Serve the session snapshot and label reads the runner performs.
 
         :param url: Request URL, e.g. ``"/v1/sessions/conv_x/labels"``.
@@ -1168,18 +1170,13 @@ class _SwitchableServerClient:
         del kwargs
         if url.endswith("/labels"):
             labels = {BRIDGE_ID_LABEL_KEY: self.bridge_id} if self.bridge_id else {}
-            return self._Response({"labels": labels})
-        return self._Response({"agent_id": self.agent_id})
+            return self._SnapshotResponse({"labels": labels})
+        return self._SnapshotResponse({"agent_id": self.agent_id})
 
-    async def post(self, url: str, **kwargs: Any) -> _Response:
-        """Return an empty 200 for any POST request."""
-        del url, kwargs
-        return self._Response({})
-
-    async def patch(self, url: str, **kwargs: Any) -> _Response:
+    async def patch(self, url: str, **kwargs: Any) -> _SnapshotResponse:
         """Return an empty 200 for any PATCH request."""
         del url, kwargs
-        return self._Response({})
+        return self._SnapshotResponse({})
 
 
 class _FailingResourceRegistry(_StubResourceRegistry):
