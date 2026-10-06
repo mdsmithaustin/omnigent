@@ -31,7 +31,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from filelock import FileLock
+from filelock import AsyncFileLock, FileLock
 from filelock import Timeout as FileLockTimeout
 
 _logger = logging.getLogger(__name__)
@@ -52,6 +52,11 @@ def bridge_dir_preparation_lock(bridge_dir: Path) -> Iterator[None]:
     """Prevent orphan cleanup while a runner prepares a bridge directory."""
     with _bridge_dir_lock(bridge_dir):
         yield
+
+
+def async_bridge_dir_preparation_lock(bridge_dir: Path) -> AsyncFileLock:
+    """Use the same owner lock without blocking the event loop."""
+    return AsyncFileLock(_bridge_dir_lock(bridge_dir).lock_file, mode=0o600)
 
 
 @contextmanager

@@ -39,8 +39,24 @@ from omnigent.runner.resource_registry import (
 )
 from omnigent.spec.types import AgentSpec, ExecutorSpec
 from omnigent.terminals import TerminalListEntry, TerminalRegistry
+from tests.native_source_helpers import native_source_server as native_source_server
 from tests.runner.conftest import _FakeProcessManager, _ScriptedHarnessClient
 from tests.runner.helpers import NullServerClient, make_test_terminal_instance
+
+
+@pytest.fixture(autouse=True)
+def native_admission_for_metadata_transports(monkeypatch, native_source_server):
+    original = httpx.MockTransport
+
+    def transport(handler):
+        def respond(request):
+            if "/native-admission" in request.url.path:
+                return native_source_server.respond(request)
+            return handler(request)
+
+        return original(respond)
+
+    monkeypatch.setattr(httpx, "MockTransport", transport)
 
 
 @dataclass
@@ -905,6 +921,26 @@ async def test_transfer_terminal_moves_resource_without_closing(
     assert registry.get("conv_abc", "bash", "s1") is None
     assert registry.get("conv_new", "bash", "s1") is source
     assert source.conversation_link == "http://127.0.0.1:8000/c/conv_new"
+    assert source.running is True
+
+
+@pytest.mark.asyncio
+async def test_native_terminal_transfer_preserves_source_owner_by_rejecting_move(
+    client: httpx.AsyncClient,
+    registry: TerminalRegistry,
+    tmp_path: Path,
+) -> None:
+    source = make_test_terminal_instance("prime-native", "main", tmp_path)
+    registry._by_conversation.setdefault("conv_abc", {})[("prime-native", "main")] = source
+    response = await client.post(
+        "/v1/sessions/conv_abc/resources/terminals/terminal_prime-native_main/transfer",
+        json={"target_session_id": "conv_new"},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert "original source owner" in response.json()["error"]["message"]
+    assert registry.get("conv_abc", "prime-native", "main") is source
+    assert registry.get("conv_new", "prime-native", "main") is None
     assert source.running is True
 
 
@@ -1777,6 +1813,7 @@ async def test_claude_native_terminal_drives_session_status_from_pane_activity(
     capture = _WatcherCapture()
     instance = _make_capturing_instance(tmp_path, capture, name="claude", session_key="main")
     registry = SessionResourceRegistry(terminal_registry=_LaunchReturningRegistry(instance))
+    registry.native_server_client = NullServerClient()
     status_edges: list[_StatusEdge] = []
     registry.set_terminal_activity_publisher(lambda _sid, _tid: None)
     registry.set_session_status_publisher(
@@ -1906,6 +1943,7 @@ async def test_terminal_activity_pulses_throttled_to_one_per_second(
     capture = _WatcherCapture()
     instance = _make_capturing_instance(tmp_path, capture, name="claude", session_key="main")
     registry = SessionResourceRegistry(terminal_registry=_LaunchReturningRegistry(instance))
+    registry.native_server_client = NullServerClient()
     activity_pulses: list[str] = []
     registry.set_terminal_activity_publisher(lambda _sid, tid: activity_pulses.append(tid))
     # The idle-reset behaviour is only wired for the claude-native role, so

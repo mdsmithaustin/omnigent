@@ -22,6 +22,7 @@ from omnigent.runner.native.interrupt import NativeInterruptRunner
 from omnigent.runner.native.orchestration import NativeLaunchContext
 from omnigent.runtime.prompt import EMBEDDED_BROWSER_PRIORITY_INSTRUCTION
 from omnigent.spec.types import AgentSpec, ExecutorSpec
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class _EmptyTerminalRegistry:
 async def test_stop_during_prime_launch_preparation_reports_503(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    native_source_server,
 ) -> None:
     from omnigent.runner.native import orchestration
 
@@ -62,7 +64,10 @@ async def test_stop_during_prime_launch_preparation_reports_503(
     monkeypatch.setattr(orchestration, "_pi_native_launch_config", blocked_config)
     registry = AsyncMock()
     registry.terminal_registry = _EmptyTerminalRegistry()
-    async with httpx.AsyncClient(base_url="http://omnigent.test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond),
+        base_url="http://omnigent.test",
+    ) as client:
         ctx = NativeLaunchContext(
             session_id="conv_prime_overlap",
             resource_registry=registry,
@@ -99,6 +104,7 @@ async def test_stop_during_prime_launch_preparation_reports_503(
 async def test_prime_launch_reservation_survives_terminal_dispatch_until_identity_is_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    native_source_server,
 ) -> None:
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr(process, "_ACTIVE_RUNTIMES", set())
@@ -125,7 +131,7 @@ async def test_prime_launch_reservation_survives_terminal_dispatch_until_identit
     registry.launch_required_terminal.side_effect = delayed_terminal
 
     def snapshot(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"workspace": str(tmp_path)})
+        return native_source_server.respond(_request, {"workspace": str(tmp_path)})
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(snapshot), base_url="http://omnigent.test"
@@ -184,6 +190,7 @@ async def test_prime_launch_reservation_survives_terminal_dispatch_until_identit
 async def test_provider_launch_owns_terminal_and_reuses_only_native_saved_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    native_source_server,
 ) -> None:
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr(process, "_ACTIVE_RUNTIMES", set())
@@ -204,9 +211,9 @@ async def test_provider_launch_owns_terminal_and_reuses_only_native_saved_sessio
     registry.launch_required_terminal.return_value = view
 
     async def snapshot(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
+        return native_source_server.respond(
+            _request,
+            {
                 "workspace": str(tmp_path),
                 "terminal_launch_args": ["--offline"],
                 "external_session_id": "prime-saved",

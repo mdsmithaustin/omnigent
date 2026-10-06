@@ -16,8 +16,8 @@ even when daemon discovery uses a private temporary directory. Native Windows
 launch is rejected because the published default named pipe is shared.
 
 Launch records a private reservation before its first asynchronous preparation
-step. A concurrent stop returns 503 while that owner is launching, so it cannot
-report success before an unregistered terminal starts. After terminal dispatch,
+step. Closure remains unqualified while that owner is launching, so Stop cannot
+report verified shutdown before an unregistered terminal starts. After terminal dispatch,
 the reservation clears only when a recorded terminal identity is live. Failed
 dispatch cleanup retains uncertain ownership for a later scoped stop. Orphan
 maintenance can remove a dead owner's stale reservation after it proves runtime
@@ -28,6 +28,11 @@ terminal name, and session key, including calls from separate event loops.
 Same-key callers wait before preparation and reconcile any retained owner
 before dispatch. Cancelling a waiter leaves the active launch intact. Other
 keys remain independent, and close still qualifies the exact terminal owner.
+
+The server's private source epoch fences delayed startup and input after Stop.
+A different-agent fork checks verified closure in its destination insertion
+transaction. [The Stop workflow](../../docs/NATIVE_STOP.md) describes owner and
+reader permissions, unsupported outcomes, and resume invalidation.
 
 Launch records the selected Prime executable path and configured kernel
 process-name aliases in the private runtime. Cleanup uses these records to find

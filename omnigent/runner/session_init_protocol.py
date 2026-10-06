@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from omnigent.entities import Conversation
+from omnigent.native.source_owner import NativeAdmission
 
 SessionInitProtocolVersion: TypeAlias = Literal[2]
 SESSION_INIT_PROTOCOL_VERSION: SessionInitProtocolVersion = 2
@@ -63,6 +64,7 @@ def build_runner_session_init_payload(
     suppress_recovery_turn: bool = False,
     resume_interrupted_turn: bool = False,
     recovery_id: str | None = None,
+    native_admission: NativeAdmission | None = None,
 ) -> dict[str, object]:
     """Build the versioned initialization fields appended to the legacy body."""
     from omnigent.inference_config import snapshot_runtime_config
@@ -95,6 +97,11 @@ def build_runner_session_init_payload(
         ),
     )
     return {
+        **(
+            {"native_admission": native_admission.model_dump()}
+            if native_admission is not None
+            else {}
+        ),
         "session_id": conversation.id,
         "agent_id": conversation.agent_id,
         "sub_agent_name": conversation.sub_agent_name,
