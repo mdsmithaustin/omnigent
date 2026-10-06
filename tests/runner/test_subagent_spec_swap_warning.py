@@ -98,6 +98,7 @@ class _SubAgentSnapshotServer(NullServerClient):
     """
 
     def __init__(self, sub_agent_name: str) -> None:
+        super().__init__()
         self._sub_agent_name = sub_agent_name
 
     class _Resp:

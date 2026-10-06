@@ -37,6 +37,8 @@ from omnigent.runner.resource_registry import (
 )
 from omnigent.spec.types import AgentSpec, ExecutorSpec, LocalToolInfo
 from tests._helpers.providers import isolate_provider_resolution
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 from tests.runner.conftest import (
     _build_app_for_spec,
     _build_app_with_mcp_tool,
@@ -401,6 +403,7 @@ def _launch_ctx(**overrides: Any) -> NativeLaunchContext:
     """Build a launch context with a no-op publish_event and a fake registry."""
     base: dict[str, Any] = {
         "session_id": "conv_x",
+        "server_client": NullServerClient(),
         "resource_registry": _FakeResourceRegistry(_FakeTerminalRegistry()),
         "publish_event": lambda _name, _event: None,
     }
@@ -633,6 +636,7 @@ async def test_launch_native_terminal_skip_and_needs_terminal_return_false(
 async def test_launch_native_terminal_publishes_start_error_on_failure(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    native_source_server: NativeSourceServer,
 ) -> None:
     """A builder failure returns False and publishes a terminal-start error."""
     from omnigent.runner.native import _launch_native_terminal
@@ -642,11 +646,17 @@ async def test_launch_native_terminal_publishes_start_error_on_failure(
 
     monkeypatch.setattr("omnigent.runner.native._launch_pi", _boom)
     events: list[tuple[str, dict[str, Any]]] = []
-    result = await _launch_native_terminal(
-        "pi-native",
-        _launch_ctx(publish_event=lambda name, event: events.append((name, event))),
-        ensure_locks={},
-    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond), base_url="http://source"
+    ) as server:
+        result = await _launch_native_terminal(
+            "pi-native",
+            _launch_ctx(
+                server_client=server,
+                publish_event=lambda name, event: events.append((name, event)),
+            ),
+            ensure_locks={},
+        )
 
     assert result is False
     failure = next(
@@ -827,6 +837,7 @@ def _ensure_ctx(registry: _FakeEnsureRegistry, session_id: str = "conv_e") -> Na
     """Build a launch context whose registry drives the ensure-shell tests."""
     return NativeLaunchContext(
         session_id=session_id,
+        server_client=NullServerClient(),
         resource_registry=registry,  # type: ignore[arg-type]
         publish_event=lambda _name, _event: None,
     )
@@ -2480,7 +2491,6 @@ async def test_create_session_envelope_is_single_flight_and_skips_metadata_callb
     """Concurrent v2 initialization resolves once and uses supplied metadata."""
 
     class _ServerClient:
-        def __init__(self) -> None:
             self.get_paths: list[str] = []
 
         async def get(self, path: str, **_kwargs: Any) -> Any:
@@ -2927,6 +2937,7 @@ class _NativeSeedServerClient(NullServerClient):
 
     def __init__(self, stored_items: list[dict[str, Any]] | None = None) -> None:
         self.stored_items = [{"id": "item_latest"}] if stored_items is None else stored_items
+        super().__init__()
         self.items_params: list[Any] = []
         self.file_calls: list[str] = []
         self.posted_events: list[dict[str, Any]] = []
