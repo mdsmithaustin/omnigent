@@ -18,10 +18,18 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 
 from omnigent.db.utils import generate_agent_id
+from omnigent.native.source_owner import (
+    NativeOwner,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopReceipt,
+    NativeStopResult,
+)
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.managed_hosts import ManagedSandboxConfig, ManagedSandboxDeployment
 from omnigent.server.routes import sessions as sessions_module
+from omnigent.server.routes._sessions import native_stop
 from omnigent.server.routes.sessions import routes_core, routes_events
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
@@ -656,7 +664,9 @@ async def _builtin(env: _Env, harness: str) -> str:
 
 
 @pytest.mark.parametrize("source_harness", ["pi-native", "native-pi"])
-async def test_saved_profile_fork_accepts_an_alias_for_the_same_harness(env: _Env, source_harness):
+async def test_saved_profile_fork_accepts_an_alias_for_the_same_harness(
+    env: _Env, source_harness, monkeypatch: pytest.MonkeyPatch
+):
     env.catalog.runtime_config["inference"]["harnesses"][source_harness] = {
         "provider": "bifrost",
         "default_model": "gateway/main",
@@ -668,6 +678,33 @@ async def test_saved_profile_fork_accepts_an_alias_for_the_same_harness(env: _En
     )
     snapshot = await env.catalog.prepare("agent_sandbox", source_harness, "local")
     source = env.store.create_conversation(agent_id=source_agent_id, inference_snapshot=snapshot)
+    owner = NativeOwner(provider="pi-native", environment="fixture", runtime="source-owner")
+    admitted = await env.client.post(
+        f"/v1/sessions/{source.id}/native-admission", json={"owner": owner.model_dump()}
+    )
+    assert admitted.status_code == 200, admitted.text
+
+    def acknowledge(request: Request) -> Response:
+        payload = json.loads(request.content)
+        assert payload["type"] == "stop_session"
+        stop = NativeStop.model_validate(payload["native_stop"])
+        assert stop.admission.model_dump() == admitted.json()
+        return Response(
+            200,
+            json=NativeStopReceipt(
+                stop=stop, result=NativeStopResult(outcome=NativeStopOutcome.VERIFIED)
+            ).model_dump(mode="json"),
+        )
+
+    async with AsyncClient(
+        transport=MockTransport(acknowledge), base_url="http://runner"
+    ) as runner:
+        monkeypatch.setattr(native_stop, "_get_runner_client", AsyncMock(return_value=runner))
+        stopped = await env.client.post(
+            f"/v1/sessions/{source.id}/events", json={"type": "stop_session", "data": {}}
+        )
+    assert stopped.status_code == 202, stopped.text
+    assert stopped.json()["native_stop"]["outcome"] == "verified"
     response = await env.client.post(
         f"/v1/sessions/{source.id}/fork", json={"agent_id": target_agent_id}
     )

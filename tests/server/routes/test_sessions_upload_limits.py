@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -16,10 +17,18 @@ from omnigent.errors import OmnigentError
 from omnigent.harness_plugins import CLAUDE_NATIVE_CODING_AGENT
 from omnigent.host.frames import HOST_CAPABILITIES, HostHelloFrame
 from omnigent.inner.native_attachments import MAX_FILESYSTEM_ATTACHMENT_UPLOAD_BYTES
+from omnigent.native.source_owner import (
+    NativeOwner,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopReceipt,
+    NativeStopResult,
+)
 from omnigent.runtime.content_resolver import (
     MAX_TEXT_UPLOAD_BYTES,
 )
 from omnigent.server.host_registry import HostRegistry
+from omnigent.server.routes._sessions import native_stop
 from omnigent.server.routes.sessions import create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
@@ -189,7 +198,7 @@ def test_message_cannot_inline_a_filesystem_attachment(
         ("notes.txt", "openai-agents", "message", "input_file", 202),
     ],
 )
-def test_send_rechecks_unsent_upload_after_fork_into_another_harness(
+async def test_send_rechecks_unsent_upload_after_fork_into_another_harness(
     upload_client: tuple[TestClient, str],
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,6 +224,33 @@ def test_send_rechecks_unsent_upload_after_fork_into_another_harness(
         )
 
     monkeypatch.setattr(sessions, "get_agent_cache", lambda: SimpleNamespace(load=load))
+    owner = NativeOwner(provider="claude-native", environment="fixture", runtime="source-owner")
+    admitted = client.post(
+        f"/v1/sessions/{source_id}/native-admission", json={"owner": owner.model_dump()}
+    )
+    assert admitted.status_code == 200, admitted.text
+
+    def acknowledge(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["type"] == "stop_session"
+        stop = NativeStop.model_validate(payload["native_stop"])
+        assert stop.admission.model_dump() == admitted.json()
+        return httpx.Response(
+            200,
+            json=NativeStopReceipt(
+                stop=stop, result=NativeStopResult(outcome=NativeStopOutcome.VERIFIED)
+            ).model_dump(mode="json"),
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(acknowledge), base_url="http://runner"
+    ) as runner:
+        monkeypatch.setattr(native_stop, "_get_runner_client", AsyncMock(return_value=runner))
+        stopped = client.post(
+            f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+        )
+    assert stopped.status_code == 202, stopped.text
+    assert stopped.json()["native_stop"]["outcome"] == "verified"
     changed = client.post(f"/v1/sessions/{source_id}/fork", json={"agent_id": target.id})
     assert changed.status_code == 201, changed.text
     session_id = changed.json()["id"]
@@ -236,6 +272,11 @@ def test_send_rechecks_unsent_upload_after_fork_into_another_harness(
             "type": event_type,
             "data": {
                 "role": "user",
+                **(
+                    {"kind": "skill", "name": "review", "arguments": ""}
+                    if event_type == "slash_command"
+                    else {}
+                ),
                 "content": [
                     {"type": block_type, "file_id": files[0].id, "filename": "renamed.txt"}
                 ],
