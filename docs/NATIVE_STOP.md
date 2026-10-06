@@ -112,13 +112,16 @@ To check installed packages against an existing owned Prime source, run
 `verify_stop_fork.py` with the Python entry from the wheel environment:
 
 ```bash
-/absolute/wheel-venv/bin/python .agents/skills/verify-prime-native/scripts/verify_stop_fork.py --server http://127.0.0.1:8123 --source SOURCE_ID --target-agent TARGET_AGENT_ID --owner-headers /tmp/owner.json --reader-headers /tmp/reader.json --evidence /tmp/stop-fork-evidence
+/absolute/wheel-venv/bin/python .agents/skills/verify-prime-native/scripts/verify_stop_fork.py --server http://127.0.0.1:8123 --source SOURCE_ID --target-agent TARGET_AGENT_ID --target-session TARGET_SESSION_ID --owner-headers /tmp/owner.json --reader-headers /tmp/reader.json --evidence /tmp/stop-fork-evidence
 ```
 
 The header files contain JSON request headers for each identity. Grant the reader
-access to the source and target agent first. The driver requires installed module
-origins, checks the owner and reader HTTP results, and records the destination.
-The caller owns source setup and cleanup of both sessions. Use a fresh evidence
+access to the source and target session first. The target session binds
+`TARGET_AGENT_ID`. The driver requires installed module origins, checks the owner
+and reader HTTP results, and compares the destination's agent bundle bytes with
+the selected target's bundle. Upstream creates a new session-scoped agent ID for
+the destination. The caller owns setup and cleanup of the source, target, and
+destination sessions. Use a fresh evidence
 directory. Adding `--expected-stop WRONG` must fail at the literal Stop result.
 
 Run the separately maintained [Prime adapter verification](PRIME_NATIVE.md#verify-the-adapter)
