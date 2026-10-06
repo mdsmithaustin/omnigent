@@ -39,7 +39,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -104,7 +105,7 @@ class TerminalListEntry:
 
 
 class TerminalExitedDuringLaunch(RuntimeError):
-    """Retain a dead launch's captured evidence after its private server is closed."""
+    """Report a launch that failed its liveness probe, with its captured evidence."""
 
     def __init__(self, instance: TerminalInstance) -> None:
         self.instance = instance
@@ -112,6 +113,12 @@ class TerminalExitedDuringLaunch(RuntimeError):
             f"terminal {instance.name}:{instance.session_key} exited before it became available "
             f"(exit status {instance.last_exit_status()})"
         )
+
+
+@dataclass
+class _LaunchLockEntry:
+    lock: threading.Lock
+    users: int = 0
 
 
 class TerminalRegistry:
@@ -137,10 +144,9 @@ class TerminalRegistry:
             ``None`` keeps links relative.
         """
         self._conversation_link_base_url = conversation_link_base_url
-        # Two-level dict: conversation_id -> (name, key) -> instance.
-        # Per-conversation maps make ``cleanup_conversation`` cheap
-        # (one pop) and ``list_for_conversation`` direct.
         self._by_conversation: dict[str, dict[tuple[str, str], TerminalInstance]] = {}
+        self._failed_launches: dict[str, list[TerminalListEntry]] = {}
+        self._launch_locks: dict[tuple[str, str, str], _LaunchLockEntry] = {}
         # Per-instance locks keyed by the full (conv_id, name, session_key)
         # triple. Created at launch, removed at close /
         # cleanup_conversation. Sender / reader / closer tools acquire
@@ -156,6 +162,24 @@ class TerminalRegistry:
         # Protects both ``_by_conversation`` and ``_instance_locks``.
         self._lock = threading.Lock()
         self.environment_resolver: Callable[[str, OSEnvSpec], OSEnvironment] | None = None
+
+    @asynccontextmanager
+    async def _serialize_launch(self, key: tuple[str, str, str]) -> AsyncIterator[None]:
+        with self._lock:
+            entry = self._launch_locks.setdefault(key, _LaunchLockEntry(threading.Lock()))
+            entry.users += 1
+        try:
+            while not entry.lock.acquire(blocking=False):
+                await asyncio.sleep(0.01)
+            try:
+                yield
+            finally:
+                entry.lock.release()
+        finally:
+            with self._lock:
+                entry.users -= 1
+                if entry.users == 0:
+                    del self._launch_locks[key]
 
     def conversation_link_for_id(self, conversation_id: str) -> str:
         """
@@ -192,6 +216,11 @@ class TerminalRegistry:
         with the correct status by inspecting whether a new instance
         was created.
 
+        Concurrent launches for the same triple wait before preparation.
+        The owner finishes registration or retains its failed instance
+        before the next caller can reconcile it. Other triples launch
+        independently.
+
         :param conversation_id: The owning conversation id, e.g.
             ``"conv_abc123"``.
         :param terminal_name: The terminal's spec name from
@@ -217,95 +246,122 @@ class TerminalRegistry:
             fails. Inner code surfaces a clear error; the caller
             tool wraps in a JSON error envelope.
         """
-        key = (terminal_name, session_key)
-        with self._lock:
-            existing = self._by_conversation.get(conversation_id, {}).get(key)
-        if existing is not None and existing.running:
-            if await existing.is_alive():
-                return existing
-            await self.close(conversation_id, terminal_name, session_key)
-        elif existing is not None:
-            await self.close(conversation_id, terminal_name, session_key)
+        async with self._serialize_launch((conversation_id, terminal_name, session_key)):
+            key = (terminal_name, session_key)
+            while True:
+                with self._lock:
+                    failed = [
+                        entry
+                        for entry in self._failed_launches.get(conversation_id, [])
+                        if (entry.terminal_name, entry.session_key) == key
+                    ]
+                    existing = self._by_conversation.get(conversation_id, {}).get(key)
+                if failed:
+                    for entry in failed:
+                        await self._close_failed_launch(
+                            conversation_id, entry, require_confirmation=False
+                        )
+                    continue
+                if existing is None:
+                    break
+                if existing.running and await existing.is_alive():
+                    with self._lock:
+                        if self._by_conversation.get(conversation_id, {}).get(key) is existing:
+                            return existing
+                else:
+                    await self.close(
+                        conversation_id, terminal_name, session_key, expected=existing
+                    )
 
-        # Lock-free section: ``create_terminal_instance`` and
-        # ``launch`` may take real time (tmux spawn). Holding the
-        # registry lock across them would serialize all conversations'
-        # terminal spawns globally. Instead we re-check after the
-        # spawn completes.
-        parent_environment = None
-        environment_spec = spec.os_env if isinstance(spec.os_env, OSEnvSpec) else parent_os_env
-        if (
-            environment_spec is not None
-            and environment_spec.sandbox is not None
-            and any(p.copy_on_write for p in environment_spec.sandbox.write_path_specs)
-        ):
-            if self.environment_resolver is None:
-                raise RuntimeError("copy_on_write terminals require a session resource registry")
-            parent_environment = self.environment_resolver(
-                conversation_id, parent_os_env or environment_spec
+            parent_environment = None
+            environment_spec = spec.os_env if isinstance(spec.os_env, OSEnvSpec) else parent_os_env
+            if (
+                environment_spec is not None
+                and environment_spec.sandbox is not None
+                and any(p.copy_on_write for p in environment_spec.sandbox.write_path_specs)
+            ):
+                if self.environment_resolver is None:
+                    raise RuntimeError(
+                        "copy_on_write terminals require a session resource registry"
+                    )
+                parent_environment = self.environment_resolver(
+                    conversation_id, parent_os_env or environment_spec
+                )
+            shared_environment_args = (
+                {"parent_environment": parent_environment} if parent_environment else {}
             )
-        shared_environment_args = (
-            {"parent_environment": parent_environment} if parent_environment else {}
-        )
-        created = create_terminal_instance(
-            terminal_name,
-            session_key,
-            spec,
-            parent_os_env_spec=parent_os_env,
-            **shared_environment_args,
-            cwd_override=cwd_override,
-            sandbox_override=sandbox_override,
-            conversation_link=self.conversation_link_for_id(conversation_id),
-        )
-        created.instance.lifecycle_trace.transfer_session(conversation_id)
-        await created.instance.launch(cwd=created.cwd)
-        if not await created.instance.is_alive():
-            created.instance.lifecycle_trace.note_exit()
+            created = create_terminal_instance(
+                terminal_name,
+                session_key,
+                spec,
+                parent_os_env_spec=parent_os_env,
+                **shared_environment_args,
+                cwd_override=cwd_override,
+                sandbox_override=sandbox_override,
+                conversation_link=self.conversation_link_for_id(conversation_id),
+            )
+            created.instance.lifecycle_trace.transfer_session(conversation_id)
+            launch_task = asyncio.create_task(created.instance.launch(cwd=created.cwd))
             try:
-                await asyncio.wait_for(created.instance.close(), timeout=_CLOSE_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Newly launched terminal close timed out for %s:%s in conv %s",
-                    terminal_name,
-                    session_key,
-                    conversation_id,
-                )
-            raise TerminalExitedDuringLaunch(created.instance)
+                await asyncio.shield(launch_task)
+                if not await created.instance.is_alive():
+                    created.instance.lifecycle_trace.note_exit()
+                    failure = TerminalExitedDuringLaunch(created.instance)
+                    try:
+                        await asyncio.wait_for(created.instance.close(), timeout=_CLOSE_TIMEOUT_S)
+                    except Exception as exc:
+                        failure.add_note(f"Terminal cleanup remains unconfirmed: {exc!r}")
+                        raise failure from exc
+                    raise failure
 
-        with self._lock:
-            slot = self._by_conversation.setdefault(conversation_id, {})
-            # Re-check: another concurrent launch for the same key may
-            # have raced ours. Take the second-arrival policy: close
-            # ours and return the racer's. Avoids two live tmux
-            # sessions for the same key.
-            racer = slot.get(key)
-            if racer is not None and racer.running:
-                # Close ours outside the lock; racer wins.
-                instance_to_close: TerminalInstance | None = created.instance
-                winning_instance = racer
-            else:
-                slot[key] = created.instance
-                instance_to_close = None
-                winning_instance = created.instance
-                # Allocate a per-instance lock alongside the
-                # registration. Tools fetch it via
-                # :meth:`get_instance_lock` to serialize concurrent
-                # tmux ops on this instance.
-                self._instance_locks[(conversation_id, terminal_name, session_key)] = (
-                    threading.Lock()
-                )
+                with self._lock:
+                    slot = self._by_conversation.setdefault(conversation_id, {})
+                    racer = slot.get(key)
+                    if racer is not None and (racer.running or terminal_name == "prime-native"):
+                        instance_to_close: TerminalInstance | None = created.instance
+                        winning_instance = racer
+                    else:
+                        slot[key] = created.instance
+                        instance_to_close = None
+                        winning_instance = created.instance
+                        self._instance_locks[(conversation_id, terminal_name, session_key)] = (
+                            threading.Lock()
+                        )
 
-        if instance_to_close is not None:
-            try:
-                await asyncio.wait_for(instance_to_close.close(), timeout=_CLOSE_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Race-loser terminal close timed out for %s:%s in conv %s",
-                    terminal_name,
-                    session_key,
-                    conversation_id,
-                )
-        return winning_instance
+                if instance_to_close is not None:
+                    entry = TerminalListEntry(terminal_name, session_key, instance_to_close)
+                    with self._lock:
+                        self._retain_failed_launch(conversation_id, entry)
+                    try:
+                        await self._close_failed_launch(
+                            conversation_id, entry, require_confirmation=False
+                        )
+                    except asyncio.TimeoutError:
+                        if terminal_name == "prime-native":
+                            raise
+                        logger.warning(
+                            "Race-loser terminal close timed out for %s:%s in conv %s",
+                            terminal_name,
+                            session_key,
+                            conversation_id,
+                        )
+                return winning_instance
+            except BaseException:
+                while not launch_task.done():
+                    try:
+                        await asyncio.shield(launch_task)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not launch_task.cancelled():
+                    launch_task.exception()
+                with self._lock:
+                    self._retain_failed_launch(
+                        conversation_id,
+                        TerminalListEntry(terminal_name, session_key, created.instance),
+                    )
+                raise
 
     def get_instance_lock(
         self,
@@ -465,7 +521,7 @@ class TerminalRegistry:
         *,
         expected: TerminalInstance | None = None,
     ) -> bool:
-        """Close one terminal and remove it from the registry.
+        """Close one terminal, retaining Prime ownership until closure is confirmed.
 
         Idempotent: closing a non-existent or already-closed terminal
         returns ``False`` without raising. This matches the
@@ -491,23 +547,25 @@ class TerminalRegistry:
             slot = self._by_conversation.get(conversation_id)
             if slot is None:
                 return False
-            if expected is not None and slot.get(key) is not expected:
+            instance = slot.get(key)
+            if instance is None or (expected is not None and instance is not expected):
                 return False
-            instance = slot.pop(key, None)
-            if not slot:
-                # Drop the empty per-conversation dict so memory
-                # doesn't grow with stale conversation ids.
-                self._by_conversation.pop(conversation_id, None)
-            # Drop the per-instance lock too so subsequent
-            # ``get_instance_lock`` calls return ``None`` for this
-            # closed instance (callers surface a "not running"
-            # error to the LLM).
-            self._instance_locks.pop((conversation_id, terminal_name, session_key), None)
-        if instance is None:
-            return False
+            entry = TerminalListEntry(terminal_name, session_key, instance)
+            if terminal_name == "prime-native":
+                self._retain_failed_launch(conversation_id, entry)
+            else:
+                slot.pop(key)
+                if not slot:
+                    self._by_conversation.pop(conversation_id, None)
+                self._instance_locks.pop((conversation_id, terminal_name, session_key), None)
         try:
-            await asyncio.wait_for(instance.close(), timeout=_CLOSE_TIMEOUT_S)
+            if terminal_name == "prime-native":
+                await self._close_failed_launch(conversation_id, entry, require_confirmation=False)
+            else:
+                await asyncio.wait_for(instance.close(), timeout=_CLOSE_TIMEOUT_S)
         except asyncio.TimeoutError:
+            if terminal_name == "prime-native":
+                raise
             logger.warning(
                 "Terminal close timed out for %s:%s in conv %s",
                 terminal_name,
@@ -515,6 +573,74 @@ class TerminalRegistry:
                 conversation_id,
             )
         return True
+
+    def _retain_failed_launch(self, conversation_id: str, entry: TerminalListEntry) -> None:
+        failures = self._failed_launches.setdefault(conversation_id, [])
+        if not any(existing.instance is entry.instance for existing in failures):
+            failures.append(entry)
+        key = (entry.terminal_name, entry.session_key)
+        slot = self._by_conversation.get(conversation_id, {})
+        if slot.get(key) is entry.instance:
+            slot.pop(key)
+            self._instance_locks.pop((conversation_id, *key), None)
+            if not slot:
+                self._by_conversation.pop(conversation_id, None)
+
+    async def _close_failed_launch(
+        self, conversation_id: str, entry: TerminalListEntry, *, require_confirmation: bool = True
+    ) -> None:
+        await asyncio.wait_for(
+            entry.instance.close(require_confirmation=require_confirmation),
+            timeout=_CLOSE_TIMEOUT_S,
+        )
+        with self._lock:
+            failures = self._failed_launches.get(conversation_id, [])
+            failures[:] = [
+                retained for retained in failures if retained.instance is not entry.instance
+            ]
+            if not failures:
+                self._failed_launches.pop(conversation_id, None)
+
+    async def close_failed_launches(self, conversation_id: str, *, terminal_name: str) -> None:
+        with self._lock:
+            failures = [
+                entry
+                for entry in self._failed_launches.get(conversation_id, [])
+                if entry.terminal_name == terminal_name
+            ]
+        for entry in failures:
+            await self._close_failed_launch(conversation_id, entry)
+
+    async def close_launch(
+        self,
+        conversation_id: str,
+        terminal_name: str,
+        session_key: str,
+        *,
+        spec: TerminalEnvSpec,
+    ) -> None:
+        """Close only instances dispatched with this exact command and arguments."""
+        key = (terminal_name, session_key)
+        with self._lock:
+            slot = self._by_conversation.get(conversation_id, {})
+            instance = slot.get(key)
+            if (
+                instance is not None
+                and instance.command == spec.command
+                and instance.args == spec.args
+            ):
+                self._retain_failed_launch(
+                    conversation_id, TerminalListEntry(terminal_name, session_key, instance)
+                )
+            failures = list(self._failed_launches.get(conversation_id, []))
+        for entry in failures:
+            if (
+                entry.terminal_name == terminal_name
+                and entry.session_key == session_key
+                and entry.instance.command == spec.command
+                and entry.instance.args == spec.args
+            ):
+                await self._close_failed_launch(conversation_id, entry)
 
     async def cleanup_conversation(self, conversation_id: str) -> None:
         """Close every terminal owned by *conversation_id*.
@@ -537,28 +663,17 @@ class TerminalRegistry:
         :param conversation_id: The conversation being torn down.
         """
         with self._lock:
-            slot = self._by_conversation.pop(conversation_id, None)
-            # Drop every per-instance lock owned by this conversation.
-            # Iterate over `slot` (the just-popped per-conv map) for the
-            # canonical (name, key) pairs.
-            if slot:
-                for name, sess in slot:
-                    self._instance_locks.pop((conversation_id, name, sess), None)
-        if not slot:
-            return
-        for (name, key), instance in slot.items():
+            registered = list(self._by_conversation.get(conversation_id, {}).items())
+            failures = list(self._failed_launches.get(conversation_id, []))
+        for entry in failures:
             try:
-                await asyncio.wait_for(instance.close(), timeout=_CLOSE_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "cleanup_conversation: close timed out for %s:%s in conv %s",
-                    name,
-                    key,
-                    conversation_id,
-                )
+                await self._close_failed_launch(conversation_id, entry)
             except Exception:
-                # We're in a workflow finally block; raising here would
-                # mask the original workflow result. Log and move on.
+                logger.exception("Failed terminal launch retained in conv %s", conversation_id)
+        for (name, key), instance in registered:
+            try:
+                await self.close(conversation_id, name, key, expected=instance)
+            except Exception:
                 logger.exception(
                     "cleanup_conversation: close failed for %s:%s in conv %s",
                     name,
@@ -575,29 +690,9 @@ class TerminalRegistry:
         a stuck instance shouldn't block the rest of Omnigent shutdown.
         """
         with self._lock:
-            slots = list(self._by_conversation.items())
-            self._by_conversation.clear()
-            # AP-shutdown clears all instance locks too — every
-            # conversation's terminals are being torn down.
-            self._instance_locks.clear()
-        for conversation_id, slot in slots:
-            for (name, key), instance in slot.items():
-                try:
-                    await asyncio.wait_for(instance.close(), timeout=_CLOSE_TIMEOUT_S)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "shutdown: close timed out for %s:%s in conv %s",
-                        name,
-                        key,
-                        conversation_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "shutdown: close failed for %s:%s in conv %s",
-                        name,
-                        key,
-                        conversation_id,
-                    )
+            conversation_ids = self._by_conversation.keys() | self._failed_launches.keys()
+        for conversation_id in conversation_ids:
+            await self.cleanup_conversation(conversation_id)
 
     def active_conversation_ids(self) -> list[str]:
         """Return ids of conversations with at least one registered terminal.

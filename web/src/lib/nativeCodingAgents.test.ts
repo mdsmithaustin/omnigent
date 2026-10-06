@@ -18,6 +18,20 @@ import {
 } from "./nativeCodingAgents";
 
 describe("nativeCodingAgentForHarness", () => {
+  it("recognizes Prime Native without a public prime alias or unqualified controls", () => {
+    const prime = nativeCodingAgentForHarness("prime-native");
+    expect(prime).toMatchObject({
+      key: "prime-native",
+      displayName: "Prime Native",
+      wrapperLabel: "prime-native-ui",
+      iconKind: "prime-native",
+    });
+    expect(prime?.fullySupported).not.toBe(true);
+    expect(prime?.capabilities).toBeUndefined();
+    expect(nativeCodingAgentForHarness("prime")).toBeUndefined();
+    expect(isNativeWrapper("prime-native-ui")).toBe(true);
+  });
+
   it("resolves the canonical pi-native harness", () => {
     expect(nativeCodingAgentForHarness("pi-native")?.key).toBe("pi");
   });

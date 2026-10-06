@@ -28,6 +28,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, TypeAlias, cast
 
+import psutil
+
 from omnigent._platform import IS_WINDOWS
 from omnigent.cli_invocation import cli_invocation
 from omnigent.debug_logging import debug_event
@@ -1048,6 +1050,8 @@ class TerminalInstance:
     keep_alive_after_exit: bool = False
     running: bool = False
     launch_cwd: str | None = None
+    _tmux_creation_started: bool = field(default=False, init=False, repr=False)
+    _tmux_server_identity: tuple[int, float] | None = field(default=None, init=False, repr=False)
     # Owned per-launch egress proxy. ``None`` when the sandbox
     # carries no ``egress_rules`` or the backend doesn't need a
     # spawn-time wrap (the ``none`` backend does nothing here). Cleaned
@@ -1635,6 +1639,9 @@ class TerminalInstance:
                     [
                         "new-session",
                         "-d",
+                        "-P",
+                        "-F",
+                        "#{pid}",
                         "-s",
                         self.tmux_target,
                         # Deliberately small: first attach GROWS (lossless).
@@ -1657,13 +1664,18 @@ class TerminalInstance:
         try:
             if self._clipboard_bridge is not None:
                 self._clipboard_bridge.start()
+            self._tmux_creation_started = True
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            _, stderr = await proc.communicate()
+            stdout, stderr = await proc.communicate()
+            if stdout.strip().isdigit():
+                with contextlib.suppress(psutil.Error):
+                    server = psutil.Process(int(stdout.strip()))
+                    self._tmux_server_identity = (server.pid, server.create_time())
             if proc.returncode != 0:
                 raise RuntimeError(
                     f"tmux launch failed (rc={proc.returncode}): {stderr.decode().strip()}"
@@ -1832,8 +1844,8 @@ class TerminalInstance:
             egress_socket_path=str(self._egress_handle.socket_path),
         )
 
-    async def close(self) -> None:
-        """Kill the tmux session and clean up."""
+    async def close(self, *, require_confirmation: bool = False) -> None:
+        """Kill the private server. Prime terminals always require confirmed cleanup."""
         try:
             if self.lifecycle_trace.note_cleanup():
                 logger.info(
@@ -1859,7 +1871,30 @@ class TerminalInstance:
         # observe a failure. A private socket can still belong to a live tmux
         # server (or a remain-on-exit pane), so cleanup must not trust that
         # advisory flag before issuing kill-server.
-        if self.running or self.socket_path.exists():
+        if self.name == "prime-native" or require_confirmation:
+            try:
+                await self._tmux("kill-server")
+            except _TmuxTargetGoneError as exc:
+                absent_socket = exc.detail in {
+                    f"no server running on {self.socket_path}",
+                    f"error connecting to {self.socket_path} (No such file or directory)",
+                }
+                if not absent_socket or self.socket_path.exists():
+                    raise
+                if self._tmux_server_identity is not None:
+                    pid, created_at = self._tmux_server_identity
+                    try:
+                        server = psutil.Process(pid)
+                        if (
+                            server.create_time() == created_at
+                            and server.status() != psutil.STATUS_ZOMBIE
+                        ):
+                            raise exc
+                    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                        pass
+                elif self._tmux_creation_started:
+                    raise
+        elif self.running or self.socket_path.exists():
             with contextlib.suppress(RuntimeError):
                 await self._tmux("kill-server")
         self.running = False

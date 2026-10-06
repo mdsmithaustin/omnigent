@@ -253,6 +253,7 @@ _EXPECTED_BUILTIN_AGENT_IDS = {
     # every id above is byte-identical to before, so no persisted
     # conversation.agent_id row is orphaned and no migration is owed.
     "devin-native-ui": "010b5eea4b105dc0af6fb62f46065894",
+    "prime-native-ui": "c192435531f6a659fc4a0131acb0cea6",
 }
 
 

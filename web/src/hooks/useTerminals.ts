@@ -50,6 +50,7 @@ export const AGENT_TERMINAL_IDS: ReadonlySet<string> = new Set([
   "terminal_codex_main",
   "terminal_opencode_main",
   "terminal_pi_main",
+  "terminal_prime-native_main",
   "terminal_cursor_main",
   "terminal_kiro_main",
   "terminal_goose_main",
