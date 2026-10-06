@@ -191,9 +191,63 @@
       "name": "prime-proof-timing-fixtures",
       "reason": "Refresh fixture binding proof after setup and before each delivery while preserving the production heartbeat window and literal assertions.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "5e6e4642a335256bce1c83c4a16027673ae30d7f",
+      "name": "fork-isolation-5e6e4642a335",
+      "reason": "build: inventory final installed verifier and runner fixture repairs.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8daad1d452cfd0ca1e2cbb9cd4c302fbdb59ef92",
+      "name": "fork-isolation-8daad1d452cf",
+      "reason": "test: verify fork and upstream local server coexistence.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3e4cc67dd0b2f5af6e0e31156d4e60d304d897e6",
+      "name": "fork-isolation-3e4cc67dd0b2",
+      "reason": "Isolate default core and terminal state for the fork.",
+      "source_commit": "3011820b317865f077c64cf8b06804a5963a4479"
+    },
+    {
+      "applied_commit": "fb59f5b3ecb225b5197cdc7e1b04930581fe738a",
+      "name": "fork-isolation-fb59f5b3ecb2",
+      "reason": "build: require installed fork coexistence acceptance.",
+      "source_commit": "13451cbf476e80c468f56141eafde6d93e7a9455"
+    },
+    {
+      "applied_commit": "e4b4ebe5b8d2363c666fca9517349c77ad7cce5c",
+      "name": "fork-isolation-e4b4ebe5b8d2",
+      "reason": "Isolate native runtime defaults for the fork installation.",
+      "source_commit": "c3b0f3040408595a3ff7e6d932dc6e1e166150d5"
+    },
+    {
+      "applied_commit": "06923dc9de09934c224fa663af44918dcaa97e64",
+      "name": "fork-isolation-06923dc9de09",
+      "reason": "Isolate secondary fork storage and sandbox config writers.",
+      "source_commit": "3ff82e7cf426d1ba091f6e74efa7888eb2df102f"
+    },
+    {
+      "applied_commit": "a7aab90da58e19e400356d75a6fc61e501660d86",
+      "name": "fork-isolation-a7aab90da58e",
+      "reason": "Isolate fork instance identities and recorded shutdown.",
+      "source_commit": "9e6ed2f50d04dd3d063bfc1f6523e83637d61787"
+    },
+    {
+      "applied_commit": "65088151dbb950c79322181ae35590b436f9814e",
+      "name": "fork-isolation-65088151dbb9",
+      "reason": "Prepare revision .2 with isolated defaults and coexistence guidance.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "beffdc4b4459a0f5df81645c42c276a8bb8859c5",
+      "name": "fork-isolation-beffdc4b4459",
+      "reason": "Audit isolation comments and wrap the default log path contract.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "837bb3f00fbb368334eec140d9ec2b74579fd00a",
+  "payload_commit": "beffdc4b4459a0f5df81645c42c276a8bb8859c5",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
@@ -202,5 +256,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.17.0"
   },
-  "version": "0.17.0+mdsmithaustin.1"
+  "version": "0.17.0+mdsmithaustin.2"
 }
