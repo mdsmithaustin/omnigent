@@ -28,11 +28,12 @@ test:
     (verify-prime-native, <harness>-e2e-dev, or cli-setup-verify). Docs-only changes need no live run.
 
 review:
+  # A slash-free pattern matches the basename at any depth, so "*" covers every changed file.
   path_instructions:
     - path: "*"
       instructions: |
         Fork seam check. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
-        Run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent` for each edited path; exit 0 means upstream-owned. If gh fails, report that ownership could not be checked instead of guessing.
+        Run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent` for each edited path; exit 0 means upstream-owned; an HTTP 404 means fork-owned; on any other gh error, report that ownership could not be checked.
         For each upstream-owned file the change edits, flag fork behavior that could use a new fork-owned file through an existing extension point (harness registry, adapter, config, hook), unnecessary upstream renaming, moves, reordering, or reformatting,
         changes to signatures or shared types other upstream modules depend on, or fork-only logic spread across the file instead of isolated behind one small, clearly named call site.
     - path: "*"
