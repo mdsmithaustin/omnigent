@@ -2491,6 +2491,7 @@ async def test_create_session_envelope_is_single_flight_and_skips_metadata_callb
     """Concurrent v2 initialization resolves once and uses supplied metadata."""
 
     class _ServerClient:
+        def __init__(self) -> None:
             self.get_paths: list[str] = []
 
         async def get(self, path: str, **_kwargs: Any) -> Any:
