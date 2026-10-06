@@ -130,6 +130,11 @@ not confine arbitrary Python code or recursive descendants.
 
 ## State and compatibility
 
+An owner must use explicit [Stop](NATIVE_STOP.md) and verify current native
+shutdown before forking with a different agent. A reader can then fork the
+source. Ordinary resume clears that proof; same-agent history forks remain
+available. Unknown or failed closure keeps a different-agent fork blocked.
+
 Conversation state lives under `$OMNIGENT_DATA_DIR/prime-native/`, or
 `~/.omnigent/prime-native/` when the variable is unset. Each conversation has
 its own Prime configuration, temporary directory, daemon socket, and saved

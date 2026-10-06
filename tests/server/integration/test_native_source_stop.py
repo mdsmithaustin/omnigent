@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from omnigent.native.source_owner import (
+    NativeOwner,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopReceipt,
+    NativeStopResult,
+)
+from omnigent.server.routes._sessions import native_stop
+from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from tests.server.helpers import create_test_agent
+
+pytestmark = pytest.mark.asyncio
+
+
+async def source_and_target(client, *, user=None, wrapper=False):
+    source_agent = await create_test_agent(
+        client,
+        name="legacy-custom-prime",
+        user=user,
+        executor={"type": "omnigent", "config": {"harness": "prime-native"}},
+    )
+    target = await create_test_agent(
+        client,
+        name="different-sdk",
+        user=user,
+        executor={"type": "omnigent", "config": {"harness": "claude-sdk"}},
+    )
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": source_agent["id"],
+            "initial_items": [],
+            "labels": {"omnigent.wrapper": "prime-native-ui"} if wrapper else {},
+        },
+        headers={"X-Forwarded-Email": user} if user else {},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"], target["id"]
+
+
+@pytest.mark.parametrize("wrapper", [False, True])
+async def test_idle_legacy_native_source_requires_explicit_owner_stop_before_different_agent(
+    client, wrapper
+):
+    source_id, target_id = await source_and_target(client, wrapper=wrapper)
+    blocked = await client.post(f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id})
+    assert blocked.status_code == 409, blocked.text
+    assert "explicit Stop" in blocked.text
+    same = await client.post(f"/v1/sessions/{source_id}/fork", json={})
+    assert same.status_code == 201, same.text
+    assert same.json()["id"] != source_id
+    gone = await client.post(
+        f"/v1/sessions/{source_id}/switch-agent", json={"agent_id": target_id}
+    )
+    assert gone.status_code == 410, gone.text
+
+
+@pytest.mark.parametrize(
+    "ack", ["empty", "http-error", "wrong-operation", "unsupported", "verified"]
+)
+async def test_stop_qualification_controls_actual_fork_and_resume(
+    client, db_uri, monkeypatch, ack
+):
+    source_id, target_id = await source_and_target(client)
+    owner = NativeOwner(provider="prime-native", environment="fixture", runtime="private-owner")
+    admitted = await client.post(
+        f"/v1/sessions/{source_id}/native-admission", json={"owner": owner.model_dump()}
+    )
+    assert admitted.status_code == 200, admitted.text
+    ticket = admitted.json()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        import json
+
+        stop = NativeStop.model_validate(json.loads(request.content)["native_stop"])
+        if ack == "empty":
+            return httpx.Response(204)
+        if ack == "http-error":
+            return httpx.Response(500, json={"error": "closure_failed"})
+        receipt = NativeStopReceipt(
+            stop=stop,
+            result=NativeStopResult(
+                outcome=NativeStopOutcome.UNKNOWN
+                if ack == "unsupported"
+                else NativeStopOutcome.VERIFIED,
+                detail="Provider closure is unqualified." if ack == "unsupported" else "",
+            ),
+        )
+        if ack == "wrong-operation":
+            receipt.stop = stop.model_copy(update={"operation_id": "different-operation"})
+        return httpx.Response(200, json=receipt.model_dump(mode="json"))
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://runner"
+    ) as runner:
+
+        async def get_runner(*args):
+            return runner
+
+        monkeypatch.setattr(native_stop, "_get_runner_client", get_runner)
+        response = await client.post(
+            f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+        )
+    assert response.status_code == 202, response.text
+    expected = "verified" if ack == "verified" else "unknown"
+    assert response.json()["native_stop"]["outcome"] == expected
+    snapshot = await client.get(f"/v1/sessions/{source_id}")
+    assert snapshot.json()["native_stop"]["outcome"] == expected
+    fork = await client.post(f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id})
+    assert fork.status_code == (201 if ack == "verified" else 409), fork.text
+    store = SqlAlchemyConversationStore(db_uri)
+    source = store.get_native_source(source_id)
+    assert source.phase == (
+        "closed" if ack == "verified" else "open" if ack == "unsupported" else "stopping"
+    )
+    resumed = await client.post(
+        f"/v1/sessions/{source_id}/native-admission", json={"owner": owner.model_dump()}
+    )
+    assert resumed.status_code == (
+        409 if ack in {"empty", "http-error", "wrong-operation"} else 200
+    ), resumed.text
+    if resumed.status_code == 200:
+        assert resumed.json()["epoch"] != ticket["epoch"]
+        after_resume = await client.post(
+            f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}
+        )
+        assert after_resume.status_code == 409, after_resume.text
+
+
+async def test_reader_cannot_stop_but_can_fork_after_owner_stop(auth_client, db_uri):
+    source_id, target_id = await source_and_target(auth_client, user="owner@example.com")
+    reader = {"X-Forwarded-Email": "reader@example.com"}
+    await auth_client.get("/v1/sessions", headers=reader)
+    grant = await auth_client.put(
+        f"/v1/sessions/{source_id}/permissions",
+        json={
+            "user_id": "reader@example.com",
+            "level": 1,
+        },
+        headers={"X-Forwarded-Email": "owner@example.com"},
+    )
+    assert grant.status_code == 200, grant.text
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    target_owner = SqlAlchemyAgentStore(db_uri).get(target_id).session_id
+    grant_target = await auth_client.put(
+        f"/v1/sessions/{target_owner}/permissions",
+        json={"user_id": "reader@example.com", "level": 1},
+        headers={"X-Forwarded-Email": "owner@example.com"},
+    )
+    assert grant_target.status_code == 200, grant_target.text
+    stop = await auth_client.post(
+        f"/v1/sessions/{source_id}/events",
+        json={"type": "stop_session", "data": {}},
+        headers=reader,
+    )
+    assert stop.status_code == 403, stop.text
+    blocked = await auth_client.post(
+        f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}, headers=reader
+    )
+    assert blocked.status_code == 409, blocked.text
+    store = SqlAlchemyConversationStore(db_uri)
+    store.admit_native(
+        source_id, NativeOwner(provider="prime-native", environment="fixture", runtime="private")
+    )
+    store.finish_native_stop(store.seal_native_stop(source_id), NativeStopOutcome.VERIFIED)
+    allowed = await auth_client.post(
+        f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}, headers=reader
+    )
+    assert allowed.status_code == 201, allowed.text

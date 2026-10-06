@@ -32,6 +32,7 @@ from omnigent.harnesses.prime_native.bridge import (
     runtime_paths,
 )
 from omnigent.native import native_bridge_common, owner_claim
+from omnigent.native.source_owner import NativeStop
 
 QUALIFIED_VERSION = "0.9.6"
 _DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
@@ -789,10 +790,25 @@ def _remove_runtime_records(paths: PrimeRuntimePaths) -> None:
 
 
 def stop_prime_runtime(
-    paths: PrimeRuntimePaths, *, launch_reservation: PrimeLaunchReservation | None = None
+    paths: PrimeRuntimePaths,
+    *,
+    launch_reservation: PrimeLaunchReservation | None = None,
+    source_stop: NativeStop | None = None,
 ) -> None:
     paths.validate_existing()
     with native_bridge_common.bridge_dir_preparation_lock(paths.root):
+        if source_stop is not None:
+            from omnigent.harnesses.pi_native.bridge import config_path
+            from omnigent.native.admission import native_owner, validate_native_sync
+
+            if source_stop.admission.owner != native_owner(
+                source_stop.admission.source_id, "prime-native"
+            ):
+                raise RuntimeError("Prime Stop names a different native owner environment.")
+            config = json.loads(config_path(paths.root).read_text())
+            validate_native_sync(
+                source_stop, server_url=config["serverUrl"], headers=config["authHeaders"]
+            )
         if not paths.validate_existing():
             _ACTIVE_RUNTIMES.discard(paths)
             return
@@ -929,8 +945,8 @@ def _finalize_wrapper_runtime(
     _ACTIVE_RUNTIMES.discard(paths)
 
 
-def stop_session(session_id: str) -> None:
-    stop_prime_runtime(runtime_paths(session_id))
+def stop_session(session_id: str, *, source_stop: NativeStop | None = None) -> None:
+    stop_prime_runtime(runtime_paths(session_id), source_stop=source_stop)
 
 
 def stop_all_runtimes() -> None:
@@ -965,6 +981,21 @@ def main() -> int:
         _write_launch_reservation(paths, replace(reservation, state="claimed", wrapper=wrapper))
         paths.prepare()
         owner_claim.write_owner_claim(paths.root)
+        from omnigent.harnesses.pi_native.bridge import config_path
+        from omnigent.native.admission import native_owner, validate_native_sync
+        from omnigent.native.source_owner import NativeAdmission
+
+        config = json.loads(config_path(paths.root).read_text())
+        admission = NativeAdmission.model_validate(config["nativeAdmission"])
+        local_owner = native_owner(admission.source_id, "prime-native")
+        if (
+            admission.owner.model_copy(update={"coordinator": local_owner.coordinator})
+            != local_owner
+        ):
+            raise RuntimeError("Prime launch names a different native owner environment.")
+        validate_native_sync(
+            admission, server_url=config["serverUrl"], headers=config["authHeaders"]
+        )
         child = subprocess.Popen(sys.argv[3:])
         terminal = psutil.Process(child.pid)
         terminal_identity = _TerminalIdentity(child.pid, terminal.create_time(), token)

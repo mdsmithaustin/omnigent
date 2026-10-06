@@ -5469,7 +5469,8 @@ function ConversationRowImpl({
                 {conversation.host_id
                   ? " and stops its runner, including side chats running on it."
                   : "."}{" "}
-                Conversation histories are kept.
+                Conversation histories are kept. Native shutdown must be verified before forking
+                with a different agent; otherwise an error explains what remains unresolved.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

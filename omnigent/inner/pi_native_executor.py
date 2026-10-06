@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -66,6 +67,8 @@ class ExtensionNativeExecutor(Executor):
         :returns: ``True`` when the message was queued.
         """
         del session_key
+        if self._agent_label == "Prime Native":
+            return False
         text = _content_to_text(content, self._bridge_dir)
         if not text:
             return False
@@ -92,7 +95,7 @@ class ExtensionNativeExecutor(Executor):
         :yields: :class:`TurnComplete` after the input was queued, or an
             :class:`ExecutorError` when no user text can be sent.
         """
-        del tools, system_prompt, config
+        del tools, system_prompt
         text = _latest_user_text(messages, self._bridge_dir)
         if not text:
             yield ExecutorError(
@@ -100,7 +103,34 @@ class ExtensionNativeExecutor(Executor):
             )
             return
         self._refresh_auth_headers()
-        enqueue_user_message(self._bridge_dir, text)
+        if self._agent_label == "Prime Native":
+            import json
+
+            from omnigent.harnesses.pi_native.bridge import config_path
+            from omnigent.native.admission import validate_native_sync
+            from omnigent.native.native_bridge_common import bridge_dir_preparation_lock
+            from omnigent.native.source_owner import NativeAdmission
+
+            if config is None or "native_admission" not in config.extra:
+                yield ExecutorError(
+                    message="Prime native input requires its original source admission."
+                )
+                return
+            admission = NativeAdmission.model_validate(config.extra["native_admission"])
+
+            def enqueue_admitted() -> None:
+                with bridge_dir_preparation_lock(self._bridge_dir):
+                    connection = json.loads(config_path(self._bridge_dir).read_text())
+                    validate_native_sync(
+                        admission,
+                        server_url=connection["serverUrl"],
+                        headers=connection["authHeaders"],
+                    )
+                    enqueue_user_message(self._bridge_dir, text)
+
+            await asyncio.to_thread(enqueue_admitted)
+        else:
+            enqueue_user_message(self._bridge_dir, text)
         yield TurnComplete(response=None)
 
     def _refresh_auth_headers(self) -> None:

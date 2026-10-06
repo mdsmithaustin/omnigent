@@ -52,6 +52,7 @@ from omnigent.host.frames import (
 from omnigent.host.frames import (
     workspace_missing_message as _workspace_missing_message,
 )
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.launch_failure import (
     classify_native_turn_error,
@@ -551,6 +552,7 @@ async def _recover_retry_session(
     session_id: str,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    native_admission: NativeAdmission | None = None,
 ) -> dict[str, bool | str]:
     """Recover runner/terminal readiness without creating transcript input."""
     conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
@@ -586,6 +588,7 @@ async def _recover_retry_session(
         initializer=getattr(request.app.state, "runner_session_initializer", None),
         suppress_recovery_turn=was_connected,
         require_success=True,
+        native_admission=native_admission,
     )
 
     if _is_native_terminal_session(conv):
@@ -596,6 +599,7 @@ async def _recover_retry_session(
                 session_id,
                 conv,
                 persist_resource_event=False,
+                native_admission=native_admission,
                 runner_router=runner_router,
             )
             if terminal_outcome.error is not None:
@@ -635,6 +639,7 @@ async def _retry_session_single_flight(
     session_id: str,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    native_admission: NativeAdmission | None = None,
 ) -> dict[str, bool | str]:
     """Share one in-flight recovery attempt across concurrent callers."""
     lock = _retry_recovery_lock(session_id)
@@ -647,6 +652,7 @@ async def _retry_session_single_flight(
                     session_id=session_id,
                     conversation_store=conversation_store,
                     runner_router=runner_router,
+                    native_admission=native_admission,
                 )
             )
             _retry_recovery_tasks[session_id] = task
@@ -752,7 +758,7 @@ def register_events_routes(
         request: Request,
         session_id: str,
         body: SessionEventInput | list[SessionEventInput],
-    ) -> dict[str, bool | str] | list[dict[str, bool | str]]:
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """
         Route entry for :func:`_post_event_impl`.
 
@@ -781,7 +787,7 @@ def register_events_routes(
                 # per-append overhead outlasts that. Each run of batchable entries is
                 # authorized once and appended in one store call; every other entry
                 # keeps the per-entry path, in order.
-                acks: list[dict[str, bool | str]] = []
+                acks: list[dict[str, Any]] = []
                 for batchable, run in itertools.groupby(body, key=_is_batchable_external_item):
                     if not batchable:
                         for event in run:
@@ -888,7 +894,7 @@ def register_events_routes(
         session_id: str,
         body: SessionEventInput,
         in_flight: contextlib.ExitStack | None = None,
-    ) -> dict[str, bool | str]:
+    ) -> dict[str, Any]:
         """
         Submit a session event (input message, tool output,
         approval, or interrupt).
@@ -1003,6 +1009,29 @@ def register_events_routes(
                 pass
             else:
                 created_by = body_created_by
+        body.data.pop("native_admission", None)
+        if (
+            body.type
+            in {
+                "message",
+                "compact",
+                "clear",
+                "reset",
+                "model_change",
+                "effort_change",
+                "plan_mode_change",
+                "permission_mode_change",
+                "codex_approval_mode_change",
+                "retry_session",
+            }
+            and (body.type != "message" or body.data.get("role", "user") == "user")
+            and not _has_runner_created_by_authority(request, conv)
+        ):
+            admission = await asyncio.to_thread(
+                conversation_store.invalidate_native_proof, session_id
+            )
+            if admission is not None:
+                body.data["native_admission"] = admission.model_dump()
         if body.type == _SLASH_COMMAND_TYPE:
             existing_command = await _read_skill_command_claim(
                 session_id, body, conversation_store, created_by
@@ -1144,6 +1173,9 @@ def register_events_routes(
                 session_id=session_id,
                 conversation_store=conversation_store,
                 runner_router=runner_router,
+                native_admission=NativeAdmission.model_validate(body.data["native_admission"])
+                if "native_admission" in body.data
+                else None,
             )
         # ── Policy evaluation (path-agnostic) ────────────────
         # Evaluate policies BEFORE persistence/runner forwarding so
@@ -1449,7 +1481,19 @@ def register_events_routes(
             native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
             if native_agent is not None and native_agent.harness == "prime-native":
                 result = await _forward_session_change_to_runner(
-                    session_id, runner_router, {"type": "interrupt"}, timeout_s=5.0
+                    session_id,
+                    runner_router,
+                    {"type": "interrupt"},
+                    timeout_s=5.0,
+                    **(
+                        {
+                            "native_admission": NativeAdmission.model_validate(
+                                body.data["native_admission"]
+                            )
+                        }
+                        if "native_admission" in body.data
+                        else {}
+                    ),
                 )
                 receipt = _decode_prime_control_receipt(result, expected=Interrupt())
                 if receipt.outcome.status != ControlStatus.INTERRUPT_ACCEPTED:
@@ -1547,6 +1591,22 @@ def register_events_routes(
                 )
             return {"queued": False}
         if body.type == _STOP_SESSION_TYPE:
+            native_state = await asyncio.to_thread(
+                conversation_store.get_native_source, session_id
+            )
+            if _is_native_terminal_session(conv) or native_state is not None:
+                from omnigent.server.routes._sessions.native_stop import stop_native_source
+
+                _interrupt_fenced_sessions.add(session_id)
+                result = await stop_native_source(
+                    conv,
+                    conversation_store,
+                    runner_router,
+                    getattr(request.app.state, "host_registry", None),
+                )
+                if result.outcome != "verified":
+                    _interrupt_fenced_sessions.discard(session_id)
+                return {"queued": False, "native_stop": result.model_dump(mode="json")}
             # Fence the cancelled turn, same as interrupt.
             _interrupt_fenced_sessions.add(session_id)
             # Harness-agnostic forward: the runner kills the external
@@ -1737,6 +1797,15 @@ def register_events_routes(
                     runner_router,
                     {"type": "compact"},
                     timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                    **(
+                        {
+                            "native_admission": NativeAdmission.model_validate(
+                                body.data["native_admission"]
+                            )
+                        }
+                        if "native_admission" in body.data
+                        else {}
+                    ),
                 )
                 receipt = _decode_prime_control_receipt(result, expected=Compact())
                 if receipt.outcome.status != ControlStatus.APPLIED:
@@ -1761,6 +1830,15 @@ def register_events_routes(
                 runner_router,
                 {"type": _COMPACT_TYPE},
                 timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                **(
+                    {
+                        "native_admission": NativeAdmission.model_validate(
+                            body.data["native_admission"]
+                        )
+                    }
+                    if "native_admission" in body.data
+                    else {}
+                ),
             )
             if runner_result is not None and runner_result.status_code == 200:
                 return {"queued": False}
@@ -1791,6 +1869,15 @@ def register_events_routes(
                         runner_router,
                         {"type": _COMPACT_TYPE},
                         timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                        **(
+                            {
+                                "native_admission": NativeAdmission.model_validate(
+                                    body.data["native_admission"]
+                                )
+                            }
+                            if "native_admission" in body.data
+                            else {}
+                        ),
                     )
                     if runner_result is not None and runner_result.status_code == 200:
                         return {"queued": False}
@@ -1900,6 +1987,15 @@ def register_events_routes(
                 session_id,
                 runner_router,
                 {"type": "btw_dismiss"},
+                **(
+                    {
+                        "native_admission": NativeAdmission.model_validate(
+                            body.data["native_admission"]
+                        )
+                    }
+                    if "native_admission" in body.data
+                    else {}
+                ),
             )
             return {"queued": False}
         if body.type == _EXTERNAL_ELICITATION_RESOLVED_TYPE:
@@ -2096,6 +2192,15 @@ def register_events_routes(
                 session_id,
                 runner_router,
                 forward_body,
+                **(
+                    {
+                        "native_admission": NativeAdmission.model_validate(
+                            body.data["native_admission"]
+                        )
+                    }
+                    if "native_admission" in body.data
+                    else {}
+                ),
             )
             if (
                 conv.kind == "sub_agent"
@@ -2880,6 +2985,9 @@ def register_events_routes(
                 runner_client,
                 conversation_store,
                 initializer=getattr(request.app.state, "runner_session_initializer", None),
+                native_admission=NativeAdmission.model_validate(body.data["native_admission"])
+                if "native_admission" in body.data
+                else None,
                 suppress_recovery_turn=True,
             )
         await _ensure_runner_relay_ready(
