@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import importlib.util
 import json
@@ -18,6 +19,7 @@ def main() -> int:
     parser.add_argument("--server", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("--target-agent", required=True)
+    parser.add_argument("--target-session", required=True)
     parser.add_argument("--owner-headers", type=Path, required=True)
     parser.add_argument("--reader-headers", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
@@ -68,6 +70,11 @@ def main() -> int:
         return status, payload
 
     source_path = f"/v1/sessions/{args.source}"
+    status, selected = request(
+        "selected-target", "GET", f"/v1/sessions/{args.target_session}", reader
+    )
+    assert status == 200, selected
+    assert selected["agent_id"] == args.target_agent, selected
     status, source = request("source", "GET", source_path, owner)
     assert status == 200, source
     assert source["agent_id"] != args.target_agent, "Target must be a different selected agent."
@@ -99,7 +106,24 @@ def main() -> int:
     assert fork["id"] != args.source, fork
     status, destination = request("destination", "GET", f"/v1/sessions/{fork['id']}", reader)
     assert status == 200, destination
-    assert destination["agent_id"] == args.target_agent, destination
+    assert destination["agent_name"] == selected["agent_name"], destination
+    assert destination["harness"] == selected["harness"], destination
+    bundles = {}
+    for name, session_id in (
+        ("selected-target", args.target_session),
+        ("destination", fork["id"]),
+    ):
+        action = Request(
+            args.server.rstrip("/") + f"/v1/sessions/{session_id}/agent/contents", headers=reader
+        )
+        with urlopen(action, timeout=45) as response:
+            assert response.status == 200, response.status
+            bundle = response.read()
+        assert bundle, f"Empty {name} agent bundle"
+        (args.evidence / f"{name}.tar.gz").write_bytes(bundle)
+        bundles[name] = hashlib.sha256(bundle).hexdigest()
+    (args.evidence / "agent-bundles.json").write_text(json.dumps(bundles, indent=2))
+    assert bundles["destination"] == bundles["selected-target"], bundles
     (args.evidence / "result.json").write_text(
         json.dumps(
             {"outcome": "passed", "source": args.source, "destination": fork["id"]}, indent=2
