@@ -32,6 +32,7 @@ import click
 
 from omnigent.cli_invocation import cli_invocation
 from omnigent.inner import ui
+from omnigent.installation_defaults import default_user_dir
 from omnigent.onboarding.ucode_setup import (
     build_ucode_configure_command,
     find_ucode_command,
@@ -238,7 +239,7 @@ def _isolated_databricks_cfg() -> collections.abc.Generator[None, None, None]:
         if orig_cfg.has_section(spec.name):
             cfg[spec.name] = dict(orig_cfg[spec.name])
 
-    omnigent_dir = Path.home() / ".omnigent"
+    omnigent_dir = default_user_dir()
     omnigent_dir.mkdir(exist_ok=True)
     tmp_fd, tmp_name = tempfile.mkstemp(
         prefix="databrickscfg-setup-",
@@ -588,7 +589,7 @@ def _configure_harness_add(family: str | None = None) -> str | None:
         the add menu is scoped to credentials that can drive that harness —
         the per-harness "Add a provider" path. ``None`` shows the full menu.
     :returns: A confirmation message for the caller to show as a transient
-        status. Side effect: writes to ``~/.omnigent/config.yaml`` and,
+        status. Side effect: writes to ``~/.omnigent-mdsmithaustin/config.yaml`` and,
         for a pasted API key, the secret store.
     """
     from omnigent.onboarding import secrets as secret_store
@@ -1570,7 +1571,7 @@ def _manage_cursor_sdk_harness() -> None:
     family). So this manages exactly that credential: set / replace / remove an
     API key stored in the omnigent secret store, mirroring how the other
     harnesses persist their api keys (the secret in the store, a
-    ``keychain:``/``env:`` reference in ``~/.omnigent/config.yaml``).
+    ``keychain:``/``env:`` reference in ``~/.omnigent-mdsmithaustin/config.yaml``).
 
     When the optional ``cursor-sdk`` is missing, the drill-in first offers to
     install it (:func:`_prompt_install_cursor`). Unlike the CLI-backed harnesses
@@ -1578,7 +1579,7 @@ def _manage_cursor_sdk_harness() -> None:
     ``cursor:`` key is independently storable. Mirrors Antigravity post-#322.
 
     :returns: None. Side effects: may install the ``cursor`` extra, and may
-        write the ``cursor:`` block of ``~/.omnigent/config.yaml`` and the
+        write the ``cursor:`` block of ``~/.omnigent-mdsmithaustin/config.yaml`` and the
         secret store.
     """
     from omnigent.onboarding import secrets as secret_store
@@ -2897,7 +2898,7 @@ def _manage_copilot_harness() -> None:
     has no provider/gateway family. So this manages exactly that credential:
     set / replace / remove a token stored in the omnigent secret store, mirroring
     how cursor / antigravity persist theirs (the secret in the store, a
-    ``keychain:``/``env:`` reference in ``~/.omnigent/config.yaml``).
+    ``keychain:``/``env:`` reference in ``~/.omnigent-mdsmithaustin/config.yaml``).
 
     When the optional ``github-copilot-sdk`` is missing, the drill-in first
     offers to install it (:func:`_prompt_install_copilot`). Unlike the CLI-backed
@@ -2906,7 +2907,7 @@ def _manage_copilot_harness() -> None:
     antigravity.
 
     :returns: None. Side effects: may install the ``copilot`` extra, and may
-        write the ``copilot:`` block of ``~/.omnigent/config.yaml`` and the
+        write the ``copilot:`` block of ``~/.omnigent-mdsmithaustin/config.yaml`` and the
         secret store.
     """
     from omnigent.onboarding import secrets as secret_store
@@ -3122,7 +3123,7 @@ def _manage_credential(provider: str, family: str) -> str | None:
     if entry.kind == SUBSCRIPTION_KIND:
         return _remove_subscription(provider, family)
     # A databricks provider was wired by `ucode configure`, which edits
-    # harness configs outside ~/.omnigent/config.yaml — so removing it
+    # harness configs outside ~/.omnigent-mdsmithaustin/config.yaml — so removing it
     # also cleans those edits up (otherwise codex keeps routing through
     # the workspace gateway).
     if entry.kind == DATABRICKS_KIND:
@@ -3149,7 +3150,7 @@ def _remove_subscription(provider: str, family: str) -> str | None:
         (Codex).
     :returns: A confirmation message for the level-2 status line, or ``None``
         when the user declined (nothing changed). Side effects: runs the
-        harness logout command and writes ``~/.omnigent/config.yaml``.
+        harness logout command and writes ``~/.omnigent-mdsmithaustin/config.yaml``.
     """
     from omnigent.onboarding.harness_install import harness_install_spec, harness_logout
     from omnigent.onboarding.interactive import select
@@ -3191,7 +3192,7 @@ def _remove_databricks_provider(provider: str) -> str:
 
     A ``kind: databricks`` provider was wired by running ``ucode configure``
     (the add flow), which writes harness configs *outside*
-    ``~/.omnigent/config.yaml`` — most damagingly, for Codex < 0.134.0 it
+    ``~/.omnigent-mdsmithaustin/config.yaml`` — most damagingly, for Codex < 0.134.0 it
     rewrites the user's real ``~/.codex/config.toml`` (top-level
     ``profile = "ucode"``) so even the bare ``codex`` CLI routes through the
     workspace gateway, and ``ucode revert`` does not undo that edit. Removing
@@ -3208,7 +3209,7 @@ def _remove_databricks_provider(provider: str) -> str:
         the removal and what wiring was cleaned (nothing extra is appended
         when no ucode wiring existed). Side effects: may edit
         ``~/.codex/config.toml``, delete ucode sidecar files, run
-        ``claude mcp remove``, and write ``~/.omnigent/config.yaml``.
+        ``claude mcp remove``, and write ``~/.omnigent-mdsmithaustin/config.yaml``.
     """
     from omnigent.errors import OmnigentError
     from omnigent.onboarding.ucode_cleanup import remove_ucode_wiring
@@ -3243,7 +3244,7 @@ def _set_harness_default(provider: str, family: str) -> str | None:
         harnesses' defaults untouched.
     :returns: A confirmation message for the caller to show as a transient
         status, or ``None`` when there was nothing to do. Side effect:
-        writes ``~/.omnigent/config.yaml``.
+        writes ``~/.omnigent-mdsmithaustin/config.yaml``.
     """
     from omnigent.onboarding.configure_models import family_label
     from omnigent.onboarding.provider_config import load_providers, set_default_provider
@@ -3266,7 +3267,7 @@ def _clear_detection_dismissal(name: str) -> None:
     an ordinary one again.
 
     :param name: The detection name to un-dismiss, e.g. ``"codex-databricks"``.
-    :returns: None. Side effect: writes ``~/.omnigent/config.yaml`` when the
+    :returns: None. Side effect: writes ``~/.omnigent-mdsmithaustin/config.yaml`` when the
         name was dismissed; no write otherwise.
     """
     from omnigent.onboarding.detected import (
@@ -3289,7 +3290,7 @@ def _remove_credential(provider: str) -> str | None:
     :param provider: The provider id to remove, e.g. ``"openrouter"``.
     :returns: A confirmation message for the caller to show as a transient
         status, or ``None`` when there was nothing to remove. Side effect:
-        writes ``~/.omnigent/config.yaml`` (and, when the removed entry is
+        writes ``~/.omnigent-mdsmithaustin/config.yaml`` (and, when the removed entry is
         backed by a live ambient detection that cannot be signed out,
         records its name under ``dismissed_detections`` so the next
         configure open does not silently re-adopt it).
@@ -3585,7 +3586,7 @@ def _run_configure_harnesses_interactive() -> None:
     highlighted row, as the selector's description line, so the overview stays
     uncluttered.
 
-    :returns: None. Side effect: may write ``~/.omnigent/config.yaml`` via
+    :returns: None. Side effect: may write ``~/.omnigent-mdsmithaustin/config.yaml`` via
         the backfill/adopt steps and any add/set-default/remove the user
         performs while navigating.
     """

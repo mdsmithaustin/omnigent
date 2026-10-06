@@ -45,6 +45,8 @@ import os
 from pathlib import Path
 from typing import Protocol
 
+from omnigent.installation_defaults import default_user_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +62,7 @@ def resolve_data_dir() -> Path:
        ``/data/admin-credentials`` purely to anchor the data dir at
        ``/data``; no credentials file is written there). The name is
        retained for compatibility — see #2832 for the rename.
-    2. ``~/.omnigent`` for a laptop deploy.
+    2. ``~/.omnigent-mdsmithaustin`` for a laptop deploy.
 
     :returns: The resolved data directory. Not created here — callers
         that only read tolerate a missing directory.
@@ -68,7 +70,7 @@ def resolve_data_dir() -> Path:
     explicit_creds = os.environ.get("OMNIGENT_ADMIN_CREDENTIALS_PATH", "").strip()
     if explicit_creds:
         return Path(explicit_creds).parent
-    return Path.home() / ".omnigent"
+    return default_user_dir()
 
 
 def resolve_admin_list_path() -> Path:

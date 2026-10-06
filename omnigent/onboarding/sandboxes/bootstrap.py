@@ -44,6 +44,7 @@ import click
 import httpx
 
 from omnigent.cli_invocation import cli_invocation
+from omnigent.installation_defaults import USER_DIRNAME
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -602,8 +603,10 @@ def _complete_browser_login(
 
 def set_sandbox_host_name(launcher: SandboxLauncher, sandbox_id: str, host_name: str) -> None:
     """
-    Update the sandbox's ``~/.omnigent/config.yaml`` to use a
-    specific host name.
+    Set the host name in the sandbox's selected ``config.yaml``.
+
+    Uses target ``OMNIGENT_CONFIG_HOME`` when set, otherwise
+    ``~/.omnigent-mdsmithaustin/config.yaml``.
 
     The host's ``host_id`` is preserved across the edit — only the
     ``name`` field is rewritten. If config.yaml doesn't exist yet,
@@ -619,22 +622,21 @@ def set_sandbox_host_name(launcher: SandboxLauncher, sandbox_id: str, host_name:
     :param host_name: New host name to write into config.yaml.
     :raises click.ClickException: If the remote command fails.
     """
-    click.echo(f"  → setting host name to '{host_name}' in ~/.omnigent/config.yaml")
-    # Quote the host name in single quotes for the python literal,
-    # then escape any single quotes the user passed in.
-    safe_name = host_name.replace("'", "\\'")
+    click.echo(f"  → setting host name to '{host_name}' in the sandbox config.yaml")
     py = (
         "import os, uuid, yaml; "
-        "p=os.path.expanduser('~/.omnigent/config.yaml'); "
+        "d=os.environ.get('OMNIGENT_CONFIG_HOME') or "
+        f"os.path.join(os.path.expanduser('~'), {USER_DIRNAME!r}); "
+        "p=os.path.join(d, 'config.yaml'); "
         "os.makedirs(os.path.dirname(p), exist_ok=True); "
         "cfg=yaml.safe_load(open(p)) if os.path.exists(p) else {}; "
         "cfg=cfg or {}; "
-        f"h=cfg.get('host') or {{}}; h['name']='{safe_name}'; "
+        f"h=cfg.get('host') or {{}}; h['name']={host_name!r}; "
         "h.setdefault('host_id', uuid.uuid4().hex); "
         "cfg['host']=h; "
         "yaml.safe_dump(cfg, open(p,'w'), default_flow_style=False, sort_keys=True)"
     )
-    launcher.run(sandbox_id, f'python3 -c "{py}"')
+    launcher.run(sandbox_id, f"python3 -c {shlex.quote(py)}")
 
 
 def connect_sandbox_host(
@@ -657,8 +659,8 @@ def connect_sandbox_host(
     credentials (e.g. the Lakebox image's baked workspace PAT, which
     authenticates to servers in the sandbox's own workspace).
 
-    When *host_name* is set, the sandbox's
-    ``~/.omnigent/config.yaml`` is updated so the host registers
+    When *host_name* is set, the sandbox's selected ``config.yaml``
+    is updated so the host registers
     with that name instead of the default ``socket.gethostname()``.
     This matters for Lakebox sandboxes because all of them share the
     hostname ``databricks``, and the server's ``hosts`` table is

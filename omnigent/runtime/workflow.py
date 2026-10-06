@@ -42,6 +42,7 @@ from omnigent.inner.model_egress import (
     UCODE_SIGNER_BINDING_ID,
     registered_model_provider_binding,
 )
+from omnigent.installation_defaults import default_user_dir
 from omnigent.llms import Client as LLMClient
 from omnigent.models.model_catalog import resolve_catalog_model
 from omnigent.models.model_resolver import ModelResolutionError
@@ -591,7 +592,7 @@ def configure_agent_harness_with_provider(
 
     The open-source counterpart to :func:`configure_agent_harness_with_ucode`:
     it takes a resolved :class:`ProviderEntry` (from the ``providers:`` block
-    of ``~/.omnigent/config.yaml``) and emits the **same** vendor-neutral
+    of ``~/.omnigent-mdsmithaustin/config.yaml``) and emits the **same** vendor-neutral
     ``HARNESS_*_GATEWAY_*`` env vars the Databricks producer emits (base URL,
     host, a bearer-token command, model default), so the executors' existing
     gateway path handles a
@@ -693,7 +694,7 @@ def configure_agent_harness_with_provider(
                 f"provider {entry.name!r} (kind 'cli-config') pins a provider in "
                 f"~/.codex/config.toml and can only drive the 'codex' harness, "
                 f"not {harness_type!r}. Configure a key/gateway provider for this "
-                "harness in ~/.omnigent/config.yaml.",
+                "harness in ~/.omnigent-mdsmithaustin/config.yaml.",
                 code=ErrorCode.INVALID_INPUT,
             )
         # entry.model_provider is required by the cli-config parse branch.
@@ -728,7 +729,7 @@ def configure_agent_harness_with_provider(
         raise OmnigentError(
             f"provider {entry.name!r} has no {family_name!r} family, required by the "
             f"{harness_type!r} harness. Add a '{family_name}:' block to that provider in "
-            f"~/.omnigent/config.yaml.",
+            f"~/.omnigent-mdsmithaustin/config.yaml.",
             code=ErrorCode.INVALID_INPUT,
         )
     if harness_type == "openai-agents-sdk":
@@ -1018,7 +1019,7 @@ def _apply_cli_config_databricks_to_pi(env: dict[str, str], entry: ProviderEntry
             "harness but its codex [model_providers] table could not be resolved as a "
             "Databricks AI Gateway. Check the [model_providers] base_url + auth in "
             "~/.codex/config.toml, or configure a key/gateway provider for pi in "
-            "~/.omnigent/config.yaml.",
+            "~/.omnigent-mdsmithaustin/config.yaml.",
             code=ErrorCode.INVALID_INPUT,
         )
     # Pi speaks the gateway's Anthropic Messages surface — register it under
@@ -1161,7 +1162,7 @@ def _resolve_provider_for_build(
         entry = providers.get(auth.name)
         if entry is None and os.environ.get("OMNIGENT_INFERENCE_CONFIG"):
             # The managed-sandbox overlay replaces the local providers block, so an
-            # explicitly named provider from ~/.omnigent/config.yaml would vanish.
+            # explicitly named provider from ~/.omnigent-mdsmithaustin/config.yaml would vanish.
             # Server bindings already won above; fall back to the local config.
             from omnigent.onboarding.provider_config import _load_config
 
@@ -1170,7 +1171,7 @@ def _resolve_provider_for_build(
         if entry is None:
             raise OmnigentError(
                 f"executor.auth references provider {auth.name!r}, but no such provider is "
-                "configured under 'providers:' in ~/.omnigent/config.yaml. "
+                "configured under 'providers:' in ~/.omnigent-mdsmithaustin/config.yaml. "
                 f"Run `{cli_invocation()} setup --no-internal-beta` to configure one.",
                 code=ErrorCode.INVALID_INPUT,
             )
@@ -1337,7 +1338,7 @@ def _build_claude_sdk_spawn_env(
     #    Routes a LiteLLM / OpenRouter / local / Databricks-profile provider.
     # 1. spec.executor.auth — explicit typed auth in the agent YAML.
     # 2. Legacy spec.executor.profile / executor.config["profile"] (deprecated).
-    # 3. Global config ~/.omnigent/config.yaml auth: — only when spec has
+    # 3. Global config ~/.omnigent-mdsmithaustin/config.yaml auth: — only when spec has
     #    no auth at all (same guard as openai-agents to prevent global defaults
     #    from silently overriding YAML-declared legacy profiles).
     # 4. Auto-Databricks: databricks-* model prefix triggers Databricks routing.
@@ -1956,7 +1957,7 @@ def _build_acp_spawn_env(
 
 def _load_global_auth() -> ApiKeyAuth | DatabricksAuth | None:
     """
-    Load the ``auth:`` block from ``~/.omnigent/config.yaml``.
+    Load the ``auth:`` block from ``~/.omnigent-mdsmithaustin/config.yaml``.
 
     Reads the user-level global config file (respecting
     ``$OMNIGENT_CONFIG_HOME`` for test isolation) and parses the
@@ -1974,11 +1975,7 @@ def _load_global_auth() -> ApiKeyAuth | DatabricksAuth | None:
         file is missing.
     """
     config_home = os.environ.get("OMNIGENT_CONFIG_HOME")
-    path = (
-        Path(config_home) / "config.yaml"
-        if config_home
-        else Path.home() / ".omnigent" / "config.yaml"
-    )
+    path = Path(config_home) / "config.yaml" if config_home else default_user_dir() / "config.yaml"
     if not path.exists():
         return None
     try:
@@ -2045,7 +2042,7 @@ def _build_openai_agents_sdk_spawn_env(spec: AgentSpec) -> dict[str, str]:
     2. Legacy ``spec.executor.profile`` / ``spec.executor.config["profile"]``
        (**deprecated** — use ``executor.auth: {type: databricks, …}``).
        Both 1 and 2 are spec-level declarations; the spec always wins.
-    3. Global config ``~/.omnigent/config.yaml`` ``auth:`` block —
+    3. Global config ``~/.omnigent-mdsmithaustin/config.yaml`` ``auth:`` block —
        **only consulted when the spec declares no auth at all** (neither
        new nor legacy style). This prevents the user's global default
        from silently overriding a YAML that uses the old profile field.

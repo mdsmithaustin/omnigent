@@ -6,7 +6,7 @@ Two install shapes are supported:
   walk up from this module to find a ``.git/`` directory, then run
   ``git fetch`` and ``rev-list`` to count how many commits ``HEAD`` is
   behind ``origin/main`` (or ``origin/master``). The result is cached
-  to ``~/.omnigent/.update_check.json`` so the (potentially slow)
+  to ``~/.omnigent-mdsmithaustin/.update_check.json`` so the (potentially slow)
   ``git fetch`` only runs once per staleness window. The notice points
   the user at ``git pull``.
 
@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING
 
 import tomllib
 
+from omnigent.installation_defaults import default_user_dir
+
 if TYPE_CHECKING:
     # Imported only for type hints; the heavy/optional imports remain lazy
     # at runtime so importing this module stays cheap.
@@ -60,7 +62,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 _ENV_SKIP = "OMNIGENT_NO_UPDATE_CHECK"
-_CACHE_DIR = Path.home() / ".omnigent"
+_CACHE_DIR = default_user_dir()
 _CACHE_FILE = _CACHE_DIR / ".update_check.json"
 _STALENESS_SECONDS = 4 * 60 * 60  # 4 hours
 _GIT_TIMEOUT_SECONDS = 5

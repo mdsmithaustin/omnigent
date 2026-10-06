@@ -168,11 +168,11 @@ def test_resolve_data_dir_uses_credentials_parent(monkeypatch: pytest.MonkeyPatc
 
 
 def test_resolve_data_dir_defaults_to_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    """With no env, the data dir is ``~/.omnigent``."""
+    """With no env, the data dir is ``~/.omnigent-mdsmithaustin``."""
     monkeypatch.delenv("OMNIGENT_ADMIN_CREDENTIALS_PATH", raising=False)
     monkeypatch.delenv("OMNIGENT_ADMIN_LIST_PATH", raising=False)
-    assert resolve_data_dir() == Path.home() / ".omnigent"
-    assert resolve_admin_list_path() == Path.home() / ".omnigent" / "admins"
+    assert resolve_data_dir() == Path.home() / ".omnigent-mdsmithaustin"
+    assert resolve_admin_list_path() == Path.home() / ".omnigent-mdsmithaustin" / "admins"
 
 
 def test_load_admin_list_binds_resolved_path(monkeypatch: pytest.MonkeyPatch) -> None:

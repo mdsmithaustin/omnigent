@@ -29,6 +29,7 @@ from fastapi import FastAPI
 from omnigent._platform import IS_WINDOWS, normalize_interactive_shells
 from omnigent.debug_logging import debug_event, runner_primary_session_id
 from omnigent.inner import _proc
+from omnigent.installation_defaults import default_user_dir
 from omnigent.runner.transports.ws_tunnel.serve import RUNNER_TUNNEL_REJECTION_PREFIX
 from omnigent.util.threaded_auth import ThreadedAuth
 from omnigent.version import VERSION
@@ -139,12 +140,12 @@ def _runner_config_path() -> Path:
     Respects :envvar:`OMNIGENT_CONFIG_HOME` for test isolation and
     subprocess consistency with the CLI/onboarding layer.
 
-    :returns: Config path, e.g. ``Path("~/.omnigent/config.yaml")``.
+    :returns: Config path, e.g. ``Path("~/.omnigent-mdsmithaustin/config.yaml")``.
     """
     config_home = os.environ.get(_RUNNER_CONFIG_HOME_ENV_VAR)
     if config_home:
         return Path(config_home).expanduser() / "config.yaml"
-    return Path.home() / ".omnigent" / "config.yaml"
+    return default_user_dir() / "config.yaml"
 
 
 def _load_runner_idle_timeout_s_from_config() -> float:
@@ -589,7 +590,7 @@ def _make_auth_token_factory(
          used until rejection; local refreshable auth resolves lazily.
       2. Host-delegated runner token, when the host launch marker and
          binding token are present.
-      3. Stored OIDC token from ``~/.omnigent/auth_tokens.json``
+      3. Stored OIDC token from ``~/.omnigent-mdsmithaustin/auth_tokens.json``
          (populated by ``omnigent login``), keyed by ``server_url``.
       4. Databricks OAuth token (refreshed via the SDK) — host-keyed
          when a Databricks Apps pointer record is stored for
