@@ -26,12 +26,12 @@ def test_effective_config_keeps_user_harness_launch_settings(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text(
         "harness:\n  default: claude-sdk\n  claude-sdk:\n    command: /global/claude\n"
         "  codex:\n    command: /global/codex\n    args: [--config, k=v]\n"
     )
-    (project / ".omnigent" / "config.yaml").write_text(
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         "harness:\n  default: codex\n  codex:\n    command: /local/codex\n"
         "    args: [--project-option]\n  pi:\n    command: /local/pi\n"
     )
@@ -125,9 +125,9 @@ def test_effective_config_merges_project_over_user(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text("profile: global\nmodel: global-model\n")
-    (project / ".omnigent" / "config.yaml").write_text("profile: local\n")
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text("profile: local\n")
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
     monkeypatch.chdir(project)
 
@@ -142,16 +142,18 @@ def test_effective_config_uses_explicit_workspace(
     workspace = tmp_path / "project"
     other_project = tmp_path / "other"
     config_home.mkdir()
-    (workspace / ".omnigent").mkdir(parents=True)
-    (other_project / ".omnigent").mkdir(parents=True)
+    (workspace / ".omnigent-mdsmithaustin").mkdir(parents=True)
+    (other_project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text(
         "profile: global\nharness:\n  claude-native:\n    command: global-claude\n"
         "    args: [--verbose]\n"
     )
-    (workspace / ".omnigent" / "config.yaml").write_text(
+    (workspace / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         "harness:\n  claude-native:\n    command: project-claude\n"
     )
-    (other_project / ".omnigent" / "config.yaml").write_text("profile: wrong-project\n")
+    (other_project / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
+        "profile: wrong-project\n"
+    )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
     monkeypatch.chdir(other_project)
 

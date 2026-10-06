@@ -21,8 +21,8 @@ def test_user_config_path_uses_home_fallback(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("OMNIGENT_CONFIG_HOME", raising=False)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
-    assert state_dir() == tmp_path / ".omnigent"
-    assert user_config_path() == tmp_path / ".omnigent" / "config.yaml"
+    assert state_dir() == tmp_path / ".omnigent-mdsmithaustin"
+    assert user_config_path() == tmp_path / ".omnigent-mdsmithaustin" / "config.yaml"
 
 
 def test_state_dir_honors_data_dir(tmp_path, monkeypatch) -> None:
