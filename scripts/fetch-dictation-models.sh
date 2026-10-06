@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Downloads the sherpa-onnx models the server dictation engine expects
-# (designs/server-dictation.md) into ~/.omnigent/models/dictation/:
+# (designs/server-dictation.md) into ~/.omnigent-mdsmithaustin/models/dictation/:
 #   asr/    streaming Nemotron transducer (int8, ~650 MB) — the recognizer
 #   punct/  online CNN-BiLSTM punctuation (int8, ~38 MB) — live re-punctuation
 #
@@ -13,7 +13,7 @@
 # alternates.
 set -euo pipefail
 
-DEST="${OMNIGENT_DICTATION_MODEL_ROOT:-$HOME/.omnigent/models/dictation}"
+DEST="${OMNIGENT_DICTATION_MODEL_ROOT:-$HOME/.omnigent-mdsmithaustin/models/dictation}"
 ASR_TARBALL="sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
 PUNCT_TARBALL="sherpa-onnx-online-punct-en-2024-08-06"
 ASR_GH="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"

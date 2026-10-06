@@ -28,6 +28,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from omnigent.installation_defaults import default_user_dir
+
 _logger = logging.getLogger(__name__)
 
 
@@ -85,12 +87,12 @@ def _data_dir() -> Path:
     ``omnigent.host.local_server._local_data_dir`` /
     ``omnigent.chat._omnigent_persistent_dir``).
 
-    :returns: ``$OMNIGENT_DATA_DIR`` when set, else ``~/.omnigent``.
+    :returns: ``$OMNIGENT_DATA_DIR`` when set, else ``~/.omnigent-mdsmithaustin``.
     """
     value = os.environ.get("OMNIGENT_DATA_DIR")
     if value:
         return Path(value).expanduser()
-    return Path.home() / ".omnigent"
+    return default_user_dir()
 
 
 def catalog_path(harness: str, fingerprint: str) -> Path:

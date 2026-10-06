@@ -53,12 +53,12 @@ the event loop responsive.
 Model layout
 ------------
 
-======================================  ==========================================
+======================================  =========================================================
 Env var                                 Default
-======================================  ==========================================
-``OMNIGENT_DICTATION_MODEL_DIR``        ``~/.omnigent/models/dictation/asr``
-``OMNIGENT_DICTATION_PUNCT_DIR``        ``~/.omnigent/models/dictation/punct``
-======================================  ==========================================
+======================================  =========================================================
+``OMNIGENT_DICTATION_MODEL_DIR``        ``~/.omnigent-mdsmithaustin/models/dictation/asr``
+``OMNIGENT_DICTATION_PUNCT_DIR``        ``~/.omnigent-mdsmithaustin/models/dictation/punct``
+======================================  =========================================================
 
 The ASR dir must contain ``encoder*.onnx``, ``decoder*.onnx``,
 ``joiner*.onnx`` and ``tokens.txt`` (int8 variants preferred when both
@@ -82,6 +82,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+from omnigent.installation_defaults import default_user_dir
 
 _logger = logging.getLogger(__name__)
 
@@ -221,12 +223,12 @@ def register_engine(
 
 
 def _asr_dir() -> Path:
-    default = Path.home() / ".omnigent" / "models" / "dictation" / "asr"
+    default = default_user_dir() / "models" / "dictation" / "asr"
     return Path(os.environ.get(MODEL_DIR_ENV) or default).expanduser()
 
 
 def _punct_dir() -> Path:
-    default = Path.home() / ".omnigent" / "models" / "dictation" / "punct"
+    default = default_user_dir() / "models" / "dictation" / "punct"
     return Path(os.environ.get(PUNCT_DIR_ENV) or default).expanduser()
 
 
