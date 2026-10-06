@@ -37,6 +37,7 @@ from omnigent.inner.native_attachments import (
     CAP_FILESYSTEM_ATTACHMENT_DELIVERY,
     CAP_FILESYSTEM_ATTACHMENTS,
 )
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.util.json_types import JsonObject as _JsonObject
 from omnigent.util.tunnel_limits import RUNNER_TUNNEL_MAX_MESSAGE_BYTES
 
@@ -335,6 +336,7 @@ class HostLaunchRunnerFrame:
     harness: str | None = None
     inference_config: dict[str, Any] | None = None
     superseded_runner_ids: tuple[str, ...] | None = None
+    native_admission: NativeAdmission | None = None
 
 
 @dataclass
@@ -1599,6 +1601,8 @@ def encode_host_frame(frame: HostFrame) -> str:
         }
         if frame.superseded_runner_ids is not None:
             payload["superseded_runner_ids"] = list(frame.superseded_runner_ids)
+        if frame.native_admission is not None:
+            payload["native_admission"] = frame.native_admission.model_dump()
         return _encode_payload(payload)
     if isinstance(frame, HostLaunchRunnerResultFrame):
         return _encode_payload(
@@ -2681,6 +2685,9 @@ def _decode_launch_runner(msg: _JsonObject) -> HostLaunchRunnerFrame:
             if "superseded_runner_ids" in msg
             else None
         ),
+        native_admission=NativeAdmission.model_validate(msg["native_admission"])
+        if msg.get("native_admission") is not None
+        else None,
     )
 
 

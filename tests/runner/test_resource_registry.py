@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import httpx
 import pytest
 
 from omnigent.debug_logging import record_to_row
@@ -38,6 +39,7 @@ from omnigent.runner.resource_registry import (
 )
 from omnigent.terminals import TerminalRegistry
 from tests._helpers.polling import poll_until_async
+from tests.native_source_helpers import native_source_server as native_source_server
 from tests.runner.helpers import make_test_terminal_instance
 
 # Stands in for Claude: completes OSC negotiation, reports working, then one report per key.
@@ -503,6 +505,7 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    native_source_server,
 ) -> None:
     """
     Terminal role markers stay private and follow close lifecycle.
@@ -564,6 +567,10 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
     monkeypatch.setattr(terminal_registry, "launch", _fake_launch)
     monkeypatch.setattr(terminal_registry, "close", _fake_close)
 
+    registry.native_server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond),
+        base_url="http://omnigent.test",
+    )
     view = await registry.launch_auxiliary_terminal(
         "conv_codex",
         "codex",
@@ -596,6 +603,8 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
     await registry.cleanup_session("conv_codex")
     assert registry.client_surface_env("conv_codex") == {"OMNIGENT_CLIENT_SURFACE": "unknown"}
 
+    await registry.native_server_client.aclose()
+
 
 @pytest.mark.asyncio
 async def test_terminal_resource_role_moves_on_transfer(
@@ -615,7 +624,7 @@ async def test_terminal_resource_role_moves_on_transfer(
     """
     terminal_registry = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminal_registry)
-    instance = make_test_terminal_instance("codex", "main", tmp_path)
+    instance = make_test_terminal_instance("worker", "main", tmp_path)
 
     async def _fake_launch(
         conversation_id: str,
@@ -628,7 +637,7 @@ async def test_terminal_resource_role_moves_on_transfer(
         Register a fake terminal instead of starting tmux.
 
         :param conversation_id: Owning session id, e.g. ``"conv_old"``.
-        :param terminal_name: Terminal name, e.g. ``"codex"``.
+        :param terminal_name: Terminal name, e.g. ``"worker"``.
         :param session_key: Terminal session key, e.g. ``"main"``.
         :param spec: Terminal spec passed by the caller.
         :param kwargs: Additional launch kwargs.
@@ -653,9 +662,9 @@ async def test_terminal_resource_role_moves_on_transfer(
 
     view = await registry.launch_auxiliary_terminal(
         "conv_old",
-        "codex",
+        "worker",
         "main",
-        TerminalEnvSpec(command="codex", args=["--remote", "ws://127.0.0.1:1234"]),
+        TerminalEnvSpec(command="worker", args=["--remote", "ws://127.0.0.1:1234"]),
         resource_role=CODEX_NATIVE_TERMINAL_ROLE,
     )
 
@@ -1811,7 +1820,7 @@ async def test_transfer_terminal_moves_status_memo(
     """
     terminal_registry = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminal_registry)
-    instance = make_test_terminal_instance("codex", "main", tmp_path)
+    instance = make_test_terminal_instance("worker", "main", tmp_path)
 
     async def _fake_launch(
         conversation_id: str,
@@ -1834,9 +1843,9 @@ async def test_transfer_terminal_moves_status_memo(
 
     view = await registry.launch_auxiliary_terminal(
         "conv_src",
-        "codex",
+        "worker",
         "main",
-        TerminalEnvSpec(command="codex", args=["--remote", "ws://127.0.0.1:1234"]),
+        TerminalEnvSpec(command="worker", args=["--remote", "ws://127.0.0.1:1234"]),
         resource_role=CODEX_NATIVE_TERMINAL_ROLE,
     )
     registry.note_session_turn_started("conv_src")
@@ -2758,9 +2767,12 @@ async def test_claude_native_billing_acknowledgement_uses_original_launch_bridge
     monkeypatch.setattr(claude_bridge, "acknowledge_auto_mode_billing_notice", acknowledge)
 
     if transfer:
-        moved = await registry.transfer_terminal("source", "target", "terminal_claude_main")
-        assert moved is not None
-        assert registry.terminal_registry.get("target", "claude", "main") is instance
+        from omnigent.errors import OmnigentError
+
+        with pytest.raises(OmnigentError, match="original source owner"):
+            await registry.transfer_terminal("source", "target", "terminal_claude_main")
+        assert registry.terminal_registry.get("source", "claude", "main") is instance
+        assert registry.terminal_registry.get("target", "claude", "main") is None
     on_tick = callbacks["on_tick"]
     assert callable(on_tick)
     if replace_during_tick:

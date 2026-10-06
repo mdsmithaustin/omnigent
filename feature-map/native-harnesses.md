@@ -106,6 +106,9 @@ implements them separately, so a fix for one harness does not reach the others.
 - `subagent-discovery`: Claude children appear under the agent that spawned
   them, including forked slash commands and delayed spawns; an unresolved
   spawn does not keep an idle runner re-reading unchanged conversations.
+- `stop-qualification`: Prime can verify its exact retained private owner.
+  Other providers and unsupported modes remain unqualified for a
+  different-agent fork. Pending closure does not expire.
 - `disconnect`: startup waits and active operations settle when their native
   connection ends; reconnect can receive fresh events. Distinguish a native
   CLI disconnect, a runner going offline, and a browser stream reconnect.

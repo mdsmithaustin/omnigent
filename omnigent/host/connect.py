@@ -2114,6 +2114,8 @@ class HostProcess:
             harness_tmp_parent=self._harness_tmp_parent,
             inference_config=frame.inference_config,
         )
+        if frame.native_admission is not None:
+            env["OMNIGENT_NATIVE_START_ADMISSION"] = frame.native_admission.model_dump_json()
         if frame.inference_config is not None:
             try:
                 inference_path = await asyncio.to_thread(
@@ -2435,7 +2437,7 @@ class HostProcess:
         :param frame: The stop request frame.
         :returns: Result frame with status.
         """
-        handle = self._runners.pop(frame.runner_id, None)
+        handle = self._runners.get(frame.runner_id)
         if handle is None:
             return HostStopRunnerResultFrame(
                 request_id=frame.request_id,
@@ -2447,7 +2449,14 @@ class HostProcess:
         # direct-Popen runner, but blocking control-socket exchanges for a
         # zygote-forked one — run them off the loop so a wedged zygote can't
         # freeze the daemon's control handler.
-        await self._stop_runner_and_trigger(handle.proc, "runner_stopped")
+        try:
+            await self._stop_runner_and_trigger(handle.proc, "runner_stopped")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return HostStopRunnerResultFrame(
+                request_id=frame.request_id, status="failed", error=str(exc)
+            )
+        if self._runners.get(frame.runner_id) is handle:
+            self._runners.pop(frame.runner_id)
         _logger.info("Stopped runner %s", frame.runner_id)
         _print_host_status(
             f"  ↓ Runner stopped: {frame.runner_id}",
@@ -2532,12 +2541,9 @@ class HostProcess:
             proc.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
             proc.kill()
-            # Bounded: a bare wait() would hang if the handle can't observe the
-            # exit (e.g. a zygote-forked runner whose zygote died and whose pid
-            # probe is the only signal). The kill has been sent; give it a short
-            # window, then move on.
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                proc.wait(timeout=5.0)
+            proc.wait(timeout=5.0)
+        if proc.poll() is None:
+            raise RuntimeError("The dedicated runner's exit could not be observed.")
 
     def _track_pending_runner_launch(
         self, runner_id: str, completion: asyncio.Future[None]

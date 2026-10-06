@@ -47,6 +47,9 @@ the header menu), and each place is a separate entry point.
   writable side chat; Reply on side-chat text quotes it in that chat. Both preserve
   interleaved comments and existing attachments; removing a quote keeps its comments.
   Live side chats accept pasted images in every reply text field.
+- `native-stop-fork`: the source owner explicitly Stops and verifies native
+  closure before a different-agent fork. Readers can then fork; they cannot
+  Stop. Unqualified closure blocks the fork; new source input clears proof.
 - `unarchive`: offered on archived rows, in bulk selection, and in the header
   menu of an archived session.
 - `delete`: confirmed, then removed from the list and the server.
@@ -441,6 +444,8 @@ if support returns; choose Switch host again to reopen it.
 choose Stop session while a side chat or sub-agent is working. On mobile, open
 the sidebar drawer and long-press the row. The current-turn interrupt control is
 a separate action that leaves the session connected.
+For a different-agent native fork, check the verified closure result first.
+An unresolved result appears as an error. See [the Stop workflow](../docs/NATIVE_STOP.md).
 
 **Side-chat lifecycle:** use **Workspace → + → Side chat**, type `/side` in the
 parent composer, or choose **Start a new side chat** from the composer's add

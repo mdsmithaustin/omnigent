@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from omnigent.onboarding.provider_config import ProviderEntry
     from omnigent.spec.types import AgentSpec
 
+import httpx
+
 from omnigent.cli_invocation import cli_invocation
 from omnigent.debug_logging import debug_event
 from omnigent.errors import ErrorCode, OmnigentError
@@ -108,6 +110,7 @@ from omnigent.inner.databricks_executor import (
 )
 from omnigent.models.codex_model_vocabulary import codex_reachable_model_slug, codex_spawn_model
 from omnigent.native import native_bridge_common, policy_allow_cache
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.process_logging import (
     DATA_DIR_ENV_VAR,
     harness_stderr_capture_enabled,
@@ -2386,6 +2389,20 @@ class CodexNativeAppServer:
             raise OmnigentError(
                 "The session workspace is no longer available.", code=ErrorCode.WORKSPACE_MISSING
             )
+        from omnigent.native.admission import admit_native, bind_native_admission
+
+        if self.session_id is None or self.ap_server_url is None:
+            raise RuntimeError("Codex native launch requires its source admission server.")
+        async with httpx.AsyncClient(
+            base_url=self.ap_server_url, headers=self.ap_auth_headers
+        ) as client:
+            admission = await admit_native(client, self.session_id, "codex")
+            with bind_native_admission(admission):
+                await self._start_admitted(client, admission)
+
+    async def _start_admitted(
+        self, admission_client: httpx.AsyncClient, admission: NativeAdmission
+    ) -> None:
         config_source = _codex_home_config_source_from_env()
         if self.codex_home.resolve() == config_source.resolve():
             raise ValueError(
@@ -2553,7 +2570,15 @@ class CodexNativeAppServer:
         effort_catalog_transport = self.listen_url or str(self.socket_path)
         _effort_catalog_cache.pop(effort_catalog_transport, None)
         _effort_catalog_misses.pop(effort_catalog_transport, None)
-        await self._spawn_app_server_process(resolved_listen)
+        async def spawn_admitted() -> None:
+            from omnigent.native.admission import validate_native
+            from omnigent.native.native_bridge_common import async_bridge_dir_preparation_lock
+
+            async with async_bridge_dir_preparation_lock(Path(admission.owner.runtime)):
+                await validate_native(admission_client, admission)
+                await self._spawn_app_server_process(resolved_listen)
+
+        await spawn_admitted()
         # Ordering invariant: hooks.json is written before the spawn above,
         # and the trust handshake must complete before the first turn — codex
         # resolves trust when it dispatches a hook, so trust landing after the
@@ -2594,7 +2619,7 @@ class CodexNativeAppServer:
                 if resolved_listen.startswith("unix://"):
                     with contextlib.suppress(FileNotFoundError):
                         self.socket_path.unlink()
-                await self._spawn_app_server_process(resolved_listen)
+                await spawn_admitted()
                 # The second spawn gets its own full readiness budget; a second
                 # silent timeout is final.
                 try:
