@@ -2,7 +2,7 @@
 commands:
   # Mirrors the CI lint job in .github/workflows/lint.yml; corepack runs the pinned pnpm.
   prepare: >-
-    uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
+    OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
     && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
   lint: "uv run --no-sync pre-commit run --all-files --show-diff-on-failure"
 
