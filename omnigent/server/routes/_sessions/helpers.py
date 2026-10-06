@@ -7471,10 +7471,29 @@ async def _dispatch_skill_slash_command_to_runner(
         return _skill_command_result(visible)
 
     admission = (
-        await asyncio.to_thread(conversation_store.invalidate_native_proof, session_id)
-        if native
+        NativeAdmission.model_validate(body.data["native_admission"])
+        if "native_admission" in body.data
         else None
     )
+    try:
+        if admission is not None:
+            await asyncio.to_thread(conversation_store.validate_native_admission, admission)
+        elif _native_coding_agent_for_session(conv) is not None:
+            raise OmnigentError(
+                "Native skill dispatch requires admission from the ready native owner.",
+                code=ErrorCode.CONFLICT,
+            )
+    except OmnigentError:
+        visible = await asyncio.to_thread(
+            conversation_store.settle_skill_command,
+            session_id,
+            item_id,
+            fingerprint,
+            "rejected",
+        )
+        event = OutputItemDoneEvent(type="response.output_item.done", item=visible.to_api_dict())
+        session_stream.publish(session_id, event.model_dump())
+        return _skill_command_result(visible)
     pending_id = None
     if native:
         pending_id = pending_inputs.record(

@@ -17,6 +17,9 @@ This proof covers the recorded local runner environment and private runtime.
 Other providers and unsupported modes return an unqualified result. A source
 without recorded owner admission also remains unqualified. This does not
 establish the absence of arbitrary escaped child processes.
+For a source without recorded admission, Stop still attempts the existing
+runner shutdown and dedicated host-runner shutdown. It returns `unknown` even
+when those shutdown requests succeed, and different-agent fork stays blocked.
 
 A pending close continues to exclude new native input and startup. It does not
 expire. An unqualified close whose actor has finished permits ordinary resume,
@@ -54,6 +57,25 @@ Stop revokes it before attempting physical closure. Initialization, provider
 startup, terminal creation, and deferred input carry their original admission;
 the provider validates it again under its cross-process creation lock. Prime's
 terminal wrapper consumes its existing launch reservation under that lock.
+
+On permission-enabled servers, native owner admission and validation require
+the current runner's tunnel binding token or a configured runner-token allowlist.
+Session edit or owner permission alone cannot record native ownership. Local
+servers without a permission store retain the existing single-user trust
+boundary, including direct CLI Codex startup before runner binding.
+
+For sources with recorded native ownership, skill commands capture admission at
+accepted event ingress, before skill resolution. Stop revokes a deferred
+command's original ticket. A command revoked during resolution returns a
+rejected delivery and cannot reopen the source.
+Retrying its stable invocation ID returns the recorded delivery without
+resending it. A new invocation can deliberately resume the source after
+completed closure.
+
+A native session without recorded owner admission rejects skill dispatch before
+delivery. Start or resume its native terminal first. After the owner is ready,
+send a new skill invocation. The original invocation retains its rejected
+delivery and cannot execute on retry.
 
 The existing fork insertion transaction locks the source, compares the selected
 agent before creating its clone, and checks current native closure before

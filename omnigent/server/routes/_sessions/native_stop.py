@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from omnigent.entities import Conversation
 from omnigent.native.source_owner import NativeStopOutcome, NativeStopReceipt, NativeStopResult
-from omnigent.server.routes._sessions.helpers import _get_runner_client
+from omnigent.server.routes._sessions.helpers import _get_runner_client, _stop_session_via_runner
 from omnigent.server.routes._sessions.orchestration import _stop_host_runner_intentionally
 from omnigent.stores.conversation_store import ConversationStore
 
@@ -28,6 +28,15 @@ async def stop_native_source(
         else await asyncio.to_thread(conversation_store.seal_native_stop, source_id)
     )
     if stop is None:
+        await _stop_session_via_runner(source_id, runner_router)
+        if conversation.host_id and conversation.runner_id:
+            await _stop_host_runner_intentionally(
+                source_id,
+                conversation.host_id,
+                conversation.runner_id,
+                host_registry,
+                conversation_store,
+            )
         return NativeStopResult(
             outcome=NativeStopOutcome.UNKNOWN,
             detail="The current native owner has no recorded admission.",

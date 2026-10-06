@@ -918,10 +918,17 @@ def register_events_routes(
             else:
                 created_by = body_created_by
         body.data.pop("native_admission", None)
+        if body.type == _SLASH_COMMAND_TYPE:
+            existing_command = await _read_skill_command_claim(
+                session_id, body, conversation_store, created_by
+            )
+            if existing_command is not None:
+                return existing_command
         if (
             body.type
             in {
                 "message",
+                _SLASH_COMMAND_TYPE,
                 "compact",
                 "clear",
                 "reset",
@@ -933,19 +940,16 @@ def register_events_routes(
                 "retry_session",
             }
             and (body.type != "message" or body.data.get("role", "user") == "user")
-            and not _has_runner_created_by_authority(request, conv)
+            and (
+                body.type == _SLASH_COMMAND_TYPE
+                or not _has_runner_created_by_authority(request, conv)
+            )
         ):
             admission = await asyncio.to_thread(
                 conversation_store.invalidate_native_proof, session_id
             )
             if admission is not None:
                 body.data["native_admission"] = admission.model_dump()
-        if body.type == _SLASH_COMMAND_TYPE:
-            existing_command = await _read_skill_command_claim(
-                session_id, body, conversation_store, created_by
-            )
-            if existing_command is not None:
-                return existing_command
         # Validate event type at the route boundary. Anything not in
         # ``_ALLOWED_EVENT_TYPES`` is a client mistake — failing here
         # is far better than silently persisting an item the agent

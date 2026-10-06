@@ -44,6 +44,255 @@ def _command(arguments: str = "rollout") -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("closure", ["pending", "verified", "unknown"])
+@pytest.mark.parametrize("runner_origin", [False, True])
+@pytest.mark.parametrize("native_routing", [False, True])
+async def test_stop_during_first_skill_resolution_revokes_original_ingress(
+    client, app, db_uri, monkeypatch, closure, runner_origin, native_routing
+):
+    from omnigent.errors import OmnigentError
+    from omnigent.native.source_owner import (
+        NativeAdmission,
+        NativeOwner,
+        NativeStop,
+        NativeStopOutcome,
+    )
+    from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+    from omnigent.server.routes._sessions import native_stop
+    from omnigent.server.routes.sessions import routes_events
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from tests.server.integration.test_native_source_stop import source_and_target
+
+    app.state.feature_flags = resolve_feature_flags(
+        {"OMNIGENT_FEATURES": "native_skill_routing" if native_routing else ""}
+    )
+    source_id, target_id = await source_and_target(client)
+    store = SqlAlchemyConversationStore(db_uri)
+    headers = {}
+    if runner_origin:
+        store.replace_runner_id(source_id, token_bound_runner_id("skill-runner-secret"))
+        headers[RUNNER_TUNNEL_TOKEN_HEADER] = "skill-runner-secret"
+    owner = NativeOwner(provider="prime-native", environment="fixture", runtime="private-owner")
+    original = store.admit_native(source_id, owner)
+    resolving = asyncio.Event()
+    release = asyncio.Event()
+    written = []
+    resolutions = []
+
+    async def relay_ready(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(routes_events, "_ensure_runner_relay_ready", relay_ready)
+
+    async def respond(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"terminal_ready": True, "session_init_protocol_version": 2}
+            )
+        payload = json.loads(request.content)
+        if request.url.path.endswith("/skills/resolve"):
+            resolutions.append(payload["arguments"])
+            if payload["arguments"] == "rollout":
+                resolving.set()
+                await asyncio.wait_for(release.wait(), 5)
+            return httpx.Response(
+                200,
+                json={
+                    "native_invocation": f"/review {payload['arguments']}",
+                    "meta_text": f"Expanded review {payload['arguments']}",
+                },
+            )
+        if payload.get("type") == "stop_session":
+            stop = NativeStop.model_validate(payload["native_stop"])
+            if closure == "pending":
+                return httpx.Response(204)
+            return httpx.Response(
+                200, json={"stop": stop.model_dump(), "result": {"outcome": closure, "detail": ""}}
+            )
+        if request.url.path.endswith("/events"):
+            ticket = NativeAdmission.model_validate(payload["native_admission"])
+            try:
+                store.validate_native_admission(ticket)
+            except OmnigentError:
+                return _admission_response(request, "rejected")
+            written.append(payload["content"])
+            return _admission_response(request, "accepted")
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+
+        async def get_runner(*args):
+            return runner
+
+        monkeypatch.setattr(native_stop, "_get_runner_client", get_runner)
+        submitted = _command()
+        submitted["data"]["native_admission"] = original.model_copy(
+            update={"epoch": "caller-forged-epoch"}
+        ).model_dump()
+        task = asyncio.create_task(
+            client.post(f"/v1/sessions/{source_id}/events", json=submitted, headers=headers)
+        )
+        try:
+            await asyncio.wait_for(resolving.wait(), 5)
+            stopped = await client.post(
+                f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+            )
+            assert stopped.status_code == 202, stopped.text
+            assert stopped.json()["native_stop"]["outcome"] == (
+                "verified" if closure == "verified" else "unknown"
+            )
+            release.set()
+            result = await asyncio.wait_for(task, 5)
+            assert result.status_code == 202, result.text
+            assert result.json()["delivery"]["status"] == "rejected"
+            assert store.get_native_source(source_id).admission.epoch == original.epoch
+            retry = await client.post(f"/v1/sessions/{source_id}/events", json=_command())
+            assert retry.json()["delivery"]["status"] == "rejected"
+            assert resolutions == ["rollout"]
+            assert written == []
+            fork = await client.post(
+                f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}
+            )
+            assert fork.status_code == (201 if closure == "verified" else 409), fork.text
+            if closure == "pending":
+                store.finish_native_stop(
+                    store.get_native_source(source_id).stop, NativeStopOutcome.UNKNOWN
+                )
+            fresh = _command("new invocation")
+            fresh["data"]["stable_id"] = "ab" * 16
+            resumed = await client.post(
+                f"/v1/sessions/{source_id}/events", json=fresh, headers=headers
+            )
+            assert resumed.status_code == 202, resumed.text
+            assert resumed.json()["delivery"]["status"] == "accepted"
+            assert written == [
+                [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "/review new invocation"
+                            if native_routing
+                            else "Expanded review new invocation"
+                        ),
+                    }
+                ]
+            ]
+            assert store.get_native_source(source_id).admission.epoch != original.epoch
+            blocked = await client.post(
+                f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}
+            )
+            assert blocked.status_code == 409, blocked.text
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            while pending_inputs.resolve_oldest(source_id) is not None:
+                pass
+
+
+@pytest.mark.parametrize("native_routing", [False, True])
+async def test_unadmitted_native_skill_cannot_start_after_legacy_stop(
+    client, app, db_uri, monkeypatch, native_routing
+):
+    from omnigent.native.admission import native_operation
+    from omnigent.native.source_owner import NativeAdmission
+    from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+    from tests.server.integration.test_native_source_stop import source_and_target
+
+    app.state.feature_flags = resolve_feature_flags(
+        {"OMNIGENT_FEATURES": "native_skill_routing" if native_routing else ""}
+    )
+    source_id, target_id = await source_and_target(client)
+    store = SqlAlchemyConversationStore(db_uri)
+    assert store.get_native_source(source_id) is None
+    resolving = asyncio.Event()
+    release = asyncio.Event()
+    written = []
+
+    async def respond(request):
+        payload = json.loads(request.content)
+        if request.url.path.endswith("/skills/resolve"):
+            if payload["arguments"] == "rollout":
+                resolving.set()
+                await asyncio.wait_for(release.wait(), 5)
+            return httpx.Response(
+                200,
+                json={
+                    "native_invocation": f"/review {payload['arguments']}",
+                    "meta_text": f"Expanded review {payload['arguments']}",
+                },
+            )
+        if payload.get("type") == "stop_session":
+            return httpx.Response(204)
+        if request.url.path.endswith("/events"):
+            if "native_admission" in payload:
+                store.validate_native_admission(
+                    NativeAdmission.model_validate(payload["native_admission"])
+                )
+            else:
+                async with native_operation(client, source_id, "prime-native"):
+                    pass
+            written.append(payload["content"])
+            return _admission_response(request, "accepted")
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond), base_url="http://runner"
+    ) as runner:
+        _route_to_runner(monkeypatch, runner)
+        task = asyncio.create_task(
+            client.post(f"/v1/sessions/{source_id}/events", json=_command())
+        )
+        try:
+            await asyncio.wait_for(resolving.wait(), 5)
+            stopped = await client.post(
+                f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+            )
+            assert stopped.status_code == 202, stopped.text
+            assert stopped.json()["native_stop"]["outcome"] == "unknown"
+            release.set()
+            result = await asyncio.wait_for(task, 5)
+            assert result.status_code == 202, result.text
+            assert result.json()["delivery"]["status"] == "rejected"
+            assert result.json()["queued"] is False
+            assert store.get_native_source(source_id) is None
+            retry = await client.post(f"/v1/sessions/{source_id}/events", json=_command())
+            assert retry.json()["delivery"]["status"] == "rejected"
+            assert written == []
+            blocked = await client.post(
+                f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}
+            )
+            assert blocked.status_code == 409, blocked.text
+            async with native_operation(client, source_id, "prime-native") as ready:
+                store.validate_native_admission(ready)
+            fresh = _command("ready owner")
+            fresh["data"]["stable_id"] = "cd" * 16
+            resumed = await client.post(f"/v1/sessions/{source_id}/events", json=fresh)
+            assert resumed.status_code == 202, resumed.text
+            assert resumed.json()["delivery"]["status"] == "accepted"
+            assert written == [
+                [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "/review ready owner"
+                            if native_routing
+                            else "Expanded review ready owner"
+                        ),
+                    }
+                ]
+            ]
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            while pending_inputs.resolve_oldest(source_id) is not None:
+                pass
+
+
 @pytest.mark.parametrize("failure", ["rejected", "proxy_error", "timeout"])
 async def test_failed_skill_does_not_authorize_unrelated_native_request(
     client: httpx.AsyncClient,
