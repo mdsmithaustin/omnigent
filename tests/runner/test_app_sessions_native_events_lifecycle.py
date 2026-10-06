@@ -1107,6 +1107,12 @@ async def test_claude_native_model_options_use_session_launch_catalog(
     from tests.runner.conftest import REAL_CLAUDE_LAUNCH_CATALOG
 
     monkeypatch.setattr(
+        "omnigent.inference_config.load_runtime_inference_config",
+        lambda base_config=None: {
+            "providers": {"claude": {"kind": "subscription", "cli": "claude", "default": True}}
+        },
+    )
+    monkeypatch.setattr(
         "omnigent.harnesses.claude_native.main.claude_launch_catalog", REAL_CLAUDE_LAUNCH_CATALOG
     )
     conv_id = "6a416804870ed618cc8908f5cebab937"
@@ -1326,6 +1332,12 @@ async def test_claude_native_model_options_serves_probe_rows_after_pending(
     from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
     from tests.runner.conftest import REAL_CLAUDE_LAUNCH_CATALOG
 
+    monkeypatch.setattr(
+        "omnigent.inference_config.load_runtime_inference_config",
+        lambda base_config=None: {
+            "providers": {"claude": {"kind": "subscription", "cli": "claude", "default": True}}
+        },
+    )
     monkeypatch.setattr(
         "omnigent.harnesses.claude_native.main.claude_launch_catalog", REAL_CLAUDE_LAUNCH_CATALOG
     )
