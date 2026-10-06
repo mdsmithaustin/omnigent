@@ -25,12 +25,15 @@ import time
 from pathlib import Path
 
 from omnigent._platform import stable_user_id
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 from omnigent.native.input_ready import PaneSettledProbe
 
 #: Env var carrying the bridge dir into the harness executor process.
 BRIDGE_DIR_ENV_VAR = "HARNESS_GOOSE_NATIVE_BRIDGE_DIR"
 
-_BRIDGE_ROOT = Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "goose-native"
+_BRIDGE_ROOT = (
+    Path(tempfile.gettempdir()) / f"{NATIVE_TMP_PREFIX}-{stable_user_id()}" / "goose-native"
+)
 _TMUX_FILE = "tmux.json"
 _TMUX_READY_TIMEOUT_S = 30.0
 _TMUX_SEND_TIMEOUT_S = 10.0

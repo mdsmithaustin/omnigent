@@ -13,17 +13,19 @@ import sys
 import tempfile
 from pathlib import Path
 
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
+
 # Prefix of each per-conversation home created under the staging root. Also
 # what identifies an Omnigent-private codex home to nested launches (see
 # ``_is_omnigent_private_codex_home`` in ``codex_executor``).
-CODEX_HOME_PREFIX = "omnigent-codex-home-"
-CODEX_SKILLS_PREFIX = "omnigent-codex-skills-"
+CODEX_HOME_PREFIX = f"{NATIVE_TMP_PREFIX}-codex-home-"
+CODEX_SKILLS_PREFIX = f"{NATIVE_TMP_PREFIX}-codex-skills-"
 
 
 def _staging_root_path() -> Path:
     # The shared temp root must not route private homes through another user.
     suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
-    return Path(tempfile.gettempdir()).resolve() / f"omnigent-codex-homes{suffix}"
+    return Path(tempfile.gettempdir()).resolve() / f"{NATIVE_TMP_PREFIX}-codex-homes{suffix}"
 
 
 def codex_home_staging_root() -> Path:

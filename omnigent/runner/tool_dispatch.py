@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -6994,7 +6995,7 @@ def _runner_default_os_env_cwd(conversation_id: str | None) -> str:
     root = Path(
         os.environ.get(
             "OMNIGENT_RUNNER_OS_ENV_ROOT",
-            str(Path(tempfile.gettempdir()) / "omnigent-runner-os-envs"),
+            str(Path(tempfile.gettempdir()) / f"{NATIVE_TMP_PREFIX}-runner-os-envs"),
         )
     )
     cwd = root / safe_conv / "workspace"

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from omnigent._platform import IS_WINDOWS
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 
 HARNESS_TMP_PARENT_ENV_VAR = "OMNIGENT_HARNESS_TMP_PARENT"
 
@@ -19,8 +20,8 @@ def harness_tmp_parent(env: Mapping[str, str] | None = None) -> Path:
     if configured:
         return Path(configured).expanduser()
     if IS_WINDOWS:
-        return Path(tempfile.gettempdir()) / "omnigent"
-    return Path(f"/tmp/omnigent-{os.getuid()}")
+        return Path(tempfile.gettempdir()) / NATIVE_TMP_PREFIX
+    return Path(f"/tmp/{NATIVE_TMP_PREFIX}-{os.getuid()}")
 
 
 def absolute_harness_tmp_parent(path: Path) -> Path:
