@@ -130,7 +130,7 @@ native completion. `/history` shows the same admission labels. Forked historical
 commands remain display-only.
 
 The REPL saves the original request before sending it under
-`$OMNIGENT_DATA_DIR/skill-submissions`, or `~/.omnigent/skill-submissions` when the
+`$OMNIGENT_DATA_DIR/skill-submissions`, or `~/.omnigent-mdsmithaustin/skill-submissions` when the
 environment variable is unset. Each server and conversation has its own hashed
 directory in the local user's state. Resume with the same server URL and state
 directory after restarting the REPL. The journal retains the original explicit

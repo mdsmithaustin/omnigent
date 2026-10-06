@@ -136,10 +136,10 @@ source. Ordinary resume clears that proof; same-agent history forks remain
 available. Unknown or failed closure keeps a different-agent fork blocked.
 
 Conversation state lives under `$OMNIGENT_DATA_DIR/prime-native/`, or
-`~/.omnigent/prime-native/` when the variable is unset. Each conversation has
+`~/.omnigent-mdsmithaustin/prime-native/` when the variable is unset. Each conversation has
 its own Prime configuration, temporary directory, daemon socket, and saved
 sessions. When that socket path would exceed the Unix limit, Omnigent uses a
-private digest directory under `/tmp/ogp-<uid>/`. Stop retains saved
+private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
 sessions; deleting the conversation removes its adapter state after shutdown.
 
 Startup and host maintenance stop orphaned Prime runtimes whose recorded owner

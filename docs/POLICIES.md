@@ -607,10 +607,12 @@ policy_modules:
 ## Appendix: Admin policy REST API
 
 After starting the server, admins can manage default policies at runtime through these endpoints:
+The fork prefers local port `6768`. If the CLI prints a different URL, use that
+URL in the example below.
 
 ```bash
 # Create a server-wide policy
-curl -X POST http://localhost:6767/v1/policies \
+curl -X POST http://localhost:6768/v1/policies \
   -H "Content-Type: application/json" \
   -d '{
     "name": "global_rate_limit",

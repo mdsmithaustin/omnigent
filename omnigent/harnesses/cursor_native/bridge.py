@@ -114,7 +114,7 @@ _INTERRUPT_SETTLE_TIMEOUT_S = 2.0
 
 
 def bridge_dir_for_session_id(session_id: str) -> Path:
-    """Return the per-session bridge dir, e.g. ``/tmp/omnigent-<uid>/cursor-native/<hash>``."""
+    """Return the per-session bridge dir, e.g. ``/tmp/mdma-<uid>/cursor-native/<hash>``."""
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest
 
@@ -136,7 +136,7 @@ def _ensure_secure_bridge_dir(bridge_dir: Path) -> None:
 
     ``_ensure_dir`` only ``mkdir(parents=True, exist_ok=True)`` + a suppressed
     ``chmod`` on the leaf: it trusts pre-existing ancestors, so on a shared host
-    an attacker could pre-create ``$TMPDIR/omnigent-<uid>`` (or a deeper ancestor)
+    an attacker could pre-create ``$TMPDIR/mdma-<uid>`` (or a deeper ancestor)
     as a symlink / world-writable dir and redirect the bridge tree. That tree now
     holds ``bridge.json`` — a bearer token for the relay's localhost control
     endpoint — so its directory must be hardened. Delegate to the same

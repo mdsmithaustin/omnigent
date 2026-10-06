@@ -302,8 +302,8 @@ def display_log_path(path: Path) -> str:
     """Format a log path for display, collapsing the home prefix to ``~``.
 
     :param path: Absolute path, typically under the runtime data dir, e.g.
-        ``Path("/Users/alice/.omnigent/logs/runner/runner-ab12.log")``.
-    :returns: ``"~/.omnigent/..."`` when *path* is under ``$HOME``,
+        ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/runner/runner-ab12.log")``.
+    :returns: ``"~/.omnigent-mdsmithaustin/..."`` when *path* is under ``$HOME``,
         otherwise ``str(path)``.
     """
     try:
@@ -396,7 +396,7 @@ def current_process_log_path() -> Path | None:
     work before logging is configured.
 
     :returns: Absolute log path, e.g.
-        ``Path("/Users/alice/.omnigent/logs/runner/runner-conv_ab12.log")``,
+        ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/runner/runner-conv_ab12.log")``,
         or ``None`` when this process's output is not captured to a file.
     """
     return _current_process_log_path or _process_log_file_from_env()
@@ -413,7 +413,7 @@ def process_log_dir_reference(destination: str) -> str:
 
     :param destination: Process-log destination, e.g. ``"host"``.
     :returns: A display path with a trailing separator, e.g.
-        ``"~/.omnigent/logs/host/"``.
+        ``"~/.omnigent-mdsmithaustin/logs/host/"``.
     """
     return f"{display_log_path(process_log_dir(destination))}/"
 
@@ -428,8 +428,8 @@ def process_log_reference(destination: str) -> str:
     :param destination: Process-log destination used for the directory
         fallback, e.g. ``"runner"``.
     :returns: A display path, e.g.
-        ``"~/.omnigent/logs/runner/runner-conv_ab12-20260806-101500.log"``,
-        or ``"~/.omnigent/logs/runner/"`` when no log file is configured.
+        ``"~/.omnigent-mdsmithaustin/logs/runner/runner-conv_ab12-20260806-101500.log"``,
+        or ``"~/.omnigent-mdsmithaustin/logs/runner/"`` when no log file is configured.
     """
     path = current_process_log_path()
     if path is not None:

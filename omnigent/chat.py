@@ -220,7 +220,7 @@ class LocalServer:
     :param proc: The server subprocess handle.
     :param log_path: Path to the file that captures the
         subprocess's combined stdout/stderr stream,
-        e.g. ``Path("~/.omnigent/logs/server/server-abc123.log")``.
+        e.g. ``Path("~/.omnigent-mdsmithaustin/logs/server/server-abc123.log")``.
     :param runner_id: Stable runner id expected to register over
         the WebSocket tunnel, e.g. ``"runner_0123456789abcdef"``.
     :param runner_proc: The runner subprocess handle, spawned as a
@@ -336,7 +336,7 @@ def run_chat(
         YAML's top-level ``prompt`` field. Local-mode only.
     :param ephemeral: When ``True``, place the local server's
         SQLite DB and artifacts in a per-run tmpdir instead of
-        the persistent ``~/.omnigent`` location. Maps to
+        the persistent ``~/.omnigent-mdsmithaustin`` location. Maps to
         ``--no-session`` on the CLI. Local-mode only — passing
         this with a remote URL target raises
         :class:`click.ClickException` (the remote server owns
@@ -373,7 +373,7 @@ def run_chat(
         CLI. Mutually exclusive with ``resume_conversation_id``,
         ``resume_latest``, and ``resume_picker``.
     :param log: When ``True``, write a JSON dump of the active
-        conversation to ``~/.omnigent/logs/`` on REPL exit.
+        conversation to ``~/.omnigent-mdsmithaustin/logs/`` on REPL exit.
         Maps to ``--log`` on the CLI (default-on for the legacy
         path, default-off here so it stays explicit on
         Omnigent mode). See ``omnigent.repl._session_log`` for the
@@ -382,7 +382,7 @@ def run_chat(
         (no client-side conversation hand-off to dump).
     :param debug_events: When ``True``, enable the SSE-to-UI debug
         pipeline (event tape overlay via ``Ctrl+E``, JSONL event
-        logging to ``~/.omnigent/debug/``, and pipeline stage
+        logging to ``~/.omnigent-mdsmithaustin/debug/``, and pipeline stage
         counters in the toolbar). Maps to ``--debug-events`` on the
         CLI.
     :param resume_parts: Pre-built argument list prefix for the
@@ -697,7 +697,7 @@ def _remote_headers(
 
     Resolution order:
       1. explicit ``OMNIGENT_REMOTE_AUTH_TOKEN`` env var
-      2. stored OIDC token from ``~/.omnigent/auth_tokens.json``
+      2. stored OIDC token from ``~/.omnigent-mdsmithaustin/auth_tokens.json``
          (populated by ``omnigent login``)
       3. stored Databricks Apps pointer record for ``server_url``
          (populated by ``omnigent login <apps-url>``) — mints a
@@ -1026,11 +1026,11 @@ def _chat_with_server(
         pipeline. Forwarded to ``_run_repl``.
     :param server_log_path: Path to the local server's
         stdout/stderr log file, e.g.
-        ``Path("~/.omnigent/logs/server/server-abc123.log")``. Shown in the
+        ``Path("~/.omnigent-mdsmithaustin/logs/server/server-abc123.log")``. Shown in the
         Ctrl+O debug overview. ``None`` for remote servers.
     :param runner_log_path: Path to the local runner's
         stdout/stderr log file, e.g.
-        ``Path("~/.omnigent/logs/runner/runner-abc123.log")``. Shown in the
+        ``Path("~/.omnigent-mdsmithaustin/logs/runner/runner-abc123.log")``. Shown in the
         Ctrl+O debug overview. ``None`` when no local runner is used.
     :param resume_parts: Pre-built argument list prefix for the
         resume command shown on exit, e.g.
@@ -1937,7 +1937,7 @@ def _wait_for_remote_runner(
     :param timeout: Max seconds to wait for registration.
     :param log_path: Optional path to the captured runner log
         produced by ``_start_cli_runner_process(capture_logs=True)``,
-        e.g. ``Path("~/.omnigent/logs/runner/runner-abcd.log")``.
+        e.g. ``Path("~/.omnigent-mdsmithaustin/logs/runner/runner-abcd.log")``.
         Included (with a tail) in the error message when the
         runner fails to register so users can diagnose the root
         cause without hunting for the file.
@@ -2129,7 +2129,7 @@ def _chat_local(
         REPL start.
     :param ephemeral: When ``True``, point the local server at a
         fresh per-run tmpdir for its data store. ``False``
-        (default) uses the persistent ``~/.omnigent``
+        (default) uses the persistent ``~/.omnigent-mdsmithaustin``
         location so prior conversations remain reachable —
         see designs/RUN_OMNIGENT_SESSION_RESUMPTION.md.
     :param resume_conversation_id: When set, open the REPL
@@ -2144,7 +2144,7 @@ def _chat_local(
         interactive picker after the server boots. Maps to
         ``--resume`` / ``-r`` with no value on the CLI.
     :param log: When ``True``, write a JSON dump of the active
-        conversation to ``~/.omnigent/logs/`` on REPL exit.
+        conversation to ``~/.omnigent-mdsmithaustin/logs/`` on REPL exit.
         Maps to ``--log`` on the CLI.
     :param debug_events: When ``True``, enable the SSE-to-UI debug
         pipeline. Forwarded to ``_chat_with_server``.
@@ -3552,7 +3552,7 @@ def _omnigent_log_dir() -> Path:
     same per-user state root as session transcripts and CLI
     diagnostics, rather than under the system temp directory.
 
-    :returns: ``~/.omnigent/logs``, created if needed.
+    :returns: ``~/.omnigent-mdsmithaustin/logs``, created if needed.
     """
     log_dir = logs_root()
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -3564,8 +3564,8 @@ def _omnigent_persistent_dir() -> Path:
     Resolve the persistent omnigent data directory.
 
     Honors ``OMNIGENT_DATA_DIR`` (the data-isolation knob a worktree sets
-    to avoid sharing ``~/.omnigent/chat.db``), else lives at
-    ``~/.omnigent`` alongside the native paths ``sessions/`` and ``logs/``
+    to avoid sharing ``~/.omnigent-mdsmithaustin/chat.db``), else lives at
+    ``~/.omnigent-mdsmithaustin`` alongside the native paths ``sessions/`` and ``logs/``
     (see designs/RUN_OMNIGENT_SESSION_RESUMPTION.md). Created on first access;
     subsequent calls are idempotent.
 
@@ -3596,7 +3596,7 @@ def _start_local_server(
     Launch a local Omnigent server.
 
     Server stdout/stderr are routed to ``server.log`` in a
-    per-run directory under ``~/.omnigent/logs`` so concurrent Omnigent sessions don't
+    per-run directory under ``~/.omnigent-mdsmithaustin/logs`` so concurrent Omnigent sessions don't
     interleave. The log path is returned to the caller (via
     :class:`LocalServer`) so :func:`_raise_server_failed`
     can surface it in its error message — critical because
@@ -3605,7 +3605,7 @@ def _start_local_server(
     403s, missing binaries, credential resolution mismatches).
 
     The data store (SQLite DB + artifacts) lives at
-    ``~/.omnigent/{chat.db,artifacts/}`` by default —
+    ``~/.omnigent-mdsmithaustin/{chat.db,artifacts/}`` by default —
     persistent across runs so ``--continue`` / ``--resume``
     can resume prior conversations
     (designs/RUN_OMNIGENT_SESSION_RESUMPTION.md). Pass
@@ -3617,7 +3617,7 @@ def _start_local_server(
     :param port: Port the server will listen on, e.g. ``8900``.
     :param ephemeral: When ``True``, place the SQLite DB and
         artifacts in a fresh tmpdir instead of the persistent
-        ``~/.omnigent`` location. Used for ``--no-session``
+        ``~/.omnigent-mdsmithaustin`` location. Used for ``--no-session``
         runs and for tests that want isolation between
         invocations.
     :returns: The server handle bundling the subprocess and
@@ -3979,7 +3979,7 @@ def _run_repl(
         entering the REPL. The REPL opens attached to the fork.
         Resolved upstream from ``--fork ID``.
     :param log: When ``True``, write a JSON dump of the active
-        conversation to ``~/.omnigent/logs/`` on REPL exit.
+        conversation to ``~/.omnigent-mdsmithaustin/logs/`` on REPL exit.
         Maps to ``--log`` on the CLI.
     :param agent_yaml: Path to the agent spec on the local
         filesystem, when known. Threaded through to the tmux
@@ -4006,11 +4006,11 @@ def _run_repl(
         Maps to ``--debug-events`` on the CLI.
     :param server_log_path: Path to the local server's
         stdout/stderr log file, e.g.
-        ``Path("~/.omnigent/logs/server/server-abc123.log")``. Shown in the
+        ``Path("~/.omnigent-mdsmithaustin/logs/server/server-abc123.log")``. Shown in the
         Ctrl+O debug overview. ``None`` for remote servers.
     :param runner_log_path: Path to the local runner's
         stdout/stderr log file, e.g.
-        ``Path("~/.omnigent/logs/runner/runner-abc123.log")``. Shown in the
+        ``Path("~/.omnigent-mdsmithaustin/logs/runner/runner-abc123.log")``. Shown in the
         Ctrl+O debug overview. ``None`` when no local runner is used.
     :param resume_parts: Pre-built argument list prefix for the
         resume command shown on exit, e.g.

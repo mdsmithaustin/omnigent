@@ -241,11 +241,11 @@ Unlike `omnidev`, it does not isolate state or allocate ports. These commands
 assume the default ports are free:
 
 ```bash
-# Terminal 1: local server on :6767
+# Terminal 1: local server on preferred port :6768
 uv run omnigent server
 
 # Terminal 2: register your machine as a host
-uv run omnigent host --server http://localhost:6767
+uv run omnigent host --server http://localhost:6768
 
 # Terminal 3: frontend dev server
 cd web
@@ -259,7 +259,7 @@ is read/continue-only.
 
 `omni` is an alias for `omnigent`, so `omni host --server ...` works too.
 The host URL can also be passed positionally (`omnigent host
-http://localhost:6767`). See the [README](README.md) for more on hosts,
+http://localhost:6768`). See the [README](README.md) for more on hosts,
 harnesses, and credentials.
 
 ### Disposable backend-only validation
@@ -291,7 +291,7 @@ Notes:
 - **Fully isolated, disposable:** every artifact -- the toolchain and project
   venvs, config, data, the SQLite database, artifacts, logs, and `pip`/`uv`
   caches -- lives under one `mktemp -d` runtime directory removed on exit, so
-  the run never touches your real `~/.omnigent`, `~/.config` / `~/Library`, or
+  the run never touches your real `~/.omnigent-mdsmithaustin`, `~/.omnigent`, `~/.config` / `~/Library`, or
   package caches. `HOME` is the primary isolation lever (it redirects
   `~/.config` on Linux and `~/Library` on macOS); the explicit `UV_*` / `PIP_*`
   / `OMNIGENT_*` overrides pin the toolchain and app state regardless of OS,

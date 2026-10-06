@@ -52,7 +52,7 @@ _SETTLE_STABLE_POLLS = 3
 
 
 def bridge_dir_for_session_id(session_id: str) -> Path:
-    """Return the per-session bridge dir, e.g. ``/tmp/omnigent-<uid>/goose-native/<hash>``."""
+    """Return the per-session bridge dir, e.g. ``/tmp/mdma-<uid>/goose-native/<hash>``."""
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest
 

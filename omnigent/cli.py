@@ -687,14 +687,14 @@ def _display_path(path: Path) -> str:
 
     A path under the user's home directory is shown as ``~/...`` for
     readability; anything else is shown as its plain string. Unlike a
-    hardcoded ``~/.omnigent/...`` literal, this reflects the *actual*
+    hardcoded ``~/.omnigent-mdsmithaustin/...`` literal, this reflects the *actual*
     effective path — so a state dir outside ``$HOME`` (an
     ``OMNIGENT_CONFIG_HOME`` / ``OMNIGENT_DATA_DIR`` override) renders as
     its real location rather than a misleading ``~``.
 
     :param path: The path to display, e.g.
-        ``Path("/Users/alice/.omnigent/logs/server/server-ab12.log")``.
-    :returns: ``"~/.omnigent/..."`` when *path* is under ``$HOME``,
+        ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/server/server-ab12.log")``.
+    :returns: ``"~/.omnigent-mdsmithaustin/..."`` when *path* is under ``$HOME``,
         otherwise ``str(path)``.
     """
     try:
@@ -712,8 +712,8 @@ def _display_config_path(path: Path) -> str:
     where the path is specifically the effective config file.
 
     :param path: The config path to display, e.g.
-        ``Path("/Users/alice/.omnigent/config.yaml")``.
-    :returns: ``"~/.omnigent/config.yaml"`` when *path* is under
+        ``Path("/Users/alice/.omnigent-mdsmithaustin/config.yaml")``.
+    :returns: ``"~/.omnigent-mdsmithaustin/config.yaml"`` when *path* is under
         ``$HOME``, otherwise ``str(path)``.
     """
     return _display_path(path)
@@ -721,7 +721,7 @@ def _display_config_path(path: Path) -> str:
 
 def _load_global_config() -> dict[str, Any]:  # type: ignore[explicit-any]
     """
-    Load the global omnigent config from ``~/.omnigent/config.yaml``.
+    Load the global omnigent config from ``~/.omnigent-mdsmithaustin/config.yaml``.
 
     Returns an empty dict when the file does not exist or is empty.
     Top-level default keys (``default_agent``, ``server``,
@@ -742,7 +742,7 @@ def _load_global_config() -> dict[str, Any]:  # type: ignore[explicit-any]
 
 def _load_local_config() -> dict[str, Any]:  # type: ignore[explicit-any]
     """
-    Load the project-level config from ``.omnigent/config.yaml`` in cwd.
+    Load the project-level config from ``.omnigent-mdsmithaustin/config.yaml`` in cwd.
 
     Returns an empty dict when the file does not exist or is empty.
 
@@ -755,8 +755,8 @@ def _load_effective_config() -> dict[str, Any]:  # type: ignore[explicit-any]
     """
     Merge global and project-level config.
 
-    Precedence (highest last): global (``~/.omnigent/config.yaml``)
-    → local (``.omnigent/config.yaml`` in cwd).  Project config
+    Precedence (highest last): global (``~/.omnigent-mdsmithaustin/config.yaml``)
+    → local (``.omnigent-mdsmithaustin/config.yaml`` in cwd).  Project config
     always wins so per-repo settings override user defaults.
 
     The ``harness`` mapping is deep-merged (per-harness sub-keys, local
@@ -1062,10 +1062,10 @@ def _save_global_config(  # type: ignore[explicit-any]
     deep_merge_keys: tuple[str, ...] = (),
 ) -> None:
     """
-    Merge *settings* into ``~/.omnigent/config.yaml`` and remove any
+    Merge *settings* into ``~/.omnigent-mdsmithaustin/config.yaml`` and remove any
     keys listed in *unset_keys*.
 
-    Creates the ``~/.omnigent/`` directory if it does not exist.
+    Creates the ``~/.omnigent-mdsmithaustin/`` directory if it does not exist.
     Values may be plain strings, booleans, or nested mappings (the
     ``auth:`` block written by ``omnigent setup``, or a ``providers:``
     block written by ``omnigent setup --no-internal-beta``).
@@ -1115,7 +1115,7 @@ def _materialize_bundled_example(name: str) -> Path:
 
     ``uv tool install`` installs package files, not the repository checkout, so the
     top-level ``examples/<name>`` paths are not available to users. Materialize a
-    user-editable copy under ``~/.omnigent/agents`` and never overwrite an
+    user-editable copy under ``~/.omnigent-mdsmithaustin/agents`` and never overwrite an
     existing file so local edits survive reinstalls and reruns.
 
     :param name: Filename of the bundled example (e.g.
@@ -1162,7 +1162,7 @@ def _save_local_config(
     deep_merge_keys: tuple[str, ...] = (),
 ) -> None:
     """
-    Merge *settings* into ``.omnigent/config.yaml`` in cwd and remove
+    Merge *settings* into ``.omnigent-mdsmithaustin/config.yaml`` in cwd and remove
     any keys listed in *unset_keys*.
 
     Creates the ``.omnigent/`` directory if it does not exist. Mirrors
@@ -1203,13 +1203,13 @@ def _default_db_uri() -> str:
 
     Resolves to the same path the ``omnigent run`` daemon spawns its
     local server against (``_local_data_dir()``, honoring
-    ``OMNIGENT_DATA_DIR`` → else ``~/.omnigent``). Pinning ``server``
+    ``OMNIGENT_DATA_DIR`` → else ``~/.omnigent-mdsmithaustin``). Pinning ``server``
     to the same DB as ``run`` means there is **one local DB — and so one
     accounts admin — per machine**, instead of a fresh CWD-relative
     ``omnigent.db`` (and a fresh admin) for every directory you launch
     from. ``--database-uri`` / the config file still override.
 
-    :returns: e.g. ``"sqlite:////home/alice/.omnigent/chat.db"``.
+    :returns: e.g. ``"sqlite:////home/alice/.omnigent-mdsmithaustin/chat.db"``.
     """
     from omnigent.host.local_server import _local_data_dir
 
@@ -1225,7 +1225,7 @@ def _default_artifact_location() -> str:
     conversation created by one would reference files the other can't
     resolve. ``--artifact-location`` / the config file still override.
 
-    :returns: e.g. ``"/home/alice/.omnigent/artifacts"``.
+    :returns: e.g. ``"/home/alice/.omnigent-mdsmithaustin/artifacts"``.
     """
     from omnigent.host.local_server import _local_data_dir
 
@@ -1271,7 +1271,7 @@ def _ensure_sqlite_parent_dir(db_uri: str) -> None:
     No-op for non-SQLite URIs (Postgres etc.) and for in-memory SQLite.
 
     :param db_uri: The resolved store DB URI, e.g.
-        ``"sqlite:////home/alice/.omnigent/chat.db"`` or
+        ``"sqlite:////home/alice/.omnigent-mdsmithaustin/chat.db"`` or
         ``"postgresql://host/db"``.
     :returns: None.
     """
@@ -2287,7 +2287,7 @@ def main() -> None:
         raise SystemExit(2)
 
     # Always-on diagnostics — captures exceptions, lifecycle events,
-    # and warnings to ~/.omnigent/logs/cli/cli-*.log even when --log
+    # and warnings to ~/.omnigent-mdsmithaustin/logs/cli/cli-*.log even when --log
     # (conversation JSON) and --debug-events (SSE tape) are off.
     # Skip for pure help/version so quick invocations don't create
     # log litter.
@@ -2689,7 +2689,7 @@ def _daemon_registry_dir() -> Path:
     the pidfile's parent instead of capturing ``Path.home()`` separately.
 
     :returns: Registry directory path, e.g.
-        ``Path("~/.omnigent/daemons")``.
+        ``Path("~/.omnigent-mdsmithaustin/daemons")``.
     """
     return _daemon_registry_dir_for(_HOST_PID_PATH.parent)
 
@@ -2756,7 +2756,7 @@ def _read_daemon_record(path: Path) -> _HostDaemonRecord | None:
     Read a daemon registry record from disk.
 
     :param path: JSON file path to read, e.g.
-        ``Path("~/.omnigent/daemons/abc.json")``.
+        ``Path("~/.omnigent-mdsmithaustin/daemons/abc.json")``.
     :returns: Parsed daemon record, or ``None`` if unreadable or malformed.
     """
     try:
@@ -2926,7 +2926,7 @@ def _daemon_host_identity_changed(record: _HostDaemonRecord) -> bool:
     """
     Return whether a daemon record belongs to a different current host id.
 
-    A live daemon can outlast edits to ``~/.omnigent/config.yaml``. Reusing
+    A live daemon can outlast edits to ``~/.omnigent-mdsmithaustin/config.yaml``. Reusing
     that process leaves commands polling for the new host id while the daemon
     is still connected as the old host id, which can never succeed.
 
@@ -3896,7 +3896,7 @@ def _start_cli_runner_process(
         don't paint onto the REPL terminal.
     :param log_dir: Optional base log directory to use when
         ``capture_logs`` is true. Defaults to the shared
-        ``~/.omnigent/logs`` location; tests should pass a
+        ``~/.omnigent-mdsmithaustin/logs`` location; tests should pass a
         temporary directory to avoid writing to the developer's
         real home.
     :param prewarm_spec_path: Optional YAML path; the runner registers
@@ -4151,7 +4151,7 @@ def _assert_server_port_bindable(host: str, port: int) -> None:
     default=False,
     help=(
         "Spawn the server as a detached background process (the managed "
-        "local server recorded in ~/.omnigent/local_server.pid) instead of "
+        "local server recorded in ~/.omnigent-mdsmithaustin/local_server.pid) instead of "
         "running it in the foreground. Reuses a healthy background server if "
         "one is already up; otherwise spawns a detached one on a free "
         "loopback port and prints its URL."
@@ -4269,11 +4269,11 @@ def server(
     # Unified local-server lifecycle — applies ONLY to a *bare* loopback
     # `omnigent server` (default port + default DB + artifacts), i.e.
     # THE canonical machine-global local server recorded in
-    # ~/.omnigent/local_server.pid:
+    # ~/.omnigent-mdsmithaustin/local_server.pid:
     #   - If a healthy one is already running (started here OR spawned by
     #     the `run`/`host` daemon), reuse it — print its URL and exit
     #     instead of starting a competing second server on the shared DB.
-    #   - Otherwise prefer the requested port (default 6767), falling back
+    #   - Otherwise prefer the requested port (default 6768), falling back
     #     to a free one if taken, and register ourselves in the pidfile so
     #     the daemon reuses THIS server. (See host/local_server.py.)
     #
@@ -4696,7 +4696,7 @@ def _stop_local_server_and_daemon(*, force: bool) -> bool:
     Stops the local-mode host daemon first (the daemon spawns its server
     once and never respawns it, so leaving it alive would only have it
     reconnect-flap against a dead server), then the detached Omnigent server
-    recorded in ``~/.omnigent/local_server.pid``. Best-effort and
+    recorded in ``~/.omnigent-mdsmithaustin/local_server.pid``. Best-effort and
     idempotent — a missing daemon or server is a no-op.
 
     :param force: SIGKILL the daemon after the grace period if it does not
@@ -4771,7 +4771,7 @@ def server_stop(force: bool) -> None:
     """Stop the background Omnigent server and the local host daemon.
 
     Stops the local host daemon first, then the detached server recorded
-    in ``~/.omnigent/local_server.pid`` — its web UI and sessions become
+    in ``~/.omnigent-mdsmithaustin/local_server.pid`` — its web UI and sessions become
     unreachable. To stop hosting but KEEP the server up, use
     ``omnigent host stop``; to stop everything, use ``omnigent stop``.
 
@@ -4791,7 +4791,7 @@ def server_status(json_output: bool) -> None:
     """Show whether the background Omnigent server is running.
 
     Reports the recorded pid/port, URL, live-session count, and whether a
-    local host daemon is attached. Reads ``~/.omnigent/local_server.pid``
+    local host daemon is attached. Reads ``~/.omnigent-mdsmithaustin/local_server.pid``
     and probes ``/health``.
 
     :param json_output: Emit machine-readable JSON instead of text.
@@ -7221,7 +7221,7 @@ def _run_smart_routing_removed() -> str:
 
 
 _FORK_HELP = "Fork an existing session by id and open the REPL on the fork."
-_LOG_HELP = "Write a JSON dump of the conversation to ~/.omnigent/logs/ on exit."
+_LOG_HELP = "Write a JSON dump of the conversation to ~/.omnigent-mdsmithaustin/logs/ on exit."
 
 
 _DEFAULT_HARNESS_PROMPTS = {
@@ -8257,7 +8257,7 @@ def _require_live_conversation(
     default=False,
     help=(
         "Enable the SSE-to-UI debug pipeline: Ctrl+E event tape "
-        "overlay, JSONL event log (~/.omnigent/debug/), and "
+        "overlay, JSONL event log (~/.omnigent-mdsmithaustin/debug/), and "
         "pipeline stage counters in the toolbar."
     ),
 )
@@ -8393,7 +8393,7 @@ def attach(
     default=False,
     help=(
         "Enable the SSE-to-UI debug pipeline: Ctrl+E event tape "
-        "overlay, JSONL event log (~/.omnigent/debug/), and "
+        "overlay, JSONL event log (~/.omnigent-mdsmithaustin/debug/), and "
         "pipeline stage counters in the toolbar."
     ),
 )
@@ -10815,8 +10815,8 @@ def _print_config_default_rows(
 def _print_config_defaults() -> None:
     """Print the effective CLI defaults (user + project-level).
 
-    The ``KEY=VALUE`` defaults from ``~/.omnigent/config.yaml`` (user) and
-    ``.omnigent/config.yaml`` in the cwd (project, takes precedence).
+    The ``KEY=VALUE`` defaults from ``~/.omnigent-mdsmithaustin/config.yaml`` (user) and
+    ``.omnigent-mdsmithaustin/config.yaml`` in the cwd (project, takes precedence).
     Used by ``omnigent config list``.
 
     :returns: None. Side effect: writes to stdout.
@@ -10844,8 +10844,8 @@ def _print_config_defaults() -> None:
         )
         return
     # When the cwd IS the home directory, the project-level path
-    # (``cwd/.omnigent/config.yaml``) resolves to the SAME file as the
-    # user-level path (``~/.omnigent/config.yaml``). Dedup on the resolved
+    # (``cwd/.omnigent-mdsmithaustin/config.yaml``) resolves to the SAME file as the
+    # user-level path (``~/.omnigent-mdsmithaustin/config.yaml``). Dedup on the resolved
     # absolute path so the one file is shown once, not twice under two
     # spellings. ``resolve()`` collapses ``~`` and symlinks for the compare.
     if global_cfg:
@@ -11113,8 +11113,8 @@ def config_grp() -> None:
 
     Defaults (auto_open_conversation, default_agent, harness, model,
     server) are used by ``omnigent run``. Project-level config
-    (``.omnigent/config.yaml`` in the cwd, like ``.git/config``) overrides
-    user-level config (``~/.omnigent/config.yaml``, like ``~/.gitconfig``).
+    (``.omnigent-mdsmithaustin/config.yaml`` in the cwd, like ``.git/config``) overrides
+    user-level config (``~/.omnigent-mdsmithaustin/config.yaml``, like ``~/.gitconfig``).
 
     \b
     Subcommands:
@@ -11147,23 +11147,26 @@ def config_list() -> None:
     "is_global",
     is_flag=True,
     default=False,
-    help="Write to ~/.omnigent/config.yaml (user-level) instead of the project config.",
+    help=(
+        "Write to ~/.omnigent-mdsmithaustin/config.yaml (user-level) "
+        "instead of the project config."
+    ),
 )
 @click.argument("settings", nargs=-1, required=True, metavar="KEY=VALUE...")
 def config_set(is_global: bool, settings: tuple[str, ...]) -> None:
     """Set one or more Omnigent defaults.
 
-    Without ``--global``, pairs are written to ``.omnigent/config.yaml``
+    Without ``--global``, pairs are written to ``.omnigent-mdsmithaustin/config.yaml``
     in the current directory (project-level, like ``.git/config``); with
-    ``--global`` to ``~/.omnigent/config.yaml`` (user-level, like
+    ``--global`` to ``~/.omnigent-mdsmithaustin/config.yaml`` (user-level, like
     ``~/.gitconfig``). Project values take precedence.
 
     Supported keys: auto_open_conversation, default_agent, harness,
     model, server, session_title_instructions. Session title instructions
     configure the shared local server and require ``--global``.
 
-    :param is_global: When ``True``, write to ``~/.omnigent/config.yaml``;
-        when ``False``, to ``.omnigent/config.yaml`` in cwd.
+    :param is_global: When ``True``, write to ``~/.omnigent-mdsmithaustin/config.yaml``;
+        when ``False``, to ``.omnigent-mdsmithaustin/config.yaml`` in cwd.
     :param settings: ``KEY=VALUE`` pairs to set, e.g.
         ``("default_agent=examples/hello.yaml", "model=gpt-5.4-mini")``.
 
@@ -11190,14 +11193,17 @@ def config_set(is_global: bool, settings: tuple[str, ...]) -> None:
     "is_global",
     is_flag=True,
     default=False,
-    help="Remove from ~/.omnigent/config.yaml (user-level) instead of the project config.",
+    help=(
+        "Remove from ~/.omnigent-mdsmithaustin/config.yaml (user-level) "
+        "instead of the project config."
+    ),
 )
 @click.argument("keys", nargs=-1, required=True, metavar="KEY...")
 def config_unset(is_global: bool, keys: tuple[str, ...]) -> None:
     """Remove one or more Omnigent defaults.
 
-    :param is_global: When ``True``, remove from ``~/.omnigent/config.yaml``;
-        when ``False``, from ``.omnigent/config.yaml`` in cwd.
+    :param is_global: When ``True``, remove from ``~/.omnigent-mdsmithaustin/config.yaml``;
+        when ``False``, from ``.omnigent-mdsmithaustin/config.yaml`` in cwd.
     :param keys: Keys to remove, e.g. ``("server", "model")``.
     """
     validated = _validate_unset_keys(keys)
@@ -11584,7 +11590,7 @@ def debug_logs(
     output to all log files produced for a specific session across relaunches.
 
     \b
-    Log locations (relative to ~/.omnigent or $OMNIGENT_DATA_DIR):
+    Log locations (relative to ~/.omnigent-mdsmithaustin or $OMNIGENT_DATA_DIR):
       runner       logs/runner/runner-*.log
       host         logs/host/host-*.log
       server       logs/server/server-*.log
@@ -12226,7 +12232,7 @@ def _databricks_login(server: str, workspace_host: str, org_id: str | None = Non
     verification (e.g. a stale token-cache entry minted for a
     different workspace) triggers one fresh browser login and a
     re-verify before failing loud. On success, a pointer record is
-    stored in ``~/.omnigent/auth_tokens.json`` — no profile name is
+    stored in ``~/.omnigent-mdsmithaustin/auth_tokens.json`` — no profile name is
     created or consulted anywhere.
 
     :param server: The server URL, e.g.
@@ -12524,7 +12530,7 @@ def login(server_url: str) -> None:
     \b
     - accounts mode: prompts for username + password (no browser
       needed), POSTs ``/auth/login``, stores the session JWT in
-      ``~/.omnigent/auth_tokens.json`` keyed by server URL.
+      ``~/.omnigent-mdsmithaustin/auth_tokens.json`` keyed by server URL.
     - OIDC mode: opens the browser, polls the CLI ticket endpoint,
       stores the session JWT when the browser flow completes.
     - header mode: no login needed (proxy injects identity); we
@@ -12539,7 +12545,7 @@ def login(server_url: str) -> None:
     Subsequent ``omnigent run --server <url>`` commands then
     use the stored token via the runner / host-tunnel auth chain. A
     successful login also records the server as the user-level default
-    (the ``server`` key in ``~/.omnigent/config.yaml``), so a bare
+    (the ``server`` key in ``~/.omnigent-mdsmithaustin/config.yaml``), so a bare
     ``omnigent`` afterwards targets it instead of whatever default
     ``setup`` baked in.
 
@@ -12758,7 +12764,7 @@ def _accounts_login(server: str) -> None:
     - 5xx → "server error".
 
     On success, the session JWT goes to
-    ``~/.omnigent/auth_tokens.json`` via the existing
+    ``~/.omnigent-mdsmithaustin/auth_tokens.json`` via the existing
     :func:`omnigent.cli_auth.store_token`. From there both
     ``omnigent run`` and ``omnigent host`` pick it up
     automatically when they call ``--server <url>``.

@@ -102,7 +102,7 @@ verify-env run -- python -m pytest <test> --ui-skip-build --video=on \
 
 **Launch settings (own environment):** enable `harness_settings_ui`, connect a
 host with Claude/Codex configured, and put a command and two args under
-`harness.claude-native` / `harness.codex-native` in its `~/.omnigent/config.yaml`.
+`harness.claude-native` / `harness.codex-native` in its `~/.omnigent-mdsmithaustin/config.yaml`.
 Open each harness through both its gear and card → Settings. Check the binary,
 source, count of two (no values), and credential. Select a second host on the
 grid and repeat. An older host shows an update message; an older server hides

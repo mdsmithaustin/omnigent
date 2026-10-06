@@ -1748,7 +1748,7 @@ class CodexNativeAppServer:
         session config before app-server startup.
     :param cwd: Working directory for the app-server process.
     :param bridge_dir: Native Codex bridge directory, e.g.
-        ``Path("~/.omnigent/codex-native/<hash>")``. The policy hook
+        ``Path("~/.omnigent-mdsmithaustin/codex-native/<hash>")``. The policy hook
         subprocess is pointed at it via ``--bridge-dir`` and reads the
         session id + Omnigent coordinates from it.
     :param ap_server_url: Omnigent server base URL the policy hook POSTs tool
@@ -2396,7 +2396,7 @@ def _codex_policy_hook_command(bridge_dir: Path, python_executable: str | None) 
         ``"/path/to/python"``. ``None`` uses :data:`sys.executable`.
     :returns: A shell-escaped command string, e.g.
         ``"/path/python -I -m omnigent.harnesses.codex_native.hook evaluate-policy
-        --bridge-dir /home/u/.omnigent/codex-native/abc"``.
+        --bridge-dir /home/u/.omnigent-mdsmithaustin/codex-native/abc"``.
     """
     python = python_executable or sys.executable
     return shlex.join(
@@ -3986,7 +3986,7 @@ def client_for_transport(
 
     :param transport: App-server transport from bridge state, e.g.
         ``"ws://127.0.0.1:9876"`` or
-        ``"/home/u/.omnigent/codex-native/x/app-server.sock"``.
+        ``"/home/u/.omnigent-mdsmithaustin/codex-native/x/app-server.sock"``.
     :param client_name: App-server initialize-handshake client name,
         e.g. ``"omnigent-codex-native"``.
     :returns: A client configured for the transport (not yet connected).
@@ -4512,7 +4512,7 @@ def build_codex_remote_args(
         resuming an existing one. On Codex 0.154+, omit terminal permission
         args; app-server startup and preload still configure the thread.
     :param remote_url: App-server endpoint the TUI attaches to, e.g.
-        ``"unix:///home/user/.omnigent/codex-native/x/app-server.sock"``
+        ``"unix:///home/user/.omnigent-mdsmithaustin/codex-native/x/app-server.sock"``
         or ``"ws://127.0.0.1:9876"``.
     :param config_overrides: Codex ``-c`` config override values to apply
         to the TUI, e.g.

@@ -1,19 +1,21 @@
 # Runtime data directory layout
 
-Omnigent keeps all machine-local state in a single **runtime data directory**,
-`~/.omnigent` by default. This is where the runtime database, logs,
-credentials, per-harness session state, and process registries live.
+The fork's runtime data directory defaults to `~/.omnigent-mdsmithaustin`.
+It holds the runtime database, logs, artifacts, and process records. Some
+configuration and native state owners use independent HOME-based defaults or
+temporary directories, described below. See [local fork defaults](FORK_DEFAULTS.md)
+for coexistence and migration limits.
 
 The root is resolved by `data_dir()` in `omnigent/process_logging.py`:
 
 ```python
-def data_dir() -> Path:
-    value = os.environ.get("OMNIGENT_DATA_DIR")
-    return Path(value).expanduser() if value else Path.home() / ".omnigent"
+from omnigent.process_logging import data_dir
+
+print(data_dir())
 ```
 
-Set `OMNIGENT_DATA_DIR` to relocate the whole tree — tests and sandboxed runs
-use this so they never touch your real `~/.omnigent`. Config resolution is
+Set `OMNIGENT_DATA_DIR` to relocate the runtime tree. Tests and sandboxed runs
+use this to isolate runtime data from `~/.omnigent-mdsmithaustin`. Config resolution is
 separate: `OMNIGENT_CONFIG_HOME` overrides where `config.yaml` is read from
 (see `omnigent/config.py`).
 
@@ -22,23 +24,23 @@ Two related resolvers exist for narrower scopes:
 - The server resolves its operator-editable state via
   `resolve_data_dir()` in `omnigent/server/admin_list.py`. It honors
   `OMNIGENT_ADMIN_CREDENTIALS_PATH` (its parent dir anchors the data dir on a
-  mounted volume) and otherwise falls back to `~/.omnigent`.
+  mounted volume) and otherwise falls back to `~/.omnigent-mdsmithaustin`.
 - CLI and local-server flows resolve their data dir via `_local_data_dir()` in
   `omnigent/host/local_server.py` (imported by `omnigent/cli.py`), which also
-  honors `OMNIGENT_DATA_DIR`, else `~/.omnigent`. Two worktrees still share
-  `~/.omnigent/chat.db` unless each sets `OMNIGENT_DATA_DIR` — that env var is
-  the knob for isolating a worktree's runtime DB; there is no automatic split.
+  honors `OMNIGENT_DATA_DIR`, else `~/.omnigent-mdsmithaustin`. Two fork worktrees
+  still share `~/.omnigent-mdsmithaustin/chat.db` unless each sets a different
+  `OMNIGENT_DATA_DIR`. Upstream defaults use a separate `~/.omnigent` tree.
 
 Most paths below move with `OMNIGENT_DATA_DIR`. A handful, marked **†**, are
-pinned to `~/.omnigent` regardless — they resolve `Path.home() / ".omnigent"`
-directly instead of going through `data_dir()`.
+independent of `OMNIGENT_DATA_DIR`. They use the fork HOME default rather than
+`data_dir()` and may have their own explicit selectors.
 
 ## Top-level files
 
 | Path | Purpose | Defined in |
 |------|---------|------------|
 | `config.yaml` | User-level config: harness auth references, settings. Overridable with `OMNIGENT_CONFIG_HOME`. | `omnigent/config.py` |
-| `chat.db` (+ `-shm`, `-wal`) | Main SQLite runtime DB — conversations, sessions, messages. Machine-global unless a project-local `.omnigent/` is used. | `omnigent/cli.py`, `omnigent/host/local_server.py` |
+| `chat.db` (+ `-shm`, `-wal`) | Main SQLite runtime DB for conversations, sessions, and messages. Project configuration does not relocate it. | `omnigent/cli.py`, `omnigent/host/local_server.py` |
 | `auth_tokens.json` / `auth_tokens.lock` | Per-server OIDC/session tokens keyed by server URL, written with user-only permissions, plus its lock file (`.json` is replaced by `.lock`, so it is `auth_tokens.lock`, not `auth_tokens.json.lock`). | `omnigent/cli_auth.py` |
 | `local_server.pid` / `local_server.sig` | Recorded pid/port and signature of the running local server. | `omnigent/host/local_server.py` |
 | `host.pid` | Recorded pid of the local host process. | `omnigent/cli.py` |
@@ -55,7 +57,7 @@ directly instead of going through `data_dir()`.
 | `logs/` | Process logs split by role: `cli/`, `host/`, `runner/`, `server/`. | `logs_root()` / `process_log_dir()` in `omnigent/process_logging.py` |
 | `artifacts/` | Stored artifacts, one directory per artifact ID; paired with `chat.db`. | `omnigent/chat.py`, `omnigent/host/local_server.py` |
 | `attachments/` | Native harness attachment copies, grouped by an opaque session cache key. The original uploads remain in the server's configured artifact store. | `attachment_cache_dir()` in `omnigent/inner/native_attachments.py` |
-| `runners/` | Runner identity: `runner_id` (stable per-machine id), created by `identity.py`. Also holds per-runner workspace subdirs — `runner_<id>/` and, for token-bound remote `run --server` runners, `runner_token_<hash>/` — each with a `pending-tokens/` dir; those are created by the host/runner launch path, not `identity.py`. | `omnigent/runner/identity.py` (`runner_id`) |
+| `runners/` | Stable runner ID at the fork HOME default, independent of `OMNIGENT_DATA_DIR`. Workspace and pending-token subdirectories follow their launch owners. | `omnigent/runner/identity.py` (`runner_id`) |
 | `daemons/` | Daemon lifecycle registry, one JSON record per target. | `daemon_registry_dir()` in `omnigent/host/daemon_lifecycle.py` |
 | `crashes/` | Crash reports, `crash-<timestamp>.md`. | `omnigent/crash_handler.py` |
 | `cache/` | Derived caches: `model-catalogs/` (per-harness model lists) and `codex-model-probe/` **†**. | `omnigent/models/model_catalog_store.py`, `omnigent/harnesses/codex_native/app_server.py` |
@@ -102,7 +104,7 @@ badge.
 The server keeps the original upload in its configured artifact store and a
 session-owned file record referenced by `file_id`. The runner materializes
 files needed by native harnesses under
-`~/.omnigent/attachments/<session-key>/<filename>`, or
+`~/.omnigent-mdsmithaustin/attachments/<session-key>/<filename>`, or
 `$OMNIGENT_DATA_DIR/attachments/<session-key>/<filename>` when overridden. This
 path is on the execution host, which may differ from the server or browser's
 machine. The harness receives an absolute path. Attaching a file adds no file,
@@ -131,12 +133,13 @@ for filename-based limits and their scope.
 `prime-native/` holds private Prime configuration, temporary daemon state,
 and saved sessions for each conversation. It honors `OMNIGENT_DATA_DIR`.
 Long Unix socket paths use a private directory under
-`/tmp/ogp-<uid>/` instead. See [Prime Native](PRIME_NATIVE.md).
+`/tmp/mdp-<uid>/` instead. See [Prime Native](PRIME_NATIVE.md).
 
-Some native (TUI) harnesses keep resumable session state under `~/.omnigent`:
+Some native harnesses keep resumable launch state under `~/.omnigent-mdsmithaustin`:
 `claude-native/`, `codex-native/`, `opencode-native/` (all via `data_dir()`),
 and `pi-native/` **†** and `antigravity-native/` **†** (pinned to
-`~/.omnigent`).
+`~/.omnigent-mdsmithaustin`). Persistent Codex, Pi, OpenCode, and Antigravity
+bridge roots also use the fork HOME default independently of `OMNIGENT_DATA_DIR`.
 
 Within each, session state lives in a subdirectory named by a digest of the
 conversation id (a leading `conv_` is normalized before hashing, and a legacy
@@ -151,7 +154,7 @@ prefixed digest is used when one is already present), holding e.g.
 
 Not every native harness lives here: `qwen-native`, `hermes-native`, and
 `cursor-native` root their per-session bridge dirs in the system temp
-directory (`$TMPDIR/omnigent-<uid>/<harness>-native/`), so they are outside the
+directory (`$TMPDIR/mdma-<uid>/<harness>-native/`), so they are outside the
 data dir. See e.g. `omnigent/harnesses/qwen_native/bridge.py`.
 
 ## Notes
@@ -159,9 +162,9 @@ data dir. See e.g. `omnigent/harnesses/qwen_native/bridge.py`.
 - The canonical source of truth is the code, not this document. Start at
   `data_dir()` in `omnigent/process_logging.py` and follow its callers; each
   subsystem documents its own path in a docstring.
-- An existing `~/.omnigent` may also contain files this document doesn't list:
+- An existing runtime directory may also contain files this document doesn't list:
   backups you created by hand (e.g. `chat.db.bak*`, `chat1.db`) and leftovers
   from older versions (e.g. `server.yaml`, `node-ca-bundle.pem`) that the
   current code no longer writes.
-- To remove this state, `omnigent uninstall --purge` handles the tree; see
-  `docs/UNINSTALL_DESIGN.md`.
+- The bundled global uninstaller is outside the certified isolated-venv profile.
+  See [fork maintenance limits](FORK_DEFAULTS.md#existing-state-and-maintenance).

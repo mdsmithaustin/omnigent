@@ -8,7 +8,7 @@ the shared Omnigent server. Mirrors :mod:`omnigent.harnesses.codex_native.state`
 
 Layout (per conversation):
 
-    ~/.omnigent/opencode-native/<sha256(conv_id)[:32]>/launch.json
+    ~/.omnigent-mdsmithaustin/opencode-native/<sha256(conv_id)[:32]>/launch.json
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _opencode_native_state_root() -> Path:
 
     Honors :data:`_STATE_ROOT_ENV_VAR` for tests and advanced local setups.
     Otherwise follows ``OMNIGENT_DATA_DIR``, falling back to
-    ``~/.omnigent/opencode-native``.
+    ``~/.omnigent-mdsmithaustin/opencode-native``.
 
     :returns: Absolute path to the state root.
     """
