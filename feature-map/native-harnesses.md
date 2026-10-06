@@ -1,6 +1,6 @@
 # Native harnesses
 
-Omnigent runs twelve vendor coding CLIs as native harnesses. A user can start
+This fork runs thirteen coding CLIs as native harnesses, including Prime. A user can start
 each one from the web new-session picker or from the command line with
 `omnigent <name>`, then chat with it in Omnigent while its own terminal runs
 alongside. The harnesses share one set of user journeys (launch, sign-in state,
@@ -81,6 +81,7 @@ columns name one journey test per harness; "—" means none exists yet.
 | `kiro-native` | `omnigent kiro` | no | tests/e2e_ui/messages/test_native_kiro_render_parity.py::test_native_kiro_message_render_parity | tests/e2e/test_kiro_native_cli_e2e.py::test_kiro_native_cli_smoke | — |
 | `opencode-native` | `omnigent opencode` | no | — | tests/e2e/test_opencode_native_startup_cancel_leak_e2e.py::test_opencode_native_startup_cancel_reaps_serve | — |
 | `pi-native` | `omnigent pi` | no | — | tests/e2e/test_pi_native_send_now_steer_e2e.py::test_pi_native_send_now_steers_into_active_turn | [pi-native-e2e-dev](../.claude/skills/pi-native-e2e-dev/SKILL.md) |
+| `prime-native` | `omnigent prime-native` | no | — | tests/e2e/test_prime_native_local_e2e.py::test_prime_native_terminal_and_http_messages | [verify-prime-native](../.agents/skills/verify-prime-native/SKILL.md) |
 | `qwen-native` | `omnigent qwen` | no | — | tests/e2e/test_qwen_native_subagent_wake_e2e.py::test_qwen_native_subagent_completion_wakes_parent | — |
 
 ## Driving it with the repro environment
@@ -105,6 +106,17 @@ grid and repeat. An older host shows an update message; an older server hides
 the extra fields. Resolver and raw-tunnel checks:
 `tests/host/test_harness_startup.py`,
 `tests/server/integration/test_host_tunnel_route.py::test_startup_http_through_real_tunnel`.
+
+**Prime (own environment):** follow the linked Prime verification skill from
+this checkout. Set `OMNIGENT_PRIME_PATH` to its qualified executable before
+running the listed E2E test. The helper creates a private server and drives
+both the native CLI terminal and the public HTTP message path. Require both
+literal replies, same-session reattachment, and no owned processes after
+cleanup. The shared mock environment does not configure Prime. Web launch,
+controls, resources, permissions, and uncertain launch cases use the Prime
+skill's feature recipes and adapter probe; the terminal/HTTP test alone does
+not prove those entry points. Record an absent binary or skipped test as an
+unverified prerequisite.
 
 Cross-harness journeys:
 
@@ -196,7 +208,7 @@ Cross-harness journeys:
 - A change to shared native-harness behavior (cleanup, idle handling,
   approvals, sign-in state, resume) must be checked on every harness it claims
   to cover. List the harnesses you actually drove; "all harnesses" means all
-  twelve rows above.
+  thirteen rows above.
 - Approval and permission callbacks come from several harnesses, not only
   Claude. Restricting a gate to one harness breaks the others' approvals.
 - Needing sign-in and not being installed are different states with different
