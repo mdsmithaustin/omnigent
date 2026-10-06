@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -40,6 +41,175 @@ def commit(root: Path, message: str) -> str:
 
 def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
+
+
+@pytest.mark.parametrize("job", ["python", "addons"])
+def test_parity_rows_reuse_canonical_bootstrap_and_opt_in(job):
+    checkout = SCRIPT.parent.parent
+    workflow = yaml.safe_load((checkout / ".github/workflows/fork-release.yml").read_bytes())
+    canonical = yaml.safe_load((checkout / ".github/workflows/ci.yml").read_bytes())
+    upstream = canonical["jobs"]["codex-parity"]["steps"]
+    steps = workflow["jobs"][job]["steps"]
+    for name in (
+        "Set up Rust toolchain",
+        "Capture Rust version",
+        "Cache parity sidecar binary",
+        "Install codex CLI",
+        "Cache virtualenv",
+        "Build parity sidecar",
+    ):
+        expected = next(step for step in upstream if step.get("name") == name)
+        actual = dict(next(step for step in steps if step.get("name") == name))
+        condition = actual.pop("if")
+        assert condition == "matrix.group == 'codex-parity'" + (
+            " && " + expected["if"] if "if" in expected else ""
+        )
+        assert actual == {key: value for key, value in expected.items() if key != "if"}
+    expected = next(step for step in upstream if step.get("name") == "Run codex parity tests")
+    actual = next(step for step in steps if step.get("name") == "Run codex parity tests")
+    assert actual["env"] == expected["env"]
+    assert actual["shell"] == expected["shell"]
+    assert actual["if"] == "matrix.group == 'codex-parity'"
+    command = actual["run"].split("env -u", 1)[1].split(" 2>&1 | tee", 1)[0]
+    command = command.replace("${{ matrix.paths }}", "tests/codex_parity/").replace(
+        '"$RUNNER_TEMP/fork-pytest/junit.xml"', "artifacts/pytest-codex-parity.xml"
+    )
+    assert command == expected["run"].split("env -u", 1)[1].rstrip()
+    ordinary = next(
+        step
+        for step in steps
+        if step.get("name") in {"Run canonical Python shard", "Run changed addon shard"}
+    )
+    assert ordinary["if"] == "matrix.group != 'codex-parity'"
+    guard = next(
+        step for step in steps if step.get("name") == "Require executed Codex parity tests"
+    )
+    identity = next(step for step in steps if step.get("id") == "identity")
+    assert guard["if"] == "matrix.group == 'codex-parity'"
+    assert steps.index(actual) < steps.index(guard) < steps.index(identity)
+    assert workflow["jobs"]["certificate"]["needs"] == list(JOBS)
+
+
+def test_original_configured_parity_row_skips_actual_tests(tmp_path):
+    report = tmp_path / "fork-pytest/junit.xml"
+    report.parent.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/codex_parity",
+            "-m",
+            "not databricks",
+            "-n",
+            "8",
+            "--dist=loadfile",
+            "--timeout=300",
+            f"--junitxml={report}",
+        ],
+        cwd=SCRIPT.parent.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    cases = ET.parse(report).getroot().findall(".//testcase")
+    assert cases
+    assert all(
+        case.find("skipped").attrib["message"] == "Codex parity tests require --codex-parity"
+        for case in cases
+    )
+    workflow = yaml.safe_load(
+        (SCRIPT.parent.parent / ".github/workflows/fork-release.yml").read_bytes()
+    )
+    guard = next(
+        step
+        for step in workflow["jobs"]["python"]["steps"]
+        if step.get("name") == "Require executed Codex parity tests"
+    )
+    checked = subprocess.run(
+        ["bash", "-c", guard["run"]],
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 1
+    assert "Codex parity skipped every test" in checked.stderr
+
+
+@pytest.mark.parametrize("job", ["python", "addons"])
+@pytest.mark.parametrize(
+    ("source", "pytest_exit", "guard_exit", "message"),
+    [
+        ("def test_pass(): assert True\n", 0, 0, ""),
+        (
+            "import pytest\ndef test_skip(): pytest.skip('unavailable')\n",
+            0,
+            1,
+            "Codex parity skipped every test",
+        ),
+        (
+            "import pytest\ndef test_pass(): assert True\n"
+            "def test_skip(): pytest.skip('unavailable')\n",
+            0,
+            0,
+            "",
+        ),
+        ("", 5, 1, "Codex parity collected no tests"),
+        ("def test_fail(): assert False\n", 1, 1, "Codex parity contains failed tests"),
+        (
+            "import pytest\n@pytest.fixture\n"
+            "def broken(): raise RuntimeError('setup failed')\n"
+            "def test_error(broken): pass\n",
+            1,
+            1,
+            "Codex parity contains failed tests",
+        ),
+    ],
+    ids=["pass", "all-skipped", "pass-and-skip", "empty", "failure", "setup-error"],
+)
+def test_parity_report_gate_checks_real_pytest_outcomes(
+    tmp_path, job, source, pytest_exit, guard_exit, message
+):
+    workflow = yaml.safe_load(
+        (SCRIPT.parent.parent / ".github/workflows/fork-release.yml").read_bytes()
+    )
+    guard = next(
+        step
+        for step in workflow["jobs"][job]["steps"]
+        if step.get("name") == "Require executed Codex parity tests"
+    )
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_outcome.py").write_text(source)
+    report = tmp_path / "fork-pytest/junit.xml"
+    report.parent.mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            str(tmp_path / "pytest.ini"),
+            f"--confcutdir={tmp_path}",
+            str(tmp_path / "test_outcome.py"),
+            f"--junitxml={report}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == pytest_exit, result.stdout + result.stderr
+    checked = subprocess.run(
+        ["bash", "-c", guard["run"]],
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == guard_exit, checked.stdout + checked.stderr
+    if message:
+        assert message in checked.stderr
 
 
 @pytest.mark.parametrize("policy_in_payload", [False, True])
@@ -109,7 +279,7 @@ def test_workflow_matrix_partitions_changed_tests_from_payload_anchor(tmp_path, 
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     rows = json.loads(outputs["python_matrix"])["include"]
     addons = json.loads(outputs["addon_matrix"])["include"]
-    assert rows == [*canonical, {"group": "codex-default", "paths": "tests/codex_parity"}]
+    assert rows == [*canonical, {"group": "codex-parity", "paths": "tests/codex_parity"}]
     assert [row["group"] for row in addons if policy in shlex.split(row["paths"])] == [
         "release-policy"
     ]
