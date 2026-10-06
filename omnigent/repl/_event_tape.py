@@ -5,7 +5,7 @@ Activated by ``--debug-events`` on the CLI. Three layered features:
 1. **Event Tape** (``Ctrl+E`` overlay): a scrollable, color-coded ring
    buffer of every event that passed through the rendering pipeline.
 2. **JSONL Event Log**: same data written to
-   ``~/.omnigent/debug/events-<session_id>.jsonl`` for offline analysis.
+   ``~/.omnigent-mdsmithaustin/debug/events-<session_id>.jsonl`` for offline analysis.
 3. **Pipeline Stage Counters**: compact ``ev:N tx:N fmt:N out:N``
    readout appended to the toolbar while streaming.
 """
@@ -23,6 +23,8 @@ from typing import Protocol, TextIO, runtime_checkable
 
 from rich.console import Group, RenderableType
 from rich.text import Text
+
+from omnigent.installation_defaults import default_user_dir
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -739,7 +741,6 @@ def _summarize_formatted_item(item: object) -> str:
 
 # ── JSONL logger ───────────────────────────────────────────────────────
 
-# Directory under ``~/.omnigent/`` where event logs are written.
 _DEBUG_DIR_NAME = "debug"
 
 
@@ -749,10 +750,10 @@ def open_event_log(session_id: str) -> pathlib.Path:
     :param session_id: The session id, e.g. ``"sess_abc123"``.
         Sanitized for filesystem safety.
     :returns: Absolute path to the log file, e.g.
-        ``~/.omnigent/debug/events-sess_abc123.jsonl``.
+        ``~/.omnigent-mdsmithaustin/debug/events-sess_abc123.jsonl``.
     """
     safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
-    debug_dir = pathlib.Path.home() / ".omnigent" / _DEBUG_DIR_NAME
+    debug_dir = default_user_dir() / _DEBUG_DIR_NAME
     debug_dir.mkdir(parents=True, exist_ok=True)
     return debug_dir / f"events-{safe_id}.jsonl"
 
