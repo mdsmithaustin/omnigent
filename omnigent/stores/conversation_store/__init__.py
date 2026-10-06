@@ -15,6 +15,14 @@ from omnigent.entities import (
     NewConversationItem,
     PagedList,
 )
+from omnigent.native.source_owner import (
+    NativeAdmission,
+    NativeOwner,
+    NativeSource,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopResult,
+)
 from omnigent.session_import import IMPORT_PROVENANCE_LABEL_KEYS
 
 if TYPE_CHECKING:
@@ -402,6 +410,36 @@ class ConversationStore(ABC):
         """
         self.storage_location = storage_location
         self.conversation_storage_location = conversation_storage_location
+
+    @abstractmethod
+    def get_native_source(self, conversation_id: str) -> NativeSource | None: ...
+
+    @abstractmethod
+    def admit_native(
+        self, conversation_id: str, owner: NativeOwner, *, expected_epoch: str | None = None
+    ) -> NativeAdmission: ...
+
+    @abstractmethod
+    def invalidate_native_proof(self, conversation_id: str) -> NativeAdmission | None: ...
+
+    @abstractmethod
+    def validate_native_admission(self, admission: NativeAdmission) -> None: ...
+
+    @abstractmethod
+    def validate_native_stop(self, stop: NativeStop) -> None: ...
+
+    @abstractmethod
+    def seal_native_stop(self, conversation_id: str) -> NativeStop | None: ...
+
+    @abstractmethod
+    def finish_native_stop(
+        self,
+        stop: NativeStop,
+        outcome: NativeStopOutcome,
+        *,
+        pending: bool = False,
+        detail: str = "",
+    ) -> NativeStopResult: ...
 
     @abstractmethod
     def create_conversation(
@@ -1781,6 +1819,8 @@ class ConversationStore(ABC):
         *,
         title: str | None = None,
         agent_id: str | None = None,
+        selected_agent_id: str | None = None,
+        source_is_native: bool = False,
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,

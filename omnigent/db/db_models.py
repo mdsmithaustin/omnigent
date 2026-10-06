@@ -967,6 +967,18 @@ class SqlConversation(ConversationBase):
     )
 
 
+class SqlNativeSource(ConversationBase):
+    """Current native owner authority beside the guarded conversation insertion."""
+
+    __tablename__ = "conversation_native_sources"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, default=current_workspace_id, server_default="0"
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    state: Mapped[str] = mapped_column(CompressedText, nullable=False)
+
+
 class SqlConversationItem(ConversationBase):
     """
     SQLAlchemy model for the ``conversation_items`` table.
