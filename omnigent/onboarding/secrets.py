@@ -1,7 +1,7 @@
 """A small secret store for OS-keychain-backed provider credentials.
 
 This is the storage layer behind ``keychain:<name>`` secret references in
-``~/.omnigent/config.yaml`` (see
+``~/.omnigent-mdsmithaustin/config.yaml`` (see
 :func:`omnigent.onboarding.provider_config.resolve_secret`). The
 ``omnigent setup --no-internal-beta`` command writes a provider's API key here
 under a stable name (e.g. ``"anthropic"``), and the runtime reads it back
@@ -123,7 +123,7 @@ def _secrets_path() -> str:
     """Return the path to the file-backend secrets file.
 
     :returns: Path to ``secrets.json`` under the config home, e.g.
-        ``"/home/u/.omnigent/secrets.json"``.
+        ``"/home/u/.omnigent-mdsmithaustin/secrets.json"``.
     """
     return os.path.join(_config_home(), "secrets.json")
 

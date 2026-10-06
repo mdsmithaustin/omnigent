@@ -41,7 +41,7 @@ example, `password hunter2` is redacted, but `The password is hunter2` becomes
 diagnostics as potentially sensitive even after redaction.
 
 The captured text appears in the owning process's ordinary local logs, including
-runner logs under `~/.omnigent/logs/runner/`, and in structured event attributes.
+runner logs under `~/.omnigent-mdsmithaustin/logs/runner/`, and in structured event attributes.
 It also reaches any configured debug-log or OpenTelemetry exporter. This flag
 does not enable an exporter or select a destination. When Codex capture is
 enabled, batched INFO diagnostics replace the per-line DEBUG stderr path so

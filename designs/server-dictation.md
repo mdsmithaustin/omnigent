@@ -94,8 +94,8 @@ connections (default 2, `OMNIGENT_DICTATION_MAX_STREAMS`).
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `OMNIGENT_DICTATION_MODEL_DIR` | `~/.omnigent/models/dictation/asr` | dir containing `encoder*.onnx`, `decoder*.onnx`, `joiner*.onnx`, `tokens.txt` |
-| `OMNIGENT_DICTATION_PUNCT_DIR` | `~/.omnigent/models/dictation/punct` | optional online-punctuation model dir (`model*.onnx` + `bpe.vocab`) |
+| `OMNIGENT_DICTATION_MODEL_DIR` | `~/.omnigent-mdsmithaustin/models/dictation/asr` | dir containing `encoder*.onnx`, `decoder*.onnx`, `joiner*.onnx`, `tokens.txt` |
+| `OMNIGENT_DICTATION_PUNCT_DIR` | `~/.omnigent-mdsmithaustin/models/dictation/punct` | optional online-punctuation model dir (`model*.onnx` + `bpe.vocab`) |
 | `OMNIGENT_DICTATION_MAX_STREAMS` | `2` | concurrent dictation WebSockets |
 | `OMNIGENT_DICTATION_ENGINE` | unset (`sherpa`) | engine to use by registered name (`sherpa`, `remote`, `fake`) |
 | `OMNIGENT_DICTATION_REMOTE_URL` | unset | worker stream URL for the `remote` engine, e.g. `ws://venus:8100/v1/dictation/stream` |

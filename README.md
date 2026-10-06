@@ -18,6 +18,9 @@ Omnigent is an open-source **meta-harness** that gives you a common orchestratio
 This fork builds on the released upstream `v0.17.0` tag. To install and verify
 the fork with its Prime and skill-command addons, follow the
 [fork release guide](docs/FORK_RELEASES.md).
+The certified Python fork uses [separate local defaults](docs/FORK_DEFAULTS.md)
+starting with revision `.2`. The upstream installer, updater, and global
+uninstaller examples below are outside that coexistence profile.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/omnigent-ai/omnigent/main/docs/images/omnigent-desktop.png" alt="The Omnigent desktop app: starting a new session, with pinned and project-grouped sessions in the sidebar" width="720" />
@@ -263,11 +266,13 @@ Add `--yes` to the standalone script to perform the previewed CLI cleanup.
 ### 2. Start your first agent
 
 `omnigent` picks a model with you and starts a session in your terminal. It
-also launches a local web UI at `http://localhost:6767` that shows the same
+also launches a local web UI that shows the same
 session in the browser, or on a phone on your network (step 4). The
 [desktop app](https://omnigent.ai/docs/interact/desktop) wraps that same UI
 in a native window and adds OS notifications (with a configurable sound) and a dock badge —
 [download it for macOS](https://omnigent.ai/quickstart/install#install-the-desktop-app).
+Use the URL printed by the CLI. The fork prefers `http://localhost:6768` and
+selects a free port if that port is occupied.
 
 > [!NOTE]
 > The install puts two names for the same CLI on your PATH: `omnigent` and
@@ -407,8 +412,8 @@ characters. The setting applies after the local Omnigent server restarts, both
 to new sessions and to later agent-initiated renames through `sys_session_rename`.
 Agent proposals are formatted using the same title requirements; if formatting
 fails, the existing title is preserved. Manual renames remain unchanged.
-For longer instructions, edit `~/.omnigent/config.yaml` directly and use a YAML
-block scalar:
+For longer instructions, edit `~/.omnigent-mdsmithaustin/config.yaml` directly.
+Use a YAML block scalar:
 
 ```yaml
 session_title_instructions: |
@@ -490,7 +495,7 @@ omnigent host  https://your-host    # new sessions can now run on this machine
 
 > [!TIP]
 > On your own network you don't need a deploy. Open your machine's LAN
-> address on your phone (e.g. `http://192.168.x.x:6767`).
+> address on your phone with the server's selected port (e.g. `http://192.168.x.x:6768`).
 
 ### 5. Collaborate with your team
 
@@ -506,7 +511,7 @@ turns it on for you** (`OMNIGENT_AUTH_ENABLED` defaults to `1` there).
 
 #### Invite your teammates
 
-Open the web UI (`http://localhost:6767` locally, or your host's URL) and
+Open the web UI at the URL printed by the CLI, or your host's URL, and
 sign in as `admin`; first run prints the password and saves it locally. Then
 open **Admin → Members → Invite** to create a single-use invite link, no
 email server needed. Send it over; your teammate opens it, sets a password,

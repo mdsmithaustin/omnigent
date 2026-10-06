@@ -24,6 +24,7 @@ reviews/
 # Rides in the PR Demo section / CI artifact bundle, never in the diff.
 # Gitignored so a stray `git add` can't sweep it into a PR.
 .omnigent/
+.omnigent-mdsmithaustin/
 
 # Generated artifact; never committed.
 .pytest_cache/
