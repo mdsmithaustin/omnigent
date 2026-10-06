@@ -20,6 +20,8 @@ from tests.harnesses.codex_native.app_server._support import (
     _disable_codex_startup_rpc,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 def test_build_codex_native_server_profile_error_names_profile(
@@ -341,7 +343,7 @@ def test_launch_argv_and_config_pin_name_the_same_model(
 
 
 async def test_start_pins_reasoning_effort_in_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     Startup seeds ``model_reasoning_effort`` from the session's persisted effort.
@@ -362,6 +364,8 @@ async def test_start_pins_reasoning_effort_in_config(
     _disable_codex_startup_rpc(monkeypatch)
 
     server = _test_app_server(tmp_path, codex_home, tmp_path / "bridge", workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.pinned_effort = "ultra"
     await server.start()
     await server.close()

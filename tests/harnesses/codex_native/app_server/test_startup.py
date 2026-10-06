@@ -18,10 +18,12 @@ from tests.harnesses.codex_native.app_server._support import (
     _FakeStartupClient,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 async def test_start_reuses_initialized_readiness_client_for_hook_trust(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Startup trusts hooks over the readiness connection, then closes it."""
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
@@ -55,6 +57,8 @@ async def test_start_reuses_initialized_readiness_client_for_hook_trust(
         tmp_path / "bridge",
         workspace,
     )
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     await server.start()
     try:
@@ -65,7 +69,7 @@ async def test_start_reuses_initialized_readiness_client_for_hook_trust(
 
 
 async def test_start_cancellation_closes_reused_client_and_app_server(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cancellation during hook trust closes both startup resources."""
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
@@ -101,6 +105,8 @@ async def test_start_cancellation_closes_reused_client_and_app_server(
         tmp_path / "bridge",
         workspace,
     )
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     task = asyncio.create_task(server.start())
     await trust_started.wait()
@@ -357,6 +363,7 @@ async def test_standalone_hook_trust_closes_client_when_connect_fails(
 
 
 async def test_start_can_delegate_global_process_reconciliation(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -385,6 +392,8 @@ async def test_start_can_delegate_global_process_reconciliation(
         tmp_path / "bridge",
         workspace,
     )
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.reconcile_process_registry = False
 
     await server.start()

@@ -30,6 +30,8 @@ from tests.harnesses.codex_native.app_server._support import (
     _set_codex_version,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 def test_hooks_list_empty_result_does_not_fall_back_to_envelope() -> None:
@@ -335,7 +337,7 @@ async def test_still_untrusted_hints_old_codex_when_hash_missing() -> None:
 
 
 async def test_old_codex_skips_policy_hook_and_records_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     codex < 0.129 starts without registering the policy hook.
@@ -357,9 +359,10 @@ async def test_old_codex_skips_policy_hook_and_records_reason(
     _set_codex_version(monkeypatch, (0, 128, 0))
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     # ap_server_url present → enforcement was intended → this is the
     # security-relevant degrade path.
-    server.ap_server_url = "http://127.0.0.1:9999"
     await server.start()
     try:
         # Hook was NOT registered: codex < 0.129 can never trust it.
@@ -373,7 +376,7 @@ async def test_old_codex_skips_policy_hook_and_records_reason(
 
 
 async def test_supported_codex_registers_hook_and_enforces(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     codex >= 0.129 registers the hook and reports enforcement active.
@@ -392,6 +395,8 @@ async def test_supported_codex_registers_hook_and_enforces(
     _set_codex_version(monkeypatch, (0, 129, 0))
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     try:
         # Hook registered for a supported codex.
@@ -403,7 +408,7 @@ async def test_supported_codex_registers_hook_and_enforces(
 
 
 async def test_unknown_codex_version_treated_as_supported(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     An unparseable codex version does not disable enforcement.
@@ -423,6 +428,8 @@ async def test_unknown_codex_version_treated_as_supported(
     _set_codex_version(monkeypatch, None)
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     try:
         assert (codex_home / "hooks.json").exists()
@@ -432,7 +439,7 @@ async def test_unknown_codex_version_treated_as_supported(
 
 
 async def test_old_codex_with_routing_armed_keeps_user_hooks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     Arming subagent routing on old codex must not delete the user's hooks.
@@ -460,6 +467,8 @@ async def test_old_codex_with_routing_armed_keeps_user_hooks(
     _set_codex_version(monkeypatch, (0, 128, 0))
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.env = {CODEX_ROUTER_DIR_ENV_VAR: str(router_dir)}
     await server.start()
     try:
@@ -472,7 +481,7 @@ async def test_old_codex_with_routing_armed_keeps_user_hooks(
 
 
 async def test_trust_failure_is_fail_open_with_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     A trust handshake failure degrades the session instead of blocking it.
@@ -502,7 +511,8 @@ async def test_trust_failure_is_fail_open_with_reason(
     monkeypatch.setattr(CodexNativeAppServer, "_trust_policy_hooks", _raise_trust)
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
-    server.ap_server_url = "http://127.0.0.1:9999"
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()  # must NOT raise
     try:
         # Hook was registered (supported codex) but trust failed → degrade.
