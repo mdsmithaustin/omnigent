@@ -1,5 +1,3 @@
-"""Add generation-bound native source authority to the conversation database."""
-
 from alembic import op
 
 from omnigent.db.db_models import SqlNativeSource

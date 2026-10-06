@@ -1,5 +1,3 @@
-"""Generation-bound admission and explicit closure of a native source owner."""
-
 from enum import StrEnum
 from typing import Literal
 
