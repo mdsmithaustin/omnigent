@@ -26,13 +26,18 @@ from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.inner.datamodel import TerminalEnvSpec
 from omnigent.inner.terminal_lifecycle import TerminalLifecycleTrace
 from omnigent.runner.native.orchestration import NativeLaunchContext
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 @pytest.fixture
-def launch_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PrimeRuntimePaths:
+def launch_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_source_server
+) -> PrimeRuntimePaths:
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr(process, "_ACTIVE_RUNTIMES", set())
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    native_source_server.write_prime_config(paths.root)
+    monkeypatch.setenv("RUNNER_SERVER_URL", native_source_server.url)
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
     monkeypatch.setattr(main, "resolve_prime_executable", lambda: "/qualified/prime-agent")
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
@@ -41,7 +46,7 @@ def launch_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PrimeRuntim
 
 @pytest.mark.parametrize("cancelled", [False, True])
 async def test_launch_preserves_dispatch_failure_when_cleanup_is_uncertain(
-    launch_paths: PrimeRuntimePaths, cancelled: bool
+    launch_paths: PrimeRuntimePaths, cancelled: bool, native_source_server
 ) -> None:
     failure = (
         asyncio.CancelledError("terminal dispatch cancelled")
@@ -53,7 +58,9 @@ async def test_launch_preserves_dispatch_failure_when_cleanup_is_uncertain(
     registry.terminal_registry.close_launch.side_effect = RuntimeError("exact closure unknown")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"workspace": str(launch_paths.root.parent)})
+            lambda request: native_source_server.respond(
+                request, {"workspace": str(launch_paths.root.parent)}
+            )
         ),
         base_url="http://omnigent.test",
     ) as client:
@@ -72,7 +79,7 @@ async def test_launch_preserves_dispatch_failure_when_cleanup_is_uncertain(
 
 
 async def test_failed_dispatch_fences_a_delayed_wrapper(
-    launch_paths: PrimeRuntimePaths, tmp_path: Path
+    launch_paths: PrimeRuntimePaths, tmp_path: Path, native_source_server
 ) -> None:
     dispatched: list[object] = []
 
@@ -84,7 +91,7 @@ async def test_failed_dispatch_fences_a_delayed_wrapper(
     registry.launch_required_terminal.side_effect = lose_response
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"workspace": str(tmp_path)})
+            lambda request: native_source_server.respond(request, {"workspace": str(tmp_path)})
         ),
         base_url="http://omnigent.test",
     ) as client:
@@ -425,7 +432,10 @@ def test_child_record_crash_gap_remains_unknown(
 
 
 async def test_repeated_cancellation_waits_for_token_revocation(
-    launch_paths: PrimeRuntimePaths, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    launch_paths: PrimeRuntimePaths,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    native_source_server,
 ) -> None:
     entered = threading.Event()
     release = threading.Event()
@@ -443,7 +453,7 @@ async def test_repeated_cancellation_waits_for_token_revocation(
     registry.launch_required_terminal.side_effect = failure
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"workspace": str(tmp_path)})
+            lambda request: native_source_server.respond(request, {"workspace": str(tmp_path)})
         ),
         base_url="http://omnigent.test",
     ) as client:

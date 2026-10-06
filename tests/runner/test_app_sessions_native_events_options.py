@@ -2126,9 +2126,11 @@ async def test_events_model_change_without_status_omits_bridge_path_from_log(
         resp = await _post_model_change_with_status_sequence(monkeypatch, [None])
 
     assert resp.status_code == 204, resp.text
+    # Both the logger and the root can hold the capture handler; count each record once.
+    records = {id(record): record for record in caplog.records}.values()
     messages = [
         record.getMessage()
-        for record in caplog.records
+        for record in records
         if "model change" in record.getMessage() and "could not be verified" in record.getMessage()
     ]
     assert messages == [
