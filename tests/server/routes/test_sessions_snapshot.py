@@ -133,6 +133,9 @@ class _ConversationStore:
             agent_id="087b7cb7ac30abf4debfaa578d052ec6",
         )
 
+    def get_native_source(self, conversation_id: str) -> None:
+        return None
+
     def list_conversations(
         self,
         *,
