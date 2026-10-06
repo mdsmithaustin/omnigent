@@ -37,6 +37,7 @@ class _WakeRecordingServerClient(NullServerClient):
             return {"result": "POLICY_ACTION_UNSPECIFIED"}
 
     def __init__(self, parent_id: str) -> None:
+        super().__init__()
         self._parent_events_path = f"/v1/sessions/{parent_id}/events"
         self.notices: list[str] = []
         self.label_patches: list[dict[str, Any]] = []

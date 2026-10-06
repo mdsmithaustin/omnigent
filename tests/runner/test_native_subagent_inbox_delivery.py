@@ -93,6 +93,7 @@ class _SnapshotServerClient(NullServerClient):
         self, child_body: dict[str, Any], parent_body: dict[str, Any] | None = None
     ) -> None:
         """Configure the bodies returned for the child and parent session GETs."""
+        super().__init__()
         self._child_body = child_body
         self._parent_body = parent_body
 
@@ -161,6 +162,7 @@ class _RecoveryServerClient(NullServerClient):
         :param child_items: Child transcript, newest first.
         :param failed_item_sessions: Session ids whose item read returns 503.
         """
+        super().__init__()
         self.children = children
         self.child_items = [_CHILD_RESULT_ITEM] if child_items is None else child_items
         self.failed_item_sessions = failed_item_sessions or set()
