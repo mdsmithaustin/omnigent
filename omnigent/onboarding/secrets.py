@@ -110,7 +110,7 @@ def _config_home() -> str:
     Respects ``$OMNIGENT_CONFIG_HOME`` for test isolation, matching the
     convention in :func:`omnigent.onboarding.provider_config._config_path`.
 
-    :returns: The config home path, e.g. ``"/home/u/.omnigent"`` or the
+    :returns: The config home path, e.g. ``"/home/u/.omnigent-mdsmithaustin"`` or the
         value of ``$OMNIGENT_CONFIG_HOME`` when set.
     """
     config_home = os.environ.get("OMNIGENT_CONFIG_HOME")

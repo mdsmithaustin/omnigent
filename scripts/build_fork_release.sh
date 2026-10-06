@@ -91,7 +91,7 @@ smoke_wheels() {
 }
 smoke_wheels "$output/dist" "$smoke_root/wheels"
 uv venv --python 3.12 "$smoke_root/upstream"
-uv pip install --python "$smoke_root/upstream/bin/python" "omnigent==$upstream_version"
+(cd "$smoke_root" && uv pip install --python "$smoke_root/upstream/bin/python" "omnigent==$upstream_version")
 env -u PYTHONPATH "$smoke_root/wheels/bin/python" -I "$repo_root/scripts/verify_fork_coexistence.py" \
     --upstream-python "$smoke_root/upstream/bin/python" \
     --fork-python "$smoke_root/wheels/bin/python" \

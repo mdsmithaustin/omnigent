@@ -115,7 +115,7 @@ Use separate virtual environments for upstream and the fork. Port `6768` must be
 
 ```sh
 uv venv --python 3.12 /tmp/omnigent-upstream-install
-uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.17.0'
+(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.17.0')
 /tmp/omnigent-fork-install/bin/python -I scripts/verify_fork_coexistence.py \
     --upstream-python /tmp/omnigent-upstream-install/bin/python \
     --fork-python /tmp/omnigent-fork-install/bin/python \

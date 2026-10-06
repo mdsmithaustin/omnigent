@@ -20,7 +20,7 @@ The user journey under guard::
     omnigent host disable && omnigent host enable --server <new>
 
 When the stale-print window fires, ``host disable`` must still remove
-``~/Library/LaunchAgents/ai.omnigent.host.plist``. If the plist survives, its
+``~/Library/LaunchAgents/com.mdsmithaustin.omni.host.plist``. If the plist survives, its
 ``RunAtLoad=true`` silently restores the previous server at the next login,
 and the ``&&`` chain short-circuits so the service is never re-pointed.
 
@@ -100,7 +100,7 @@ class _HostCliHarness:
 
     @property
     def plist_path(self) -> Path:
-        return self.home / "Library" / "LaunchAgents" / "ai.omnigent.host.plist"
+        return self.home / "Library" / "LaunchAgents" / "com.mdsmithaustin.omni.host.plist"
 
     def run_host(self, *args: str) -> subprocess.CompletedProcess[str]:
         """Run ``omnigent host <args>`` exactly as a user would."""
