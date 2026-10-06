@@ -20,6 +20,7 @@ from omnigent.entities import DEFAULT_ENVIRONMENT_ID, Conversation, Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.frames import HOST_CAPABILITIES, HostHelloFrame
 from omnigent.native.native_coding_agents import CLAUDE_NATIVE_AGENT_NAME
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.runtime import (
     _globals,
     session_stream,
@@ -136,6 +137,9 @@ class _ConversationStore:
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         """Return the conversation or None."""
         return self._conversations.get(conversation_id)
+
+    def invalidate_native_proof(self, conversation_id: str) -> NativeAdmission | None:
+        return None
 
     def get_item(self, conversation_id: str, item_id: str) -> Any:
         """Return an appended item by stable id or fake id, else ``None``."""
