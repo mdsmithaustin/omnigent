@@ -17,6 +17,7 @@ import pytest
 from fastapi import FastAPI, Response
 
 from omnigent.debug_logging import current_session_id_scope, record_to_row
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harnesses.claude_native import bridge, hook, lifecycle
 from omnigent.inner.terminal import TerminalInstance
 from omnigent.runner import create_runner_app
@@ -314,7 +315,7 @@ async def test_runner_request_is_recorded_before_native_control_dispatch(
 ) -> None:
     caplog.set_level(logging.INFO)
 
-    async def dispatch(_self, _harness, session_id):
+    async def dispatch(_self, _harness, session_id, *, source_stop=None):
         assert session_id == _SESSION
         assert (
             launch.instance.lifecycle_trace.snapshot()["terminal_control_request_action"] == action
@@ -370,28 +371,32 @@ async def test_session_delete_records_request_before_process_cancel_and_cleanup(
     assert _rows(caplog, "required_terminal_exited") == []
 
 
-async def test_transfer_logs_current_owner_and_original_launch_session(
+async def test_native_transfer_rejection_preserves_owner_and_launch_telemetry(
     launch: _Launch, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO)
     _hook(launch, monkeypatch, "SessionStart", 100.0, source="startup")
     target = "synthetic-transferred-session"
-    assert await launch.resources.transfer_terminal(_SESSION, target, "terminal_claude_main")
-    try:
-        _hook(launch, monkeypatch, "SessionStart", 101.0, session_id="claude-new", source="clear")
-        _hook(launch, monkeypatch, "SessionEnd", 102.0, session_id="claude-new", reason="logout")
-        launch.resources.note_terminal_control_request(target, "delete_session")
-        [request] = _rows(caplog, "native_terminal_control_requested")
-        assert request["session_id"] == target
-        assert request["attributes"]["terminal_current_session_id"] == target
-        assert request["attributes"]["terminal_launch_session_id"] == _SESSION
-        assert request["attributes"]["claude_session_id"] == "claude-new"
-        assert request["attributes"]["claude_session_end_reason"] == "logout"
-        assert (
-            json.loads(request["attributes"]["claude_lifecycle"])["launch_session_id"] == _SESSION
-        )
-    finally:
-        await launch.resources.cleanup_session(target)
+    with pytest.raises(OmnigentError) as rejected:
+        await launch.resources.transfer_terminal(_SESSION, target, "terminal_claude_main")
+    assert rejected.value.code == ErrorCode.CONFLICT
+    assert rejected.value.http_status == 409
+    assert launch.terminals.get(_SESSION, "claude", "main") is launch.instance
+    assert launch.terminals.list_for_conversation(target) == []
+    assert launch.resources.terminal_resource_role(_SESSION, "terminal_claude_main") == (
+        CLAUDE_NATIVE_TERMINAL_ROLE
+    )
+    assert launch.instance.running
+    _hook(launch, monkeypatch, "SessionStart", 101.0, session_id="claude-new", source="clear")
+    _hook(launch, monkeypatch, "SessionEnd", 102.0, session_id="claude-new", reason="logout")
+    launch.resources.note_terminal_control_request(_SESSION, "delete_session")
+    [request] = _rows(caplog, "native_terminal_control_requested")
+    assert request["session_id"] == _SESSION
+    assert request["attributes"]["terminal_current_session_id"] == _SESSION
+    assert request["attributes"]["terminal_launch_session_id"] == _SESSION
+    assert request["attributes"]["claude_session_id"] == "claude-new"
+    assert request["attributes"]["claude_session_end_reason"] == "logout"
+    assert json.loads(request["attributes"]["claude_lifecycle"])["launch_session_id"] == _SESSION
 
 
 async def test_startup_exit_captures_reason_before_closing_unobserved_terminal(

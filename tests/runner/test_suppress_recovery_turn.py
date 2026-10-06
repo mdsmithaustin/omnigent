@@ -39,6 +39,7 @@ from tests.runner.conftest import (
     _ScriptedHarnessClient,
     _sse,
 )
+from tests.runner.helpers import NullServerClient
 
 # ── helpers ────────────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ _ITEMS_PAGE = {
 }
 
 
-class _HistoryServerClient:
+class _HistoryServerClient(NullServerClient):
     """Returns one pre-persisted user message from GET /items.
 
     Simulates the server state after the message has been persisted to DB
@@ -85,10 +86,6 @@ class _HistoryServerClient:
             return self._Resp(_ITEMS_PAGE)
         return self._Resp({})
 
-    async def post(self, url: str, **kwargs: Any) -> _Resp:
-        del url, kwargs
-        return self._Resp({})
-
     async def patch(self, url: str, **kwargs: Any) -> _Resp:
         del url, kwargs
         return self._Resp({})
@@ -98,6 +95,7 @@ class _CatchUpServerClient(_HistoryServerClient):
     """Return no history until the test exposes a missed user item."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.expose_item = False
 
     async def get(self, url: str, **kwargs: Any) -> _HistoryServerClient._Resp:

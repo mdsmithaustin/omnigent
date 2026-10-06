@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
+import httpx
 import pytest
 
 from omnigent.entities.session_resources import SessionResourceView
@@ -51,18 +52,18 @@ class _EventRecordingServerClient(NullServerClient):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.posted_items: list[dict[str, Any]] = []
         self.posted_mcp_startup: list[dict[str, Any]] = []
 
-    async def post(self, url: str, **kwargs: Any) -> NullServerClient._Response:
+    async def post(self, url: str, **kwargs: Any) -> NullServerClient._Response | httpx.Response:
         """Record ``external_conversation_item`` / ``external_mcp_startup`` bodies."""
-        del url
         body = kwargs.get("json")
         if isinstance(body, dict) and body.get("type") == "external_conversation_item":
             self.posted_items.append(body.get("data") or {})
         if isinstance(body, dict) and body.get("type") == "external_mcp_startup":
             self.posted_mcp_startup.append(body.get("data") or {})
-        return self._Response()
+        return await super().post(url, **kwargs)
 
 
 class _RecordingCodexAppServerClient:
@@ -1197,11 +1198,13 @@ async def test_claude_native_model_options_use_session_launch_catalog(
                 "model": "system.ai.claude-opus-4-10",
                 "displayName": "Opus 4.10",
                 "isDefault": True,
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
             },
             {
                 "id": "haiku",
                 "model": "system.ai.claude-haiku-4-5",
                 "displayName": "Haiku 4.5",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
             },
         ]
     }
@@ -1410,12 +1413,17 @@ async def test_claude_native_model_options_serves_probe_rows_after_pending(
     # so it is the row a Default launch truly runs.
     assert resolved.json() == {
         "models": [
-            {"id": "sonnet[1m]", "model": "claude-sonnet-5[1m]"},
+            {
+                "id": "sonnet[1m]",
+                "model": "claude-sonnet-5[1m]",
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
+            },
             {
                 "id": "system.ai.claude-opus-4-10",
                 "model": "system.ai.claude-opus-4-10",
                 "displayName": "system.ai.claude-opus-4-10",
                 "isDefault": True,
+                "source": {"kind": "subscription", "label": "Subscription", "name": "claude"},
             },
         ]
     }
