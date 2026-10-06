@@ -11761,3 +11761,47 @@ def test_resolve_native_claude_config_spec_api_key_auth_skips_connect_broker(
     dc._write_sidecar(cfg, "https://srv", "hid", "launch-tok", "https://ws.example")
 
     assert claude_native.resolve_native_claude_config(spec=spec, refresh_models=False) is None
+
+
+def test_native_skill_replay_preserves_command_and_cli_expansion(tmp_path: Path) -> None:
+    items = [
+        {
+            "id": "command",
+            "type": "slash_command",
+            "kind": "skill",
+            "name": "review",
+            "arguments": "first",
+            "native_invocation": "/bundle:review first",
+            "response_id": "turn_1",
+        },
+        {
+            "id": "expansion",
+            "type": "message",
+            "role": "user",
+            "is_meta": True,
+            "content": [{"type": "input_text", "text": "CLI-authored historical sentinel"}],
+            "response_id": "turn_1",
+        },
+        {
+            "id": "reply",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Historical result"}],
+            "response_id": "turn_1",
+        },
+    ]
+    records = claude_native._claude_transcript_records_from_session_items(
+        items,
+        session_id="conv_test",
+        external_session_id="native_test",
+        cwd=tmp_path,
+        bridge_dir=tmp_path / "bridge",
+    )
+    assert [record["message"]["content"] for record in records] == [
+        "/bundle:review first",
+        "CLI-authored historical sentinel",
+        [{"type": "text", "text": "Historical result"}],
+    ]
+    assert records[1]["isMeta"] is True
+    assert records[1]["parentUuid"] == records[0]["uuid"]
+    assert records[2]["parentUuid"] == records[1]["uuid"]

@@ -2289,3 +2289,59 @@ async def test_interrupt_forwards_to_harness_before_cancelling() -> None:
         f"interrupt must forward to the harness then finalize the turn with one "
         f"marker; got {len(markers)}."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,historical", [("unknown", False), ("rejected", False), ("accepted", True)]
+)
+async def test_restart_excludes_unadmitted_skill_context(status, historical):
+    history = [
+        {
+            "id": "a1" * 16,
+            "type": "message",
+            "role": "user",
+            "is_meta": True,
+            "content": [{"type": "input_text", "text": "Do not replay this command"}],
+            "skill_context": {
+                "command_item_id": "a2" * 16,
+                "status": status,
+                "historical": historical,
+            },
+        }
+    ]
+    app, _, harness = _build_recovery_app(history)
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions", json={"session_id": "a3" * 16, "agent_id": "a4" * 16}
+        )
+        assert response.status_code == 201
+        assert response.json()["status"] != "running"
+    assert harness.posted_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_runner_returns_attributed_admission_after_accepting_task():
+    app, _, harness = _build_recovery_app([])
+    claim = {"item_id": "b1" * 16, "fingerprint": "b2" * 32}
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions", json={"session_id": "b3" * 16, "agent_id": "b4" * 16}
+        )
+        assert created.status_code == 201
+        admitted = await client.post(
+            "/v1/sessions/" + "b3" * 16 + "/events",
+            json={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Run once"}],
+                "command_admission": claim,
+            },
+        )
+        assert admitted.status_code == 202
+        assert admitted.json()["delivery"] == {**claim, "status": "accepted"}
+        for _ in range(50):
+            if harness.posted_bodies:
+                break
+            await asyncio.sleep(0.01)
+        assert len(harness.posted_bodies) == 1

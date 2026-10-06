@@ -7,7 +7,7 @@ import logging
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import PureWindowsPath
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy import (
     ColumnElement,
@@ -86,6 +86,7 @@ from omnigent.entities import (
     PagedList,
     parse_item_data,
 )
+from omnigent.entities.conversation import MessageData, SlashCommandData
 from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
 from omnigent.native.session_todos import validate_session_todos
@@ -2394,6 +2395,23 @@ class SqlAlchemyConversationStore(ConversationStore):
         :returns: The persisted :class:`ConversationItem` list
             with store-assigned IDs and timestamps.
         """
+        return self._append_items(conversation_id, items)
+
+    def claim_skill_command(
+        self, conversation_id: str, items: list[NewConversationItem]
+    ) -> ConversationItem:
+        command = items[0]
+        if not isinstance(command.data, SlashCommandData) or command.stable_id is None:
+            raise ValueError("A skill command claim requires a stable command item")
+        return self._append_items(conversation_id, items, claim_id=command.stable_id)[0]
+
+    def _append_items(
+        self,
+        conversation_id: str,
+        items: list[NewConversationItem],
+        *,
+        claim_id: str | None = None,
+    ) -> list[ConversationItem]:
         now = now_epoch()
 
         # Encode every item payload up front, in one batch, BEFORE opening the
@@ -2475,6 +2493,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                         for row, data in zip(existing_rows, decoded, strict=True)
                     }
                 )
+                if claim_id is not None and claim_id in deduped_by_id:
+                    return [deduped_by_id[claim_id]]
+                if claim_id is not None and existing_by_id:
+                    raise OmnigentError(
+                        "Skill context identity is already occupied", code=ErrorCode.CONFLICT
+                    )
                 if all(item.stable_id in existing_by_id for item in items):
                     # Pure duplicate re-post: nothing inserts, so leave
                     # ``updated_at`` and the position counter untouched — a
@@ -2575,9 +2599,67 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         return run_write_transaction(
             self._conv_session_immediate,
-            "append_conversation_items",
+            "claim_skill_command" if claim_id is not None else "append_conversation_items",
             write,
         )
+
+    def settle_skill_command(
+        self,
+        conversation_id: str,
+        item_id: str,
+        fingerprint: str,
+        status: Literal["accepted", "rejected"],
+    ) -> ConversationItem:
+        def write(session: Session) -> ConversationItem:
+            self._lock_conversation(session, conversation_id)
+            row = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == item_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise ValueError("Skill command claim is missing")
+            [decoded] = self._decode_item_data_batch([row.data])
+            item = _to_item(row, decoded)
+            if not isinstance(item.data, SlashCommandData) or item.data.delivery is None:
+                raise ValueError("Item is not a skill command claim")
+            delivery = item.data.delivery
+            if delivery.fingerprint != fingerprint or delivery.historical:
+                raise ValueError("Skill command admission does not match the claim")
+            if delivery.status != "unknown":
+                return item
+            delivery.status = status
+            rows = [row]
+            payloads = [item.data.model_dump(exclude_none=True)]
+            if delivery.context_item_id is not None:
+                context_row = session.execute(
+                    select(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id == delivery.context_item_id,
+                    )
+                ).scalar_one_or_none()
+                if context_row is None:
+                    raise ValueError("Skill command context is missing")
+                [decoded_context] = self._decode_item_data_batch([context_row.data])
+                context = _to_item(context_row, decoded_context)
+                if (
+                    not isinstance(context.data, MessageData)
+                    or context.data.skill_context is None
+                    or context.data.skill_context.command_item_id != item_id
+                ):
+                    raise ValueError("Skill command context does not match the claim")
+                context.data.skill_context.status = status
+                rows.append(context_row)
+                payloads.append(context.data.model_dump(exclude_none=True))
+            encoded = self._encode_item_data_batch([json.dumps(payload) for payload in payloads])
+            for target, data in zip(rows, encoded, strict=True):
+                target.data = data
+            return item
+
+        return run_write_transaction(self._conv_session_immediate, "settle_skill_command", write)
 
     def list_projects(
         self,
@@ -4760,6 +4842,57 @@ class SqlAlchemyConversationStore(ConversationStore):
                             )
                         )
 
+            remapped_skill_data: dict[int, str] = {}
+            command_positions = [
+                pos
+                for pos, row in enumerate(source_items)
+                if decode_item_type(row.type) == "slash_command"
+            ]
+            changed_skill_positions: list[int] = []
+            skill_payloads: list[str] = []
+            context_ids: set[str] = set()
+            if command_positions:
+                decoded_commands = self._decode_item_data_batch(
+                    [source_items[pos].data for pos in command_positions]
+                )
+                for pos, raw in zip(command_positions, decoded_commands, strict=True):
+                    data = json.loads(raw)
+                    delivery = data.get("delivery")
+                    if not isinstance(delivery, dict):
+                        continue
+                    delivery["historical"] = True
+                    context_id = delivery.get("context_item_id")
+                    if context_id is not None:
+                        context_ids.add(context_id)
+                        delivery["context_item_id"] = copied_item_ids.get(context_id)
+                    changed_skill_positions.append(pos)
+                    skill_payloads.append(json.dumps(data))
+            context_positions = [
+                pos for pos, row in enumerate(source_items) if row.id in context_ids
+            ]
+            if context_positions:
+                decoded_contexts = self._decode_item_data_batch(
+                    [
+                        remapped_file_data.get(pos, source_items[pos].data)
+                        for pos in context_positions
+                    ]
+                )
+                for pos, raw in zip(context_positions, decoded_contexts, strict=True):
+                    data = json.loads(raw)
+                    context = data["skill_context"]
+                    context["historical"] = True
+                    context["command_item_id"] = copied_item_ids[context["command_item_id"]]
+                    changed_skill_positions.append(pos)
+                    skill_payloads.append(json.dumps(data))
+            if skill_payloads:
+                remapped_skill_data = dict(
+                    zip(
+                        changed_skill_positions,
+                        self._encode_item_data_batch(skill_payloads),
+                        strict=True,
+                    )
+                )
+
             prepared_item_rows: list[dict[str, Any]] = []
             fts_rows: list[tuple[str, str, str]] = []
             for pos, src_item in enumerate(source_items):
@@ -4781,7 +4914,10 @@ class SqlAlchemyConversationStore(ConversationStore):
                         "position": pos,
                         "type": src_item.type,
                         "data": remapped_compaction_data.get(
-                            pos, remapped_file_data.get(pos, src_item.data)
+                            pos,
+                            remapped_skill_data.get(
+                                pos, remapped_file_data.get(pos, src_item.data)
+                            ),
                         ),
                         "search_text": src_item.search_text,
                         "created_by": src_item.created_by,

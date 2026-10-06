@@ -26,6 +26,7 @@ import {
 } from "@/lib/sessionDrafts";
 import { setOmnigentHostConfig } from "@/lib/host";
 import * as host from "@/lib/host";
+import * as sessionsApi from "@/lib/sessionsApi";
 import * as identity from "@/lib/identity";
 import {
   getSessionModelLabelCacheKey,
@@ -1183,10 +1184,7 @@ describe("Composer slash-command submit routing", () => {
     expect(onSend).toHaveBeenCalledWith("/effort high", undefined);
   });
 
-  it("native sessions (no onSendSlashCommand) send a known skill as plaintext", () => {
-    // composerProps omits onSendSlashCommand — this models a native-terminal
-    // session where the event path is disabled and the vendor TUI handles
-    // the skill. The known skill must fall through to plaintext onSend.
+  it("falls through to plaintext for a known skill when the callback is absent", () => {
     const onSend = vi.fn();
     render(<Composer {...composerProps({ onSend })} />);
     const ta = textarea();
@@ -2923,30 +2921,33 @@ describe("Composer native skill menu", () => {
   it.each([
     { trigger: "$", selection: "Tab" },
     { trigger: "/", selection: "click" },
-  ])("opens with $trigger and selects a skill with $selection", ({ trigger, selection }) => {
-    const props = composerProps({ isNativeWrapper: true });
-    render(<Composer {...props} />);
-    fireEvent.change(textarea(), { target: { value: trigger } });
-    expect(screen.getByTestId("slash-menu-item-help")).toHaveTextContent("/help");
-    expect(screen.getByTestId("slash-menu-item-review")).toHaveTextContent("$review");
+  ])(
+    "opens with $trigger, selects with $selection, and sends without a callback",
+    ({ trigger, selection }) => {
+      const props = composerProps({ isNativeWrapper: true });
+      render(<Composer {...props} />);
+      fireEvent.change(textarea(), { target: { value: trigger } });
+      expect(screen.getByTestId("slash-menu-item-help")).toHaveTextContent("/help");
+      expect(screen.getByTestId("slash-menu-item-review")).toHaveTextContent("$review");
 
-    fireEvent.change(textarea(), { target: { value: `${trigger}rev` } });
-    if (selection === "click") {
-      fireEvent.click(screen.getByTestId("slash-menu-item-review"));
-    } else {
-      fireEvent.keyDown(textarea(), { key: "Tab" });
-    }
-    expect(textarea()).toHaveValue("$review ");
-    expect(props.onSend).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("slash-menu-item-review")).toBeNull();
+      fireEvent.change(textarea(), { target: { value: `${trigger}rev` } });
+      if (selection === "click") {
+        fireEvent.click(screen.getByTestId("slash-menu-item-review"));
+      } else {
+        fireEvent.keyDown(textarea(), { key: "Tab" });
+      }
+      expect(textarea()).toHaveValue("$review ");
+      expect(props.onSend).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("slash-menu-item-review")).toBeNull();
 
-    fireEvent.change(textarea(), { target: { value: "$review focus on tests" } });
-    const overlay = screen.getByTestId("composer-highlight-overlay");
-    expect(overlay).toHaveTextContent("$review focus on tests");
-    expect(overlay.querySelector(".text-brand-accent")?.textContent).toBe("$review");
-    fireEvent.keyDown(textarea(), { key: "Enter" });
-    expect(props.onSend).toHaveBeenCalledExactlyOnceWith("$review focus on tests", undefined);
-  });
+      fireEvent.change(textarea(), { target: { value: "$review focus on tests" } });
+      const overlay = screen.getByTestId("composer-highlight-overlay");
+      expect(overlay).toHaveTextContent("$review focus on tests");
+      expect(overlay.querySelector(".text-brand-accent")?.textContent).toBe("$review");
+      fireEvent.keyDown(textarea(), { key: "Enter" });
+      expect(props.onSend).toHaveBeenCalledExactlyOnceWith("$review focus on tests", undefined);
+    },
+  );
 
   it.each(["click", "Tab", "Enter"])(
     "inserts an inline skill using %s without sending",
@@ -5910,4 +5911,342 @@ describe("saved sandbox inference policy", () => {
       expect(useChatStore.getState().setModel).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("Composer catalog routing controls", () => {
+  let previous: ChatState;
+  beforeEach(() => {
+    previous = useChatStore.getState();
+    clearSessionDrafts();
+    localStorage.clear();
+    setComposerState({
+      conversationId: "conv_catalog",
+      status: "idle",
+      sessionStatus: "idle",
+      sessionHarness: "claude-native",
+      blocks: [],
+      pendingUserMessages: [],
+      failedSendDraft: null,
+      queuedMessages: [],
+      pendingComposerAttachments: [],
+      btwSidechat: null,
+      skillsStatus: "ready",
+      skills: ["Team:Review", "help", "btw", "BTW", "side", "SIDE", "review/path"].map((name) => ({
+        name,
+        description: "Catalog skill",
+      })),
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useChatStore.setState(previous, true);
+    clearSessionDrafts();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [
+      "claude-native",
+      "/Team:Review src/a.ts  keep\tspacing",
+      "Team:Review",
+      "src/a.ts  keep\tspacing",
+    ],
+    [
+      "codex-native",
+      "$Team:Review src/a.ts  keep\tspacing",
+      "Team:Review",
+      "src/a.ts  keep\tspacing",
+    ],
+    ["claude-native", "/Team:Review", "Team:Review", ""],
+    ["codex-native", "$Team:Review", "Team:Review", ""],
+    ["codex-native", "$help", "help", ""],
+    ["codex-native", "$btw arg", "btw", "arg"],
+    ["codex-native", "$side arg", "side", "arg"],
+    ["claude-sdk", "/btw arg", "btw", "arg"],
+  ])("dispatches the exact %s catalog token %s", (harness, text, name, args) => {
+    useChatStore.setState({ sessionHarness: harness });
+    const onSendSlashCommand = vi.fn();
+    const props = composerProps({
+      onSendSlashCommand,
+      isNativeWrapper: harness.endsWith("-native"),
+    });
+    render(<Composer {...props} />);
+    fireEvent.change(textarea(), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSendSlashCommand).toHaveBeenCalledExactlyOnceWith(name, args);
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("");
+    expect(JSON.parse(localStorage.getItem("omnigent:prompt-history:conv_catalog")!)).toEqual([
+      text,
+    ]);
+  });
+
+  it.each([
+    ["claude-native", "/team:review arg"],
+    ["codex-native", "$team:review arg"],
+    ["claude-native", "/Review arg"],
+    ["codex-native", "$Review arg"],
+    ["claude-native", "/Team:Rev arg"],
+    ["codex-native", "$Team:Rev arg"],
+    ["claude-native", "/unknown arg"],
+    ["codex-native", "$unknown arg"],
+    ["claude-native", "$Team:Review arg"],
+    ["codex-native", "/Team:Review arg"],
+    ["claude-native", "/review/path arg"],
+    ["codex-native", "$review/path arg"],
+    ["claude-native", "please /Team:Review arg"],
+    ["codex-native", "please $Team:Review arg"],
+    ["claude-native", "/BTW arg"],
+    ["claude-native", "/btw arg"],
+    ["codex-native", "/SIDE arg"],
+    ["codex-native", "/side arg"],
+  ])("preserves %s plaintext for %s", (harness, text) => {
+    useChatStore.setState({ sessionHarness: harness });
+    const onSendSlashCommand = vi.fn();
+    const props = composerProps({ onSendSlashCommand, isNativeWrapper: true });
+    render(<Composer {...props} />);
+    fireEvent.change(textarea(), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(props.onSend).toHaveBeenCalledExactlyOnceWith(text, undefined);
+    expect(onSendSlashCommand).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("");
+  });
+
+  it("keeps a visible builtin ahead of a same-spelled skill", () => {
+    const onSendSlashCommand = vi.fn();
+    const props = composerProps({ onSendSlashCommand });
+    render(<Composer {...props} />);
+    fireEvent.change(textarea(), { target: { value: "/HELP" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByText(/\/help — Catalog skill/)).toBeVisible();
+    expect(onSendSlashCommand).not.toHaveBeenCalled();
+    expect(props.onSend).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("/HELP");
+  });
+
+  it.each(["effort", "model", "compact"])(
+    "restores the hidden %s builtin through its lowercase catalog key",
+    (name) => {
+      setComposerState({ sessionHarness: "pi", skills: [{ name, description: "Catalog skill" }] });
+      const setModel = vi.fn().mockResolvedValue(undefined);
+      const setEffort = vi.fn().mockResolvedValue(undefined);
+      const compact = vi.fn().mockResolvedValue(undefined);
+      useChatStore.setState({ setModel, setEffort, compact });
+      const onSendSlashCommand = vi.fn();
+      const props = composerProps({
+        onSendSlashCommand,
+        isNativeWrapper: name !== "compact",
+        showModels: false,
+        showEffort: false,
+      });
+      render(<Composer {...props} />);
+      fireEvent.change(textarea(), { target: { value: `/${name} high` } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(textarea()).toHaveValue(`/${name} high`);
+      if (name === "compact")
+        expect(screen.getByText("/compact is not supported for this agent type")).toBeVisible();
+      expect(props.onSend).not.toHaveBeenCalled();
+      expect(onSendSlashCommand).not.toHaveBeenCalled();
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setEffort).not.toHaveBeenCalled();
+      expect(compact).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["Effort", "Model", "Compact"])(
+    "does not restore a lowercase builtin from the %s catalog key",
+    (name) => {
+      setComposerState({ sessionHarness: "pi", skills: [{ name, description: "Catalog skill" }] });
+      const onSendSlashCommand = vi.fn();
+      const props = composerProps({
+        onSendSlashCommand,
+        isNativeWrapper: name !== "Compact",
+        showModels: false,
+        showEffort: false,
+      });
+      render(<Composer {...props} />);
+      fireEvent.change(textarea(), { target: { value: `/${name} high` } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(onSendSlashCommand).toHaveBeenCalledExactlyOnceWith(name, "high");
+      expect(props.onSend).not.toHaveBeenCalled();
+      expect(textarea()).toHaveValue("");
+    },
+  );
+
+  it.each([
+    { showModels: true, rows: true, picker: true },
+    { showModels: true, rows: false, picker: false },
+    { showModels: false, rows: true, picker: false },
+  ])(
+    "preserves bare model picker conditions $showModels $rows",
+    async ({ showModels, rows, picker }) => {
+      const onSendSlashCommand = vi.fn();
+      const props = composerProps({
+        onSendSlashCommand,
+        isNativeWrapper: true,
+        showModels,
+        modelPickerKind: "claude",
+        codexModelOptions: rows ? [{ id: "opus", displayName: "Opus" }] : [],
+      });
+      setComposerState({
+        skills: [{ name: "model", description: "Catalog skill" }],
+        llmModel: "opus",
+      });
+      renderWithTooltips(<Composer {...props} />);
+      fireEvent.change(textarea(), { target: { value: "/MODEL" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      if (picker) {
+        expect(await screen.findByTestId("composer-agent-config-menu")).toBeVisible();
+        expect(textarea()).toHaveValue("");
+      } else {
+        expect(textarea()).toHaveValue("/MODEL");
+        if (showModels) expect(screen.getByText(/Model: opus/)).toBeVisible();
+      }
+      expect(onSendSlashCommand).not.toHaveBeenCalled();
+      expect(props.onSend).not.toHaveBeenCalled();
+      expect(localStorage.getItem("omnigent:prompt-history:conv_catalog")).toBeNull();
+    },
+  );
+
+  it.each(["claude-native", "codex-native"])(
+    "keeps %s quotes, files, and mentions on the ordinary reply path",
+    (harness) => {
+      useChatStore.setState({
+        sessionHarness: harness,
+        pendingComposerAttachments: [{ path: "src/a.ts", isDir: false }],
+      });
+      const onSendSlashCommand = vi.fn();
+      const props = composerProps({ onSendSlashCommand, isNativeWrapper: true });
+      const ref = createRef<ComponentRef<typeof Composer>>();
+      render(<Composer {...props} ref={ref} />);
+      act(() => ref.current?.appendReplyQuote("Quoted context"));
+      const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+      fireEvent.change(document.querySelector('input[type="file"]')!, {
+        target: { files: [file] },
+      });
+      const text = harness === "codex-native" ? "$Team:Review arg" : "/Team:Review arg";
+      fireEvent.change(textarea(), { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      const marker =
+        harness === "codex-native" ? "[Attached file: src/a.ts]\n\n" : "[Attached: src/a.ts]\n\n";
+      expect(props.onSend).toHaveBeenCalledExactlyOnceWith(
+        `${marker}> Quoted context\n\n${text}`,
+        [file],
+        { version: 1, quotes: [{ before: marker, text: "Quoted context" }], text },
+      );
+      expect(onSendSlashCommand).not.toHaveBeenCalled();
+      expect(textarea()).toHaveValue("");
+      expect(screen.queryAllByTestId("composer-reply-quote")).toHaveLength(0);
+      expect(screen.queryByText("notes.txt")).toBeNull();
+    },
+  );
+
+  it.each([
+    ["claude-native", "quote"],
+    ["codex-native", "quote"],
+    ["claude-native", "upload"],
+    ["codex-native", "upload"],
+    ["claude-native", "mention"],
+    ["codex-native", "mention"],
+  ])("keeps a %s skill with only a %s on the ordinary reply path", (harness, context) => {
+    useChatStore.setState({
+      sessionHarness: harness,
+      pendingComposerAttachments: context === "mention" ? [{ path: "src/a.ts", isDir: false }] : [],
+    });
+    const onSendSlashCommand = vi.fn();
+    const props = composerProps({ onSendSlashCommand, isNativeWrapper: true });
+    const ref = createRef<ComponentRef<typeof Composer>>();
+    render(<Composer {...props} ref={ref} />);
+    if (context === "quote") act(() => ref.current?.appendReplyQuote("Quoted context"));
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+    if (context === "upload")
+      fireEvent.change(document.querySelector('input[type="file"]')!, {
+        target: { files: [file] },
+      });
+    const text = harness === "codex-native" ? "$Team:Review arg" : "/Team:Review arg";
+    fireEvent.change(textarea(), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const marker =
+      harness === "codex-native" ? "[Attached file: src/a.ts]\n\n" : "[Attached: src/a.ts]\n\n";
+    if (context === "quote")
+      expect(props.onSend).toHaveBeenCalledExactlyOnceWith(
+        `> Quoted context\n\n${text}`,
+        undefined,
+        { version: 1, quotes: [{ before: "", text: "Quoted context" }], text },
+      );
+    else
+      expect(props.onSend).toHaveBeenCalledExactlyOnceWith(
+        context === "mention" ? marker + text : text,
+        context === "upload" ? [file] : undefined,
+      );
+    expect(onSendSlashCommand).not.toHaveBeenCalled();
+    expect(textarea()).toHaveValue("");
+    expect(screen.queryAllByTestId("composer-reply-quote")).toHaveLength(0);
+    expect(screen.queryByText("notes.txt")).toBeNull();
+  });
+
+  it.each(["success", "failure", "no conversation"])(
+    "keeps typed generic side-chat cleanup on %s",
+    async (outcome) => {
+      let resolve: (value: { childSessionId: string }) => void = () => {};
+      let reject: (reason: Error) => void = () => {};
+      const creation = vi.spyOn(sessionsApi, "createSideChat").mockImplementation(
+        () =>
+          new Promise((yes, no) => {
+            resolve = yes;
+            reject = no;
+          }),
+      );
+      const openSideChatWithDraft = vi.fn();
+      useChatStore.setState({
+        sessionHarness: "claude-sdk",
+        openSideChatWithDraft,
+        ...(outcome === "no conversation" ? { conversationId: null } : {}),
+      });
+      const onSendSlashCommand = vi.fn();
+      const props = composerProps({ onSendSlashCommand });
+      render(<Composer {...props} />);
+      fireEvent.change(textarea(), { target: { value: "/SIDE keep  spacing" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(textarea()).toHaveValue("/SIDE keep  spacing");
+      expect(onSendSlashCommand).not.toHaveBeenCalled();
+      expect(props.onSend).not.toHaveBeenCalled();
+      if (outcome === "no conversation") {
+        expect(creation).not.toHaveBeenCalled();
+        return;
+      }
+      expect(creation).toHaveBeenCalledExactlyOnceWith("conv_catalog");
+      await act(async () => {
+        if (outcome === "success") resolve({ childSessionId: "child" });
+        else reject(new Error("Cannot create"));
+      });
+      if (outcome === "success") {
+        expect(openSideChatWithDraft).toHaveBeenCalledExactlyOnceWith(
+          "child",
+          "keep  spacing",
+          "conv_catalog",
+        );
+        expect(textarea()).toHaveValue("");
+      } else expect(textarea()).toHaveValue("/SIDE keep  spacing");
+    },
+  );
+
+  it("keeps quoted catalog commands on the ordinary message path", () => {
+    const onSendSlashCommand = vi.fn();
+    const props = composerProps({ onSendSlashCommand });
+    const ref = createRef<ComponentRef<typeof Composer>>();
+    render(<Composer {...props} ref={ref} />);
+    act(() => ref.current?.appendReplyQuote("Quoted context"));
+    fireEvent.change(textarea(), { target: { value: "/Team:Review arg" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(textarea()).toHaveValue("");
+    expect(screen.queryAllByTestId("composer-reply-quote")).toHaveLength(0);
+    expect(onSendSlashCommand).not.toHaveBeenCalled();
+    expect(props.onSend).toHaveBeenCalledExactlyOnceWith(
+      "> Quoted context\n\n/Team:Review arg",
+      undefined,
+      expect.objectContaining({ text: "/Team:Review arg" }),
+    );
+  });
 });

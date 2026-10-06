@@ -16,6 +16,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, TextIO, TypeAlias
@@ -70,6 +71,8 @@ from rich.markup import escape
 from rich.text import Text
 
 from omnigent.cli_invocation import cli_invocation
+from omnigent.entities.conversation import SkillCommandDelivery
+from omnigent.repl._skill_commands import SkillCommandJournal, admission_label
 from omnigent.spec.types import SkillSpec
 
 if TYPE_CHECKING:
@@ -2451,12 +2454,14 @@ class _SessionsChatReplAdapter:
         await self._recover_runner_if_needed()
         await self._bind_runner_if_needed()
 
+        invocation_id = uuid.uuid4().hex
         event_payload: dict[str, object] = {
             "type": "slash_command",
             "data": {
                 "kind": "skill",
                 "name": skill_name,
                 "arguments": arguments,
+                "stable_id": invocation_id,
             },
         }
         if self._model_override is not None:
@@ -2474,7 +2479,21 @@ class _SessionsChatReplAdapter:
                     file=sys.stderr,
                     flush=True,
                 )
-            await self._client.sessions.post_event(session_id, event_payload)
+            journal = SkillCommandJournal(self._client._base_url, session_id)
+            journal.save(event_payload)
+            result = await self._client.sessions.post_event(session_id, event_payload)
+            raw_delivery = result.get("delivery")
+            admission = "unknown"
+            if raw_delivery is not None:
+                delivery = SkillCommandDelivery.model_validate(raw_delivery)
+                journal.record(delivery)
+                admission = delivery.status
+            if admission != "accepted":
+                raise RuntimeError(
+                    f"Skill admission is {admission}. "
+                    f"Use /recover-skill {invocation_id} to check saved admission. "
+                    f"Invocation {invocation_id}."
+                )
             while not self._turn_done.is_set():
                 try:
                     await asyncio.wait_for(
@@ -4829,7 +4848,7 @@ async def _cmd_help(
     # wall. Commands not listed in a group still render (under "Other"), so a
     # newly registered command is never silently hidden from /help.
     groups: list[tuple[str, list[str]]] = [
-        ("Chat", ["/new", "/clear", "/switch", "/fork", "/history", "/cancel"]),
+        ("Chat", ["/new", "/clear", "/switch", "/fork", "/history", "/recover-skill", "/cancel"]),
         ("Context", ["/compact", "/context", "/model", "/effort"]),
         ("Display", ["/theme"]),
         ("Diagnostics", ["/logs", "/report"]),
@@ -5787,6 +5806,74 @@ async def _cmd_fork(
     )
 
 
+@_cmd("/recover-skill", "Check saved skill admission without resending; optional invocation ID")
+async def _cmd_recover_skill(
+    arg: str,
+    session: _ReplSession,
+    client: OmnigentClient,
+    host: TerminalHost,
+    fmt: RichBlockFormatter,
+) -> None:
+    from rich.text import Text
+
+    conversation_id = getattr(session, "session_id", None)
+    if not isinstance(conversation_id, str):
+        host.output(Text("  No active conversation."))
+        return
+    invocation_id = arg.strip()
+    if invocation_id and not re.fullmatch(r"[0-9a-f]{32}", invocation_id):
+        host.output(
+            Text(
+                "  Use /recover-skill with a 32-character invocation ID, "
+                "or without an ID to list submissions."
+            )
+        )
+        return
+    try:
+        journal = SkillCommandJournal(client._base_url, conversation_id)
+        submissions = {entry.event.data.stable_id: entry for entry in journal.submissions()}
+        items = await _list_all_conversation_items(client, conversation_id, strict=True)
+        found: set[str] = set()
+        for item in items:
+            if item.get("type") != "slash_command" or item.get("delivery") is None:
+                continue
+            delivery = SkillCommandDelivery.model_validate(item["delivery"])
+            if invocation_id and delivery.invocation_id != invocation_id:
+                continue
+            found.add(delivery.invocation_id)
+            _render_slash_command_history_item(item, host, fmt)
+            if delivery.historical:
+                host.output(Text("  Historical copies cannot be recovered."))
+            else:
+                journal.record(delivery)
+        for identity, submission in submissions.items():
+            if identity in found or (invocation_id and identity != invocation_id):
+                continue
+            command = submission.event.data
+            host.output(Text(f"  /{command.name} {command.arguments}".rstrip(), style=fmt.muted))
+            label = (
+                admission_label(submission.delivery)
+                if submission.delivery
+                else "Admission unknown"
+            )
+            host.output(
+                Text(f"  {label}. Invocation {identity}. No saved claim found.", style=fmt.muted)
+            )
+        if invocation_id and invocation_id not in found and invocation_id not in submissions:
+            host.output(
+                Text(
+                    f"  No saved claim or local submission for {invocation_id}. "
+                    "Outcome remains unknown."
+                )
+            )
+        if not invocation_id and not found and not submissions:
+            host.output(Text("  No saved skill submissions in this conversation."))
+        host.output(Text("  Admission check only. Nothing was resent.", style=fmt.muted))
+    except Exception as exc:
+        logging.getLogger(__name__).exception("Skill admission check failed")
+        host.output(Text(f"  Could not check skill admission: {exc}. Nothing was resent."))
+
+
 @_cmd("/history", "Show current conversation history")
 async def _cmd_history(
     arg: str,  # noqa: ARG001 — dispatch-contract params
@@ -6473,6 +6560,8 @@ COMMANDS["/exit"] = COMMANDS["/quit"]
 async def _list_all_conversation_items(
     client: OmnigentClient,
     conv_id: str,
+    *,
+    strict: bool = False,
 ) -> list[dict[str, object]]:
     """
     Fetch every item in *conv_id*, paginating past the
@@ -6504,12 +6593,16 @@ async def _list_all_conversation_items(
             # list — unlike the broad fallback below, this failure is
             # recoverable.
             if restarts >= _LIST_ITEMS_MAX_RESTARTS:
+                if strict:
+                    raise
                 break
             restarts += 1
             all_items = []
             after = None
             continue
-        except Exception:  # noqa: BLE001 — overlay builder: any other per-page error falls back to whatever was already fetched; partial sidebar beats no sidebar
+        except Exception:
+            if strict:
+                raise
             break
         page: list[dict[str, object]] = list(raw_page) if raw_page else []
         if not page:
@@ -6519,7 +6612,9 @@ async def _list_all_conversation_items(
             break
         last_item = page[-1]
         last_id = last_item.get("id") if isinstance(last_item, dict) else None
-        if not isinstance(last_id, str):
+        if not isinstance(last_id, str) or last_id == after:
+            if strict:
+                raise RuntimeError("History pagination did not advance")
             break
         after = last_id
     return all_items
@@ -8340,6 +8435,8 @@ def _consume_pending_local_skill_slash_command(
     :returns: ``True`` when a matching pending local echo was found
         and removed.
     """
+    if item.get("delivery") is not None:
+        return False
     pending = getattr(session, "_pending_local_skill_slash_commands", None)
     if not isinstance(pending, list):
         return False
@@ -8379,6 +8476,18 @@ def _render_slash_command_history_item(
     output = item.get("output")
     label = f"/{name}" if not arguments else f"/{name} {arguments}"
     host.output(Text(f"  {label}", style=fmt.muted))
+    if item.get("delivery") is not None:
+        delivery = SkillCommandDelivery.model_validate(item["delivery"])
+        host.output(
+            Text(
+                f"  {admission_label(delivery)}. Invocation {delivery.invocation_id}.",
+                style=fmt.muted,
+            )
+        )
+        if not delivery.historical:
+            host.output(
+                Text(f"  Check with /recover-skill {delivery.invocation_id}", style=fmt.muted)
+            )
     if isinstance(output, str) and output:
         host.output(Text(f"  {output}", style=fmt.muted))
 

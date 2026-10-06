@@ -281,6 +281,22 @@ class Conversation:
 # ── Conversation item data types ───────────────────────
 
 
+class SkillCommandDelivery(BaseModel):
+    invocation_id: str
+    fingerprint: str
+    status: Literal["unknown", "accepted", "rejected"] = "unknown"
+    context_item_id: str | None = None
+    historical: bool = False
+
+
+class SkillCommandContext(BaseModel):
+    """A paste payload enters history only after its command is admitted."""
+
+    command_item_id: str
+    status: Literal["unknown", "accepted", "rejected"] = "unknown"
+    historical: bool = False
+
+
 class MessageData(BaseModel):
     """
     Data for a message item (user or assistant).
@@ -316,6 +332,7 @@ class MessageData(BaseModel):
     subagent_return_id: str | None = Field(default=None, exclude_if=lambda value: value is None)
     interrupted: bool = Field(default=False, exclude_if=lambda value: value is False)
     stream_message_id: str | None = None
+    skill_context: SkillCommandContext | None = None
 
     @field_validator("content")
     @classmethod
@@ -749,6 +766,8 @@ class SlashCommandData(BaseModel):
     name: str
     arguments: str
     output: str | None = None
+    native_invocation: str | None = None
+    delivery: SkillCommandDelivery | None = None
 
 
 ItemData = (

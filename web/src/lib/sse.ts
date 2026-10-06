@@ -9,6 +9,7 @@
 // catch — please add an SSE-parser test when you touch this.
 
 import { readSubagentActivity } from "./subagentActivity";
+import { skillCommandDeliverySchema } from "./skillCommandDelivery";
 import type {
   BrowserActionRequestEvent,
   ClientTaskCancel,
@@ -1259,6 +1260,7 @@ function parseOutputItem(data: Record<string, unknown>): StreamEvent | null {
     const kind = rec.kind === "command" ? "command" : "skill";
     return {
       type: "slash_command",
+      delivery: skillCommandDeliverySchema.safeParse(rec.delivery).data,
       kind,
       name: String(rec.name ?? ""),
       arguments: String(rec.arguments ?? ""),

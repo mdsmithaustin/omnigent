@@ -1406,6 +1406,32 @@ def test_native_agent_tool_result_carries_only_completion_provenance(
     assert response_id == "active"
 
 
+@pytest.mark.parametrize("blocks", [False, True])
+def test_native_skill_expansion_preserves_hidden_replay_context(
+    tmp_path: Path, blocks: bool
+) -> None:
+    text = "Base directory for this skill: /tmp/orchard\n\nReply PERSIST_MARKER."
+    content = [{"type": "text", "text": text}] if blocks else text
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        _transcript_line(
+            {"type": "user", "message": {"role": "user", "content": content}, "isMeta": True}
+        ),
+        encoding="utf-8",
+    )
+    _, response_id, items = read_transcript_items_since(
+        transcript, 0, agent_name="Claude", current_response_id="active"
+    )
+    [item] = items
+    assert item.item_type == "message"
+    assert item.data == {
+        "role": "user",
+        "is_meta": True,
+        "content": [{"type": "input_text", "text": text}],
+    }
+    assert response_id == "active"
+
+
 def test_read_transcript_items_since_flags_compact_summary(tmp_path: Path) -> None:
     """
     An ``isCompactSummary`` user record is flagged, not rendered as a bubble.

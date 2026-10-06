@@ -12,6 +12,7 @@
 // passed through silently as `BaseItem & Record<string, unknown>` so the
 // translator can skip them without crashing.
 
+import type { SkillCommandDelivery } from "./skillCommandDelivery";
 import type { MessageContentBlock } from "./blocks";
 
 export interface BaseItem {
@@ -124,6 +125,7 @@ export interface CompactionItem extends BaseItem {
  * downstream LLMs don't see a phantom tool call.
  */
 export interface SlashCommandItem extends BaseItem {
+  delivery?: SkillCommandDelivery;
   type: "slash_command";
   /**
    * `"skill"` for plugin/Skill invocations, `"command"` for surfaced

@@ -58,6 +58,8 @@ from omnigent.entities import (
 )
 from omnigent.entities.conversation import (
     ITEM_TYPE_TO_DATA_CLS,
+    SkillCommandContext,
+    SkillCommandDelivery,
     parse_item_data,
 )
 from omnigent.entities.permission import SessionPermission
@@ -7259,38 +7261,18 @@ def _build_skill_slash_command_policy_body(body: SessionEventInput) -> SessionEv
     )
 
 
-async def _resolve_skill_meta_text_via_runner(
+async def _resolve_skill_invocation_via_runner(
     session_id: str,
     skill_name: str,
     arguments: str,
     runner_client: httpx.AsyncClient,
-) -> str:
-    """
-    Resolve a skill's hidden ``<skill>`` meta text on the bound runner.
-
-    Skill content is runner-owned: the runner reads the ``SKILL.md``
-    body and resource files from the skill's directory on its own
-    filesystem, so the embedded ``<path>`` and resource listing are
-    valid where the harness executes. Wraps
-    ``POST /v1/sessions/{id}/skills/resolve``.
-
-    :param session_id: Session/conversation identifier,
-        e.g. ``"conv_abc123"``.
-    :param skill_name: Exact skill name to resolve, e.g.
-        ``"code-review"``.
-    :param arguments: Raw argument string typed after the slash
-        command, e.g. ``"review this plan"``. Empty when none.
-    :param runner_client: HTTP client pointed at the bound runner.
-    :returns: The hidden ``<skill>`` meta text for a single
-        ``input_text`` block.
-    :raises OmnigentError: If the skill is not exposed for the session
-        (the runner 404s with the available list), or the runner is
-        unreachable / errors while resolving.
-    """
+    *,
+    allow_native: bool,
+) -> tuple[str, bool]:
     try:
         resp = await runner_client.post(
             f"/v1/sessions/{session_id}/skills/resolve",
-            json={"name": skill_name, "arguments": arguments},
+            json={"name": skill_name, "arguments": arguments, "allow_native": allow_native},
             timeout=10.0,
         )
     except (httpx.HTTPError, ConnectionError) as exc:
@@ -7328,13 +7310,90 @@ async def _resolve_skill_meta_text_via_runner(
             f"Skill {skill_name!r} not found. Available skills: {available}",
             code=ErrorCode.INVALID_INPUT,
         )
+    native_invocation = payload.get("native_invocation")
+    if (
+        allow_native
+        and isinstance(native_invocation, str)
+        and native_invocation.startswith(("/", "$"))
+    ):
+        return native_invocation, True
     meta_text = payload.get("meta_text")
     if not isinstance(meta_text, str):
         raise OmnigentError(
             f"Runner returned malformed skill resolution for {skill_name!r}: missing 'meta_text'",
             code=ErrorCode.INTERNAL_ERROR,
         )
-    return meta_text
+    return meta_text, False
+
+
+def _skill_command_identity(session_id: str, body: SessionEventInput) -> tuple[str, str, str]:
+    import hashlib
+    import uuid
+
+    _parse_skill_slash_command(body)
+    invocation_id = body.data.get("stable_id")
+    if invocation_id is None:
+        invocation_id = uuid.uuid4().hex
+        body.data["stable_id"] = invocation_id
+    if not isinstance(invocation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", invocation_id):
+        raise OmnigentError(
+            "Skill stable_id must be 32 lowercase hex characters", code=ErrorCode.INVALID_INPUT
+        )
+    submitted = {
+        "name": body.data["name"],
+        "arguments": body.data.get("arguments", ""),
+        "model_override": body.model_override,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(submitted, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    item_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"omnigent/{session_id}/skill-command/{invocation_id}"
+    ).hex
+    return invocation_id, item_id, fingerprint
+
+
+def _validate_skill_command_claim(
+    item: ConversationItem,
+    invocation_id: str,
+    fingerprint: str,
+    created_by: str | None,
+) -> None:
+    if (
+        not isinstance(item.data, SlashCommandData)
+        or item.data.delivery is None
+        or item.data.delivery.historical
+        or item.data.delivery.invocation_id != invocation_id
+        or item.data.delivery.fingerprint != fingerprint
+        or item.created_by != created_by
+    ):
+        raise OmnigentError(
+            "Skill invocation identity is already bound to another submission",
+            code=ErrorCode.CONFLICT,
+        )
+
+
+def _skill_command_result(item: ConversationItem) -> dict[str, Any]:
+    assert isinstance(item.data, SlashCommandData) and item.data.delivery is not None
+    return {
+        "queued": item.data.delivery.status == "accepted",
+        "item_id": item.id,
+        "delivery": item.data.delivery.model_dump(exclude_none=True),
+    }
+
+
+async def _read_skill_command_claim(
+    session_id: str,
+    body: SessionEventInput,
+    conversation_store: ConversationStore,
+    created_by: str | None,
+) -> dict[str, Any] | None:
+    invocation_id, item_id, fingerprint = _skill_command_identity(session_id, body)
+    existing = await asyncio.to_thread(conversation_store.get_item, session_id, item_id)
+    if existing is None:
+        return None
+    _validate_skill_command_claim(existing, invocation_id, fingerprint, created_by)
+    return _skill_command_result(existing)
 
 
 async def _dispatch_skill_slash_command_to_runner(
@@ -7344,98 +7403,72 @@ async def _dispatch_skill_slash_command_to_runner(
     conversation_store: ConversationStore,
     runner_client: httpx.AsyncClient,
     *,
+    allow_native: bool,
     agent: Agent,
     has_mcp_servers: bool,
     created_by: str | None,
-) -> str:
-    """
-    Persist a skill slash command and forward hidden skill context.
-
-    Skill content is runner-owned: this asks the bound runner to
-    resolve the skill (``POST /v1/sessions/{id}/skills/resolve``) into
-    its ``<skill>`` meta text, reading the ``SKILL.md`` body and
-    resource files from the skill's directory *on the runner* — so the
-    embedded ``<path>`` and resource listing are valid where the harness
-    executes. The server then persists the result (runner-resolves,
-    server-persists). Appends two conversation items with the same
-    response id:
-
-    * a visible ``slash_command`` item for the UI transcript;
-    * a hidden ``message`` item with ``is_meta=True`` containing the
-      full skill instructions for runner history replay.
-
-    Only the hidden message is sent to the runner as input. The visible
-    command is published as ``response.output_item.done`` after the
-    runner accepts the event.
-
-    :param session_id: Session/conversation identifier,
-        e.g. ``"conv_abc123"``.
-    :param conv: Conversation row for ``session_id``.
-    :param body: Structured ``slash_command`` event body.
-    :param conversation_store: Store used to append both durable
-        items.
-    :param runner_client: HTTP client pointed at the bound runner.
-    :param agent: Agent bound to the conversation.
-    :param has_mcp_servers: ``True`` when the agent spec declares MCP
-        servers; forwarded unchanged to the runner event.
-    :param created_by: Authenticated actor id, e.g.
-        ``"alice@example.com"``, or ``None`` in single-user mode.
-    :returns: The persisted visible ``slash_command`` item id.
-    :raises OmnigentError: If the skill is not exposed for the
-        session, or the runner is unreachable while resolving it.
-    """
+) -> dict[str, Any]:
     import uuid
 
+    invocation_id, item_id, fingerprint = _skill_command_identity(session_id, body)
     skill_name, arguments = _parse_skill_slash_command(body)
-    meta_text = await _resolve_skill_meta_text_via_runner(
+    input_text, native = await _resolve_skill_invocation_via_runner(
         session_id,
         skill_name,
         arguments,
         runner_client,
+        allow_native=allow_native,
     )
-
     response_id = f"turn_{uuid.uuid4().hex}"
-    meta_content = [{"type": "input_text", "text": meta_text}]
+    context_id = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"omnigent/{session_id}/skill-context/{invocation_id}"
+    ).hex
+    meta_content = [{"type": "input_text", "text": input_text}]
+    delivery = SkillCommandDelivery(
+        invocation_id=invocation_id,
+        fingerprint=fingerprint,
+        context_item_id=None if native else context_id,
+    )
     visible_item = NewConversationItem(
         type=_SLASH_COMMAND_TYPE,
+        stable_id=item_id,
         response_id=response_id,
         data=SlashCommandData(
             agent=agent.name,
             kind="skill",
             name=skill_name,
             arguments=arguments,
+            native_invocation=input_text if native else None,
+            delivery=delivery,
         ),
         created_by=created_by,
     )
-    meta_item = NewConversationItem(
-        type="message",
-        response_id=response_id,
-        data=MessageData(
-            role="user",
-            content=meta_content,
-            is_meta=True,
-        ),
-        created_by=created_by,
-    )
-    persisted_items = await asyncio.to_thread(
-        conversation_store.append,
-        session_id,
-        [visible_item, meta_item],
-    )
-    visible = persisted_items[0]
+    items = [visible_item]
+    if not native:
+        items.append(
+            NewConversationItem(
+                type="message",
+                stable_id=context_id,
+                response_id=response_id,
+                data=MessageData(
+                    role="user",
+                    content=meta_content,
+                    is_meta=True,
+                    skill_context=SkillCommandContext(command_item_id=item_id),
+                ),
+                created_by=created_by,
+            )
+        )
+    visible = await asyncio.to_thread(conversation_store.claim_skill_command, session_id, items)
+    _validate_skill_command_claim(visible, invocation_id, fingerprint, created_by)
+    if visible.deduplicated:
+        return _skill_command_result(visible)
 
-    # Mirror the plain-message path's title seeding: a session whose FIRST
-    # message is a skill invocation (web landing composer, REPL) would
-    # otherwise keep a NULL title and the sidebar falls back to the
-    # conversation id. Titled from the typed command ("/debate kafka…"),
-    # NOT the hidden meta item — that's the full SKILL.md instruction blob.
-    command_text = f"/{skill_name} {arguments}" if arguments else f"/{skill_name}"
-    await _seed_missing_title(
-        conv,
-        [{"type": "input_text", "text": command_text}],
-        conversation_store,
-    )
-
+    pending_id = None
+    if native:
+        pending_id = pending_inputs.record(
+            session_id, meta_content, created_by=created_by, persisted_item_id=visible.id
+        )
     runner_body: dict[str, Any] = {
         "type": "message",
         "role": "user",
@@ -7443,48 +7476,60 @@ async def _dispatch_skill_slash_command_to_runner(
         "agent_id": conv.agent_id,
         "model": agent.name,
         "has_mcp_servers": has_mcp_servers,
-        # Live-renderer hint: the runner drops ``browser_*`` schemas for
-        # the turn when no renderer is subscribed to the session stream.
         "browser_renderer_available": session_stream.has_subscribers(session_id),
-        # The forwarded message carries ``meta_content`` — i.e. the
-        # META item (persisted_items[1]), not the user-visible item.
-        # Hand the runner that id so a cold-cache reload drops the
-        # right persisted copy (see _forward_event_to_runner).
-        "persisted_item_id": persisted_items[1].id,
+        "persisted_item_id": item_id if native else context_id,
+        "command_admission": {"item_id": item_id, "fingerprint": fingerprint},
     }
-    effective_runner_override = (
+    effective_override = (
         body.model_override if body.model_override is not None else conv.model_override
     )
-    if effective_runner_override is not None:
-        runner_body["model_override"] = effective_runner_override
-    # Per-session brain-harness override — create-time only, so no
-    # per-event value exists; the persisted column is the source. The
-    # "auto" sentinel is resolved to a concrete harness at first-message
-    # time and never forwarded verbatim.
+    if effective_override is not None:
+        runner_body["model_override"] = effective_override
     if conv.harness_override is not None and conv.harness_override != "auto":
         runner_body["harness_override"] = conv.harness_override
-
+    accepted = False
     try:
-        await runner_client.post(
+        command_text = f"/{skill_name} {arguments}" if arguments else f"/{skill_name}"
+        await _seed_missing_title(
+            conv, [{"type": "input_text", "text": command_text}], conversation_store
+        )
+        response = await runner_client.post(
             f"/v1/sessions/{session_id}/events",
             json=runner_body,
             timeout=_RUNNER_FORWARD_TIMEOUT,
         )
-        event = OutputItemDoneEvent(type="response.output_item.done", item=visible.to_api_dict())
-        session_stream.publish(session_id, event.model_dump())
-    except (httpx.HTTPError, ConnectionError) as exc:
-        _logger.exception(
-            "Forward of skill slash command failed for session=%s",
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        receipt = payload.get("delivery") if isinstance(payload, dict) else None
+        if (
+            isinstance(receipt, dict)
+            and receipt.get("item_id") == item_id
+            and receipt.get("fingerprint") == fingerprint
+            and (
+                (response.is_success and receipt.get("status") == "accepted")
+                or (400 <= response.status_code < 500 and receipt.get("status") == "rejected")
+            )
+        ):
+            status = receipt["status"]
+            visible = await asyncio.to_thread(
+                conversation_store.settle_skill_command, session_id, item_id, fingerprint, status
+            )
+            accepted = status == "accepted"
+    except (httpx.HTTPError, ConnectionError):
+        _logger.warning(
+            "Skill command admission is unknown for session=%s item=%s",
             session_id,
-            extra={"session_id": session_id},
+            item_id,
+            exc_info=True,
         )
-        _publish_status(session_id, "idle")
-        raise OmnigentError(
-            "Runner is unreachable; message was persisted but could not be delivered. "
-            "The runner may be restarting — retry or spawn a new session.",
-            code=ErrorCode.RUNNER_UNAVAILABLE,
-        ) from exc
-    return visible.id
+    finally:
+        if pending_id is not None and not accepted:
+            pending_inputs.resolve(session_id, pending_id)
+    event = OutputItemDoneEvent(type="response.output_item.done", item=visible.to_api_dict())
+    session_stream.publish(session_id, event.model_dump())
+    return _skill_command_result(visible)
 
 
 def _title_content_from_item(
@@ -11744,7 +11789,7 @@ __all__ = [
     "_require_permission_mode_forward",
     "_resolve_harness",
     "_resolve_llm_model",
-    "_resolve_skill_meta_text_via_runner",
+    "_resolve_skill_invocation_via_runner",
     "_resolve_subagent_spec",
     "_resource_event_item_from_sse",
     "_routing_decision_item_from_sse",

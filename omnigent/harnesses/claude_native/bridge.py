@@ -7926,11 +7926,6 @@ def _attachment_transcript_items_from_entry(
 # ``<bash-*>`` records when the operator types ``!cmd``. All are
 # CLI scaffolding, not user-typed content — rendering any of them as
 # a user bubble shows raw markup to a web viewer.
-# Today: drop isMeta + every CLI-scaffolding-prefixed record; for
-# ``<command-name>`` records also surface Skills as ``slash_command``
-# items. The original blanket drop was reverted because it
-# hid Skills; we keep the broad scaffolding filter and just
-# selectively re-surface the Skill case.
 _COMMAND_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
 _COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 _COMMAND_STDOUT_RE = re.compile(r"<local-command-stdout>(.*?)</local-command-stdout>", re.DOTALL)
@@ -8502,6 +8497,9 @@ def _user_transcript_items_from_entry(
         entry.get("isMeta") is True
         and return_id is None
         and not any(_is_task_completion_text(text) for text in notification_texts)
+        and not any(
+            text.startswith("Base directory for this skill: ") for text in notification_texts
+        )
     ):
         return current_response_id, []
     source_key = _transcript_source_key(entry, line_number, record_offset)

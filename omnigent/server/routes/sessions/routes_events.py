@@ -86,6 +86,7 @@ from omnigent.server.background_session_titles import (
     prepare_background_session_title,
     schedule_background_child_task_summary,
 )
+from omnigent.server.feature_flags import Feature
 from omnigent.server.host_registry import HostRegistry, RunnerExitReports
 from omnigent.server.routes._auth_helpers import (
     attribution_user as _attribution_user,
@@ -205,6 +206,7 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_policy_deny,
     _publish_session_superseded,
     _publish_status,
+    _read_skill_command_claim,
     _remove_session_worktree_best_effort,
     _require_external_status_forward,
     _require_filesystem_attachment_harness,
@@ -909,6 +911,12 @@ def register_events_routes(
                 pass
             else:
                 created_by = body_created_by
+        if body.type == _SLASH_COMMAND_TYPE:
+            existing_command = await _read_skill_command_claim(
+                session_id, body, conversation_store, created_by
+            )
+            if existing_command is not None:
+                return existing_command
         # Validate event type at the route boundary. Anything not in
         # ``_ALLOWED_EVENT_TYPES`` is a client mistake — failing here
         # is far better than silently persisting an item the agent
@@ -2732,19 +2740,20 @@ def register_events_routes(
                     f"Session {session_id!r} has no agent; cannot run slash command",
                     code=ErrorCode.INVALID_INPUT,
                 )
-            item_id = await _dispatch_skill_slash_command_to_runner(
+            command_result = await _dispatch_skill_slash_command_to_runner(
                 session_id,
                 conv,
                 body,
                 conversation_store,
                 runner_client,
+                allow_native=request.app.state.feature_flags.enabled(Feature.NATIVE_SKILL_ROUTING),
                 agent=_agent,
                 has_mcp_servers=_has_mcp_servers,
                 created_by=created_by,
             )
             if pending_background_title is not None:
                 pending_background_title.schedule(expected_seed_title=conv.title)
-            return {"queued": True, "item_id": item_id}
+            return command_result
         dispatch = await _dispatch_session_event_to_runner(
             session_id,
             conv,

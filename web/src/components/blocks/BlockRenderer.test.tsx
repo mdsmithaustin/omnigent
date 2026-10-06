@@ -11,6 +11,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RenderItem } from "@/lib/renderItems";
 import { ConversationScrollLockContext } from "@/components/ai-elements/conversation";
+import { ConversationScopeContext } from "@/components/chat/conversationScope";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import { normalizeExplicitMathDelimiters } from "@/components/ai-elements/mathMarkdown";
 import { BlockRenderer } from "./BlockRenderer";
@@ -561,6 +562,85 @@ describe("BlockRenderer dispatch", () => {
       startedAt: null,
       duration: undefined,
     });
+
+    it.each([
+      ["accepted", false, "Admitted; completion not confirmed"],
+      ["rejected", false, "Rejected before admission"],
+      ["unknown", false, "Admission unknown"],
+      ["accepted", true, "Historical copy"],
+    ] as const)(
+      "keeps %s admission (historical=%s) visible outside Worked",
+      (status, historical, label) => {
+        const invocationId = "ab".repeat(16);
+        const items: RenderItem[] = [
+          {
+            kind: "slash_command",
+            itemId: "native_skill",
+            slashKind: "skill",
+            name: "recovery-nonce",
+            arguments: "nonce",
+            output: null,
+            delivery: {
+              invocation_id: invocationId,
+              fingerprint: "cd".repeat(32),
+              status,
+              historical,
+            },
+          },
+          tool(1, "Bash"),
+          { kind: "text", itemId: "answer", text: "Nonce written.", final: true },
+        ];
+        render(
+          <ConversationScopeContext.Provider value="conv_native_skill">
+            <BlockRenderer items={items} sessionStatus="idle" />
+          </ConversationScopeContext.Provider>,
+        );
+        const fold = screen.getByRole("button", { name: "Worked" });
+        expect(fold).toHaveAttribute("aria-expanded", "false");
+        expect(screen.getByText("Nonce written.")).toBeVisible();
+        expect(screen.getByText(label)).toBeVisible();
+        expect(screen.getByTestId("slash-command-card")).toBeVisible();
+        const details = screen.getByText("Invocation details").closest("details")!;
+        fireEvent.click(screen.getByText("Invocation details"));
+        expect(details).toHaveAttribute("open");
+        expect(screen.getByText(invocationId)).toBeVisible();
+        if (historical) {
+          expect(screen.queryByRole("button", { name: "Check admission" })).toBeNull();
+        } else {
+          expect(screen.getByRole("button", { name: "Check admission" })).toBeEnabled();
+        }
+        fireEvent.click(fold);
+        fireEvent.click(fold);
+        expect(fold).toHaveAttribute("aria-expanded", "false");
+        expect(screen.getByText(label)).toBeVisible();
+      },
+    );
+
+    it.each(["skill", "command"] as const)(
+      "keeps legacy %s without delivery inside Worked",
+      (slashKind) => {
+        const items: RenderItem[] = [
+          {
+            kind: "slash_command",
+            itemId: "legacy_command",
+            slashKind,
+            name: "legacy-command",
+            arguments: "",
+            output: null,
+          },
+          tool(1, "Bash"),
+          { kind: "text", itemId: "answer", text: "Legacy answer.", final: true },
+        ];
+        render(<BlockRenderer items={items} sessionStatus="idle" />);
+        const fold = screen.getByRole("button", { name: "Worked" });
+        expect(fold).toHaveAttribute("aria-expanded", "false");
+        expect(screen.queryByTestId("slash-command-card")).toBeNull();
+        expect(screen.getByText("Legacy answer.")).toBeVisible();
+        fireEvent.click(fold);
+        expect(screen.getByText("legacy-command")).toBeVisible();
+        expect(screen.queryByText("Invocation details")).toBeNull();
+      },
+    );
 
     it("folds narration + tool runs behind the Worked row, leaving the answer visible", () => {
       // Codex-desktop demarcation: once the turn settles, the whole
