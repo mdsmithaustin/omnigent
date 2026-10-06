@@ -125,7 +125,7 @@ def subprocess_bridge_root() -> Iterator[Path]:
     """
     production_root = (
         Path(tempfile.gettempdir())
-        / f"omnigent-{claude_native_bridge.stable_user_id()}"
+        / f"mdma-{claude_native_bridge.stable_user_id()}"
         / "claude-native"
     )
     production_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -551,18 +551,6 @@ def test_trusted_parent_accepts_qwen_native_bridge_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    The relay's bridge-root allowlist accepts qwen-native bridge dirs.
-
-    The comment relay (``start_tool_relay`` → ``_ensure_secure_dir`` →
-    ``_trusted_parent_for_bridge_dir``) writes its JSON file under the
-    harness's bridge dir, validating it lives below a known bridge root.
-    qwen-native reuses this relay but keeps files under its own root
-    (``$TMPDIR/omnigent-<uid>/qwen-native``); if that root is missing from the
-    allowlist, every qwen-native session raises ``not under an allowed bridge
-    root`` and the relay never starts (observed in a live runner log). This
-    pins the qwen-native branch so the regression can't return.
-    """
     from omnigent.harnesses.qwen_native import bridge as qwen_native_bridge
 
     # Distinct claude root so the qwen target can't match the claude branch
@@ -586,16 +574,6 @@ def test_trusted_parent_accepts_kiro_native_bridge_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    The relay's bridge-root allowlist accepts kiro-native bridge dirs.
-
-    kiro-native reuses the shared ``serve-mcp`` / relay infrastructure but keeps
-    files under its own root (``$TMPDIR/omnigent-<uid>/kiro-native``). Without the
-    kiro branch, ``start_tool_relay`` -> ``_ensure_secure_dir`` ->
-    ``_trusted_parent_for_bridge_dir`` raises ``not under an allowed bridge root``
-    and the relay (and serve-mcp's own ``server.json`` write) never start. This
-    pins the kiro-native branch.
-    """
     from omnigent.harnesses.kiro_native import bridge as kiro_native_bridge
 
     # Distinct claude root so the kiro target can't match the claude branch
@@ -619,17 +597,6 @@ def test_trusted_parent_accepts_devin_native_bridge_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    The relay's bridge-root allowlist accepts devin-native bridge dirs.
-
-    devin-native keeps its bridge files under its own uid-scoped temp root
-    (``$TMPDIR/omnigent-<uid>/devin-native``), the same shape as cursor-native.
-    Without the devin branch, the comment/tool relay's
-    ``start_tool_relay`` -> ``_ensure_secure_dir`` ->
-    ``_trusted_parent_for_bridge_dir`` raises ``not under an allowed bridge
-    root`` and the relay never starts for devin sessions. This pins the
-    devin-native branch.
-    """
     from omnigent.harnesses.devin_native import bridge as devin_native_bridge
 
     # Distinct claude root so the devin target can't match the claude branch
@@ -3401,7 +3368,7 @@ def test_generated_claude_subprocesses_pin_runner_tmpdir(
     runner_tmpdir = tmp_path / "runner-tmp"
     bridge_dir = (
         runner_tmpdir
-        / f"omnigent-{claude_native_bridge.stable_user_id()}"
+        / f"mdma-{claude_native_bridge.stable_user_id()}"
         / "claude-native"
         / "session"
     )
@@ -6657,7 +6624,7 @@ async def test_start_tool_relay_accepts_pi_native_bridge_root(
     """Relay startup accepts Pi-native's persistent bridge root."""
     from omnigent.harnesses.pi_native import bridge as pi_native_bridge
 
-    pi_root = tmp_path / ".omnigent" / "pi-native"
+    pi_root = tmp_path / ".omnigent-mdsmithaustin" / "pi-native"
     monkeypatch.setattr("omnigent.harnesses.pi_native.bridge._BRIDGE_ROOT", pi_root)
     bridge_dir = pi_native_bridge.prepare_bridge_dir("conv_pi")
     relay_file = bridge_dir / claude_native_bridge._TOOL_RELAY_FILE
@@ -6696,22 +6663,9 @@ async def test_start_tool_relay_accepts_codex_native_bridge_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Relay startup accepts Codex-native's persistent bridge root.
-
-    Codex-native reuses the Claude MCP relay but stores bridge files in
-    ``~/.omnigent/codex-native`` instead of Claude's ``/tmp`` bridge
-    root. A regression here logs "Failed to start comment relay" and
-    leaves Codex without comment/session tools.
-
-    :param tmp_path: Pytest temp directory used as an isolated user
-        state parent.
-    :param monkeypatch: Pytest monkeypatch fixture.
-    :returns: None.
-    """
     from omnigent.harnesses.codex_native import bridge as codex_native_bridge
 
-    codex_root = tmp_path / ".omnigent" / "codex-native"
+    codex_root = tmp_path / ".omnigent-mdsmithaustin" / "codex-native"
     monkeypatch.setattr("omnigent.harnesses.codex_native.bridge._BRIDGE_ROOT", codex_root)
     bridge_dir = codex_native_bridge.prepare_bridge_dir("conv_codex")
     relay_file = bridge_dir / claude_native_bridge._TOOL_RELAY_FILE
@@ -6757,23 +6711,9 @@ async def test_start_tool_relay_accepts_antigravity_native_bridge_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Relay startup accepts Antigravity-native's persistent bridge root (#1194).
-
-    Antigravity-native reuses the Claude MCP relay but stores bridge files in
-    ``~/.omnigent/antigravity-native`` (the same ``$HOME/.omnigent/<harness>``
-    shape codex uses). A regression in :func:`_trusted_parent_for_bridge_dir`
-    would reject the bridge dir, the relay would fail to write
-    ``tool_relay.json``, and the wrapped agy would get no ``sys_*`` tools.
-
-    :param tmp_path: Pytest temp directory used as an isolated user
-        state parent.
-    :param monkeypatch: Pytest monkeypatch fixture.
-    :returns: None.
-    """
     from omnigent.harnesses.antigravity_native import bridge as antigravity_native_bridge
 
-    antigravity_root = tmp_path / ".omnigent" / "antigravity-native"
+    antigravity_root = tmp_path / ".omnigent-mdsmithaustin" / "antigravity-native"
     monkeypatch.setattr(
         "omnigent.harnesses.antigravity_native.bridge._BRIDGE_ROOT", antigravity_root
     )
@@ -6822,23 +6762,9 @@ async def test_start_tool_relay_accepts_opencode_native_bridge_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Relay startup accepts OpenCode-native's persistent bridge root.
-
-    opencode-native reuses the Claude MCP relay but stores bridge files in
-    ``~/.omnigent/opencode-native`` (the same ``$HOME/.omnigent/<harness>``
-    shape codex/antigravity use). The missing allowlist entry made ``serve-mcp``
-    crash on startup (``_ensure_secure_dir`` → "not under an allowed bridge
-    root"), which opencode surfaced as ``MCP error -32000: Connection closed``
-    and the wrapped opencode got no ``sys_*`` tools. Guards the regression.
-
-    :param tmp_path: Pytest temp directory used as an isolated user state parent.
-    :param monkeypatch: Pytest monkeypatch fixture.
-    :returns: None.
-    """
     from omnigent.harnesses.opencode_native import bridge as opencode_native_bridge
 
-    opencode_root = tmp_path / ".omnigent" / "opencode-native"
+    opencode_root = tmp_path / ".omnigent-mdsmithaustin" / "opencode-native"
     monkeypatch.setattr("omnigent.harnesses.opencode_native.bridge._BRIDGE_ROOT", opencode_root)
     bridge_dir = opencode_native_bridge.prepare_bridge_dir("conv_oc")
     relay_file = bridge_dir / claude_native_bridge._TOOL_RELAY_FILE

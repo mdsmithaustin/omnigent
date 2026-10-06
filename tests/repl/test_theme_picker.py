@@ -204,7 +204,7 @@ def test_startup_picker_non_tty_defaults_to_light(
     result = startup_theme_picker(out=out)
     assert result is LIGHT_THEME
     # Should have persisted the choice.
-    config = (tmp_path / ".omnigent" / "config.yaml").read_text(encoding="utf-8")
+    config = (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").read_text(encoding="utf-8")
     assert "theme: light" in config
 
 
@@ -223,7 +223,7 @@ def test_startup_picker_non_tty_respects_dark_detection(
     out = io.StringIO()
     result = startup_theme_picker(out=out)
     assert result is DARK_THEME
-    config = (tmp_path / ".omnigent" / "config.yaml").read_text(encoding="utf-8")
+    config = (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").read_text(encoding="utf-8")
     assert "theme: dark" in config
 
 
@@ -243,5 +243,5 @@ def test_startup_picker_falls_back_without_unix_terminal_modules(
     # Both termios import sites were traversed safely. If either guard is
     # removed, this call raises ModuleNotFoundError before returning a theme.
     assert result is LIGHT_THEME
-    config = (tmp_path / ".omnigent" / "config.yaml").read_text(encoding="utf-8")
+    config = (tmp_path / ".omnigent-mdsmithaustin" / "config.yaml").read_text(encoding="utf-8")
     assert "theme: light" in config

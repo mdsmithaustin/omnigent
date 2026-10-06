@@ -323,7 +323,10 @@ async def test_probe_codex_model_options_uses_launch_config_and_marks_default(
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["DATABRICKS_HOST"] == "https://ws.example"
-    assert str(tmp_path / ".omnigent" / "cache" / "codex-model-probe") in env["CODEX_HOME"]
+    assert (
+        str(tmp_path / ".omnigent-mdsmithaustin" / "cache" / "codex-model-probe")
+        in env["CODEX_HOME"]
+    )
     assert Path(env["CODEX_HOME"]).is_dir()
 
 

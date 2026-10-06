@@ -1071,14 +1071,13 @@ def test_token_file_path_honors_data_dir_without_tui_sdk(tmp_path, monkeypatch) 
 
 
 def test_token_file_path_defaults_to_home_state_dir(tmp_path, monkeypatch) -> None:
-    """Without ``OMNIGENT_DATA_DIR`` the token file lives under ``~/.omnigent``."""
     from omnigent.cli_auth import _token_file_path
 
     monkeypatch.delenv("OMNIGENT_DATA_DIR", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     _purge_tui_sdk_modules()
 
-    assert _token_file_path() == tmp_path / ".omnigent" / "auth_tokens.json"
+    assert _token_file_path() == tmp_path / ".omnigent-mdsmithaustin" / "auth_tokens.json"
     assert "omnigent_ui_sdk.terminal" not in sys.modules, (
         "computing the auth token path imported the TUI SDK"
     )
