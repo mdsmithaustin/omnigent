@@ -16,6 +16,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from omnigent.harness_aliases import is_native_harness
 from omnigent.runner.app_support import (
     _client_safe_error_detail,
     _SpecEntry,
@@ -58,6 +59,9 @@ def register_model_option_routes(
         [str], Coroutine[Any, Any, ClaudeNativeUcodeConfig | None]
     ],
     _resolve_session_skills: Callable[[str], Coroutine[Any, Any, list[SkillSpec]]],
+    _native_skill_invocation: Callable[[str, SkillSpec], Coroutine[Any, Any, str | None]],
+    _load_history_as_input: Callable[[str], Coroutine[Any, Any, list[_JsonObject]]],
+    _session_histories: dict[str, list[_JsonObject]],
     _session_cursor_model_names: dict[str, dict[str, str]],
     _session_harness_name: Callable[[str], str | None],
     _session_spec_cache: dict[str, _SpecEntry | None],
@@ -404,6 +408,7 @@ def register_model_option_routes(
             )
         name = body.get("name")
         arguments = body.get("arguments", "")
+        allow_native = body.get("allow_native", False)
         if not isinstance(name, str) or not name:
             return JSONResponse(
                 status_code=400,
@@ -413,6 +418,14 @@ def register_model_option_routes(
             return JSONResponse(
                 status_code=400,
                 content={"error": "invalid_request", "detail": "'arguments' must be a string."},
+            )
+        if not isinstance(allow_native, bool):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request",
+                    "detail": "'allow_native' must be a boolean.",
+                },
             )
         skills = await _resolve_session_skills(session_id)
         skill = find_skill_by_name(skills, name)
@@ -425,7 +438,23 @@ def register_model_option_routes(
                     "available": sorted(s.name for s in skills),
                 },
             )
+        invocation = await _native_skill_invocation(session_id, skill) if allow_native else None
+        if invocation is not None:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "native_invocation": f"{invocation} {arguments}" if arguments else invocation,
+                },
+            )
+        history: list[_JsonObject] = []
+        if not is_native_harness(_session_harness_name(session_id)):
+            cached_history = _session_histories.get(session_id)
+            history = (
+                cached_history
+                if cached_history is not None
+                else await _load_history_as_input(session_id)
+            )
         return JSONResponse(
             status_code=200,
-            content={"meta_text": format_skill_meta_text(skill, arguments)},
+            content={"meta_text": format_skill_meta_text(skill, arguments, history=history)},
         )

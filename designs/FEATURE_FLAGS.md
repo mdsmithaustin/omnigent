@@ -30,6 +30,7 @@ lifecycle metadata.
 | `canvas` | Off | Web | 0.15.0 | Exposes the web Canvas route (`/canvas`) and its sidebar navigation: top-level sessions as draggable cards, one canvas per project. |
 | `custom_agents_settings_ui` | Off | Web | 0.18.0 | Exposes Custom agents settings when the server also advertises `agent_install`. |
 | `sidebar_grouping_ui` | Off | Web | 0.19.0 | Adds Grouping, Ordering and Show options to the sidebar filter menu, moves that menu to the Projects header, splits Shared sessions into their own section, lets a Status or Updated grouping replace the Projects, Shared and Sessions sections, and expands the session tooltip with Repo, PR and Created by. |
+| `native_skill_routing` | Off | Runtime | 0.17.0 | Routes eligible structured skill commands through Claude Code or Codex native loading. Server-only; see [Skill commands](../docs/SKILL_COMMANDS.md). |
 
 At the review release, each flag must be removed by making the feature
 unconditional, removing the feature, or moving a genuinely permanent operator
@@ -39,6 +40,8 @@ policy into normal server configuration.
 
 1. Deploy an immutable image with the feature absent from `OMNIGENT_FEATURES`.
 2. Enable it on one deployment, consistently across all replicas.
-3. Verify `GET /v1/info`, then reload and exercise the gated UI.
+3. For frontend-visible flags, verify `GET /v1/info`, then reload and exercise
+   the gated UI. For server-only flags, verify their documented behavior.
+   `native_skill_routing` does not appear in the frontend feature map.
 4. Expand by deployment cohort.
 5. Roll back by removing the key and redeploying the same image.

@@ -465,6 +465,7 @@ function slashCommandToBlock(item: SlashCommandItem): SlashCommandBlock {
   // field was added — matches the SSE shim in ``sse.ts``.
   return {
     type: "slash_command",
+    delivery: item.delivery,
     ctx: ctxFor(item),
     kind: item.kind === "command" ? "command" : "skill",
     name: item.name,

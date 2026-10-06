@@ -372,6 +372,12 @@ def history_to_input_items(
     for item in items:
         if item.type == "message":
             assert isinstance(item.data, MessageData)
+            if item.data.is_meta and not item.data.content:
+                continue
+            if item.data.skill_context is not None and (
+                item.data.skill_context.status != "accepted" or item.data.skill_context.historical
+            ):
+                continue
             # Pass content blocks through, stripping annotations
             # from output_text blocks. Annotations are output
             # metadata (file citations) — not input content for

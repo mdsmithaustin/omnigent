@@ -28,6 +28,7 @@ class Feature(StrEnum):
     IMPORT_REVIEW = "import_review"
     CUSTOM_AGENTS_SETTINGS_UI = "custom_agents_settings_ui"
     SIDEBAR_GROUPING_UI = "sidebar_grouping_ui"
+    NATIVE_SKILL_ROUTING = "native_skill_routing"
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,13 @@ FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
         description="Sidebar grouping, ordering and row metadata options, Shared section",
         owner="web",
         review_by_release="0.19.0",
+    ),
+    FeatureDefinition(
+        feature=Feature.NATIVE_SKILL_ROUTING,
+        description="Route eligible skill commands through native CLI skill loading",
+        owner="runtime",
+        review_by_release="0.17.0",
+        frontend_visible=False,
     ),
 )
 

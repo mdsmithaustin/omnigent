@@ -10,6 +10,7 @@
 // helpers below convert at the boundary so callers never see raw
 // wire fields.
 
+import type { SkillCommandDelivery } from "./skillCommandDelivery";
 import type { ConversationItem } from "./conversationItems";
 import type { MessageContentBlock } from "./blocks";
 import type { McpServerStartup } from "./events";
@@ -50,9 +51,12 @@ export interface ElicitResult {
   _meta?: Record<string, unknown>;
 }
 
+export type { SkillCommandDelivery } from "./skillCommandDelivery";
+
 /** Response body of `POST /v1/sessions/{id}/events` (202 Accepted). */
 export interface PostEventResponse {
-  /** True for item-typed events (persisted); false for interrupt / approval. */
+  delivery?: SkillCommandDelivery;
+  /** For skill commands, true only when the runner accepted responsibility. */
   queued: boolean;
   /**
    * Store-assigned conversation item id for item-typed events.
@@ -444,6 +448,7 @@ export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
 }
 
 function postEventResponseFromWire(wire: {
+  delivery?: SkillCommandDelivery;
   queued: boolean;
   item_id?: string;
   denied?: boolean;
@@ -453,6 +458,7 @@ function postEventResponseFromWire(wire: {
 }): PostEventResponse {
   return {
     queued: wire.queued,
+    delivery: wire.delivery,
     itemId: wire.item_id,
     denied: wire.denied,
     pendingId: wire.pending_id,
