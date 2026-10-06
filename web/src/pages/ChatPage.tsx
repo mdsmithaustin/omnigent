@@ -1,4 +1,5 @@
 import { SelectionPopup } from "@/components/chat/SelectionPopup";
+import { SkillCommandRecovery } from "@/components/composer/SkillCommandRecovery";
 import { useLoadedConversations } from "@/hooks/useSidebarData";
 import { useConversationRedirect } from "@/hooks/useConversationRedirect";
 import { MAIN_CANVAS_ID } from "@/canvas/canvasLayout";
@@ -1251,12 +1252,6 @@ interface MainAgentSurfaceProps {
   agentsError: unknown;
   disabled: boolean;
   onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
-  /**
-   * Invoke a skill via the `slash_command` event path. Gated off inside
-   * `MainAgentSurface` for terminal-first (native) sessions, where `/skill`
-   * is sent as plaintext for the vendor TUI to handle. See
-   * `ComposerProps.onSendSlashCommand`.
-   */
   onSendSlashCommand?: (name: string, args: string) => void;
   onStop: () => void;
   onShowReconnectHelp: () => void;
@@ -1560,25 +1555,17 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
     },
     [onSend],
   );
-  // Wrap the slash-command sender the same way (scroll to bottom on send).
-  // Gated off for native-wrapper sessions (claude-native / codex-native):
-  // there the composer's `/skill` must reach the vendor TUI as plaintext
-  // (the server has no slash_command path for native sessions). Undefined
-  // → the composer falls through to the plaintext send for these. Keyed
-  // on the wrapper label, NOT `isTerminalFirst` — a terminal-first SDK
-  // session (embedded Omnigent REPL terminal) runs an in-process harness
-  // with the full server-side slash_command path.
   const isTerminalFirst = terminalFirst?.isTerminalFirst === true;
   const isNativeWrapper = terminalFirst?.isNativeWrapper === true;
   const handleSendSlashCommand = useMemo(
     () =>
-      onSendSlashCommand && !isNativeWrapper
+      onSendSlashCommand
         ? (name: string, args: string) => {
             setSendScrollNonce((n) => n + 1);
             onSendSlashCommand(name, args);
           }
         : undefined,
-    [onSendSlashCommand, isNativeWrapper],
+    [onSendSlashCommand],
   );
 
   // Synchronous bottom re-pin for the composer's growth, called in the same
@@ -1722,6 +1709,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             }
           />
 
+          <SkillCommandRecovery conversationId={conversationId} />
           <Composer
             ref={composerRef}
             disabled={disabled}
@@ -1832,14 +1820,7 @@ interface ComposerProps {
   isWorking: boolean;
   disabled: boolean;
   onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
-  /**
-   * Send a recognised skill as a `slash_command` event (the REPL's wire
-   * shape) instead of plaintext. When present and the typed command names
-   * a known session skill, `submit()` routes through this; otherwise the
-   * command falls through to `onSend` as plaintext. Undefined for
-   * native-terminal sessions, which always send `/skill` as plaintext so
-   * the vendor TUI loads the skill itself.
-   */
+  /** Invoke a catalog skill through structured admission when provided. */
   onSendSlashCommand?: (name: string, args: string) => void;
   onStop: () => void;
   agents: Agent[] | undefined;
@@ -1990,8 +1971,7 @@ export function buildSlashCommandMap(
  * Includes the arg-taking built-ins (each gated on its own capability
  * flag) plus every session skill — skills never auto-execute on
  * selection; the user sends them, and :func:`Composer.submit` routes a
- * known skill to a ``slash_command`` event (in-process) or plaintext
- * (native sessions).
+ * known skill through the optional structured-command callback.
  *
  * :param skills: Session skill metadata returned by host discovery.
  * :param showEffort: Whether ``/effort`` should be selectable.
@@ -3236,9 +3216,11 @@ function ComposerImpl(
     // Slash command path: text that reads as "/name ..." (not a file path) or
     // invokes a known catalog skill by its full name, with no attachments.
     // Built-ins run locally; anything unhandled falls through to plaintext.
-    const skill = onSendSlashCommand
+    const matchedSkill = onSendSlashCommand
       ? matchSlashCommandInvocation(trimmed, slashCommandNames)
       : null;
+    // A catalog name containing "/" reads as a path, so it stays plaintext.
+    const skill = matchedSkill?.command.slice(1).includes("/") ? null : matchedSkill;
     if (
       draft.quotes.length === 0 &&
       (skill !== null || isSlashCommandText(trimmed)) &&
@@ -3300,10 +3282,12 @@ function ComposerImpl(
         openGenericSideChat(trimmed.slice(cmd.length).trim());
         return;
       }
-      // Known skill on an in-process session: send a `slash_command` event so
-      // the server resolves it. Native-terminal sessions have no
-      // `onSendSlashCommand`; their vendor TUI loads the skill from plaintext.
-      if (skill !== null) {
+      // Known skill on an in-process session, or a native session routing
+      // skills: send a `slash_command` event so the server resolves it.
+      // Tokens the vendor TUI owns stay plaintext.
+      const vendorOwnsToken =
+        (showBtw && cmd === "/btw") || (usesNativeSideChatFork(sessionHarness) && cmd === "/side");
+      if (skill !== null && !vendorOwnsToken) {
         sendSkill(skill);
         return;
       }

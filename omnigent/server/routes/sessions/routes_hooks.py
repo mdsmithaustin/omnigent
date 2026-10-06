@@ -27,7 +27,6 @@ from omnigent.runtime import (
     get_agent_cache,
     get_caps,
     get_policy_store,
-    pending_inputs,
 )
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.approval import _ELICITATION_MODE
@@ -794,22 +793,6 @@ def register_hooks_routes(
             raise OmnigentError(
                 f"Session {session_id!r} not found.",
                 code=ErrorCode.NOT_FOUND,
-            )
-        # Dedup the native request-phase gate. A native session's
-        # ``UserPromptSubmit`` hook posts ``PHASE_REQUEST`` here for *every*
-        # prompt, but a web-UI prompt was already gated server-side by
-        # ``_evaluate_input_policy`` at POST /events (before injection, so no
-        # TUI freeze). Re-gating it here would double-prompt the human. A
-        # web-UI prompt in flight has a ``pending_inputs`` entry (recorded at
-        # dispatch, drained when the forwarder mirrors it back); a prompt
-        # typed directly in the TUI has none and never hit POST /events, so it
-        # is gated here — the hook is its only request-phase gate. The signal
-        # is "is a web prompt in flight", not text correlation (the native
-        # transcript gives no reliable id channel — see ``pending_inputs``).
-        if phase == Phase.REQUEST and pending_inputs.snapshot_for(session_id):
-            return Response(
-                content=json.dumps({"result": "POLICY_ACTION_ALLOW"}),
-                media_type="application/json",
             )
         agent = agent_store.get(conv.agent_id) if conv.agent_id else None
         if agent is None:

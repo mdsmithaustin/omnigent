@@ -107,3 +107,11 @@ def test_release_flags_have_lifecycle_metadata_and_expected_defaults() -> None:
         assert FeatureFlags().enabled(definition.feature) == (
             definition.feature is Feature.HARNESS_SETTINGS_UI
         )
+
+
+def test_native_skill_routing_is_opt_in_and_not_frontend_visible() -> None:
+    assert not resolve_feature_flags({}).enabled(Feature.NATIVE_SKILL_ROUTING)
+    flags = resolve_feature_flags({FEATURES_ENV_VAR: "native_skill_routing"})
+    assert flags.enabled(Feature.NATIVE_SKILL_ROUTING)
+    assert "native_skill_routing" in flags.enabled_names()
+    assert "native_skill_routing" not in flags.frontend_dict()

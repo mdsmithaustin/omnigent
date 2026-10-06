@@ -178,7 +178,10 @@ export type SessionEventInput =
   | { type: "interrupt"; data?: Record<string, unknown> }
   | { type: "stop_session"; data?: Record<string, unknown> }
   | { type: "retry_session"; data?: Record<string, unknown> }
-  | { type: "slash_command"; data: { kind: "skill"; name: string; arguments: string } }
+  | {
+      type: "slash_command";
+      data: { kind: "skill"; name: string; arguments: string; stable_id?: string };
+    }
   | { type: string; data: Record<string, unknown> };
 
 /**
