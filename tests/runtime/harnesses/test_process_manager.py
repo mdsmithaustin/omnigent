@@ -239,7 +239,7 @@ def test_default_tmp_parent_is_per_uid_on_posix(
     """
     monkeypatch.delenv(_TMP_PARENT_ENV_VAR, raising=False)
     parent = _default_tmp_parent()
-    assert parent == Path(f"/tmp/omnigent-{os.getuid()}")
+    assert parent == Path(f"/tmp/mdma-{os.getuid()}")
     # The shared parent that locked out other users must be gone.
     assert parent != Path("/tmp/omnigent")
 

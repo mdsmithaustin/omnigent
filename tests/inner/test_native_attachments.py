@@ -435,14 +435,15 @@ def test_attachment_cache_isolates_sessions_and_leaves_git_workspace_clean(
     assert status == ""
 
 
-def test_attachment_cache_defaults_to_omnigent_folder(
+def test_attachment_cache_defaults_to_fork_user_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The default storage location is independent of the working directory."""
     monkeypatch.delenv("OMNIGENT_DATA_DIR")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert (
-        attachment_cache_dir(tmp_path / "bridge").parent == tmp_path / ".omnigent" / "attachments"
+        attachment_cache_dir(tmp_path / "bridge").parent
+        == tmp_path / ".omnigent-mdsmithaustin" / "attachments"
     )
 
 
