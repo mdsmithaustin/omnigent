@@ -49,6 +49,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from omnigent.installation_defaults import SESSION_COOKIE_NAME
+
 
 @dataclass(frozen=True)
 class AccountsConfig:
@@ -95,7 +97,7 @@ class AccountsConfig:
         Uses the ``__Host-`` prefix on HTTPS (prevents subdomain
         cookie-tossing attacks) and a plain name on HTTP local dev.
         """
-        return "__Host-ap_session" if self.secure_cookies else "ap_session"
+        return f"__Host-{SESSION_COOKIE_NAME}" if self.secure_cookies else SESSION_COOKIE_NAME
 
     @staticmethod
     def from_env() -> AccountsConfig:

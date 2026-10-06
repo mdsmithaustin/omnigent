@@ -49,8 +49,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import tomllib
-
 from omnigent.installation_defaults import default_user_dir
 
 if TYPE_CHECKING:

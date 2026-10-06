@@ -40,6 +40,7 @@ import keyring
 import keyring.errors
 
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.installation_defaults import KEYRING_SERVICE, default_user_dir
 
 # The subset of keyring exceptions that mean "this backend can't serve the
 # request" (locked / headless / no backend) — we fall back to the file
@@ -49,7 +50,7 @@ _KEYRING_ERRORS: tuple[type[Exception], ...] = (keyring.errors.KeyringError,)
 # Service name under which secrets are stored in the OS keychain. A single
 # service groups all omnigent secrets; the per-secret ``name`` is the
 # keychain "username".
-_KEYRING_SERVICE = "omnigent"
+_KEYRING_SERVICE = KEYRING_SERVICE
 
 # Env var that forces the file backend even when ``keyring`` is importable.
 # Useful on CI / headless hosts where an OS keyring exists but is locked.
@@ -115,7 +116,7 @@ def _config_home() -> str:
     config_home = os.environ.get("OMNIGENT_CONFIG_HOME")
     if config_home:
         return config_home
-    return os.path.join(os.path.expanduser("~"), ".omnigent")
+    return str(default_user_dir())
 
 
 def _secrets_path() -> str:
