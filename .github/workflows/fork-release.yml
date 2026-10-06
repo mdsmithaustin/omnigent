@@ -1,0 +1,460 @@
+name: Fork Python release certification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, 'release/**', 'codex/fork-release-*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the certified bytes to the fork GitHub Release
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  UV_INDEX_URL: https://pypi.org/simple
+  PIP_INDEX_URL: https://pypi.org/simple
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+  OMNIGENT_SKIP_WEB_UI: 'true'
+  GH_TOKEN: ${{ github.token }}
+
+concurrency:
+  group: fork-release-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+      tag: ${{ steps.identity.outputs.tag }}
+      python_matrix: ${{ steps.matrix.outputs.python_matrix }}
+      addon_matrix: ${{ steps.matrix.outputs.addon_matrix }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - name: Verify pinned source and workflow identity
+        id: identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            test "$GITHUB_REPOSITORY" = mdsmithaustin/omnigent
+            test "$SOURCE_SHA" = "$GITHUB_SHA"
+            test "$SOURCE_SHA" = "$WORKFLOW_SHA"
+          fi
+          python scripts/fork_release.py check-source --source-sha "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          python -c 'import json, os; version=json.load(open(".github/fork-release.json"))["version"]; print("tag=fork/v"+version, file=open(os.environ["GITHUB_OUTPUT"], "a"))'
+
+      - uses: ./.github/actions/setup-uv
+      - name: Load immutable canonical test shards
+        id: matrix
+        run: |
+          uv run --no-project --with PyYAML==6.0.3 python - <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+          import shlex
+          import subprocess
+          import yaml
+          pin = json.loads(Path(".github/fork-release.json").read_bytes())
+          raw = subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"])
+          canonical = yaml.safe_load(raw)["jobs"]["pytest"]["strategy"]["matrix"]["include"]
+          assert len(canonical) == 16 and len({row["group"] for row in canonical}) == 16
+          rows = [*canonical, {"group": "codex-default", "paths": "tests/codex_parity"}]
+          assert len(rows) == 17 and len({row["group"] for row in rows}) == 17
+          assert rows[:16] == canonical
+          changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
+          paths = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
+          assert paths, "No addon tests found"
+          lean = [row for row in rows if row.get("markexpr", "not databricks") == "not databricks"]
+          assigned = {row["group"]: [] for row in lean}
+          policy = "tests/scripts/test_fork_release.py"
+          def under(path, prefix):
+              return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+          for path in sorted(set(paths) - {policy}):
+              matches = []
+              for row in lean:
+                  args = shlex.split(row["paths"])
+                  assert all(not arg.startswith("-") or arg.startswith("--ignore=") for arg in args)
+                  included = [arg for arg in args if not arg.startswith("-")]
+                  ignored = [arg.removeprefix("--ignore=") for arg in args if arg.startswith("--ignore=")]
+                  if any(under(path, prefix) for prefix in included) and not any(under(path, prefix) for prefix in ignored):
+                      matches.append(row["group"])
+              assert len(matches) == 1, (path, matches)
+              assigned[matches[0]].append(path)
+          addons = [{**row, "paths": " ".join(assigned[row["group"]])} for row in lean if assigned[row["group"]]]
+          addons.append({"group": "release-policy", "paths": policy, "workers": "0", "dist": "loadfile"})
+          flattened = [path for row in addons for path in shlex.split(row["paths"])]
+          assert sorted(flattened) == sorted(set(paths) | {policy}) and len(flattened) == len(set(flattened))
+          assert len({row["group"] for row in addons}) == len(addons)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("python_matrix=" + json.dumps({"include": rows}, separators=(",", ":")), file=output)
+              print("addon_matrix=" + json.dumps({"include": addons}, separators=(",", ":")), file=output)
+          PYCODE
+
+  lint:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: ./.github/actions/setup-uv
+      - uses: ./.github/actions/setup-pnpm
+      - name: Install repository lint prerequisites
+        run: |
+          python scripts/normalize_uv_lock_registry.py --check uv.lock
+          uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
+          pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
+          pnpm install --lockfile-only
+          git diff --exit-code pnpm-lock.yaml
+          curl -sSLf https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint -o /tmp/ktlint
+          echo 'a3fd620207d5c40da6ca789b95e7f823c54e854b7fade7f613e91096a3706d75  /tmp/ktlint' | sha256sum -c
+          chmod +x /tmp/ktlint
+          sudo mv /tmp/ktlint /usr/local/bin/ktlint
+      - name: Run canonical lint and version checks
+        run: |
+          uv run --no-sync pre-commit run --all-files --show-diff-on-failure
+          uv run --no-sync python scripts/update_versions.py check --expect "$(python -c 'import json; print(json.load(open(".github/fork-release.json"))["version"])')"
+          git diff --exit-code
+      - name: Record successful source and run
+        id: identity
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  python:
+    name: Fork Python (${{ matrix.group }})
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.source.outputs.python_matrix) }}
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: ./.github/actions/setup-uv
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          cache: ''
+      - name: Install upstream test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep bubblewrap tmux
+          if [[ "${{ matrix.group }}" == inner-rest ]]; then
+            sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring
+          fi
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+      - name: Run canonical Python shard
+        env:
+          PYTHONFAULTHANDLER: '1'
+          OMNIGENT_TEST_TIMEOUT_SCALE: '4'
+          PYTEST_PROGRESS_LOG_DIR: ${{ runner.temp }}/fork-pytest/progress
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest ${{ matrix.paths }} \
+            -m "${{ matrix.markexpr || 'not databricks' }}" \
+            -n ${{ matrix.workers || '8' }} \
+            --dist=${{ matrix.dist || 'loadfile' }} \
+            --timeout=${{ matrix.timeout || '300' }} \
+            --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Capture failed worker resource diagnostics
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          free -m > "$RUNNER_TEMP/fork-pytest/memory.txt"
+          ps -eo pid,ppid,rss,comm > "$RUNNER_TEMP/fork-pytest/processes.txt"
+          for file in memory.events memory.peak memory.max; do
+            if [[ -r "/sys/fs/cgroup/$file" ]]; then
+              cat "/sys/fs/cgroup/$file" > "$RUNNER_TEMP/fork-pytest/$file"
+            fi
+          done
+      - name: Retain shard test and worker diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-python-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-pytest/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Record successful source and run
+        id: identity
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  web:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-pnpm
+      - name: Run upstream web checks and fresh build
+        run: |
+          pnpm install --frozen-lockfile --filter web
+          node --test web/electron/test/browserViewRegistry_storage_isolation.test.js
+          node --test web/electron/test/designModeScript.test.js
+          pnpm --filter web run format:check
+          pnpm --filter web run lint
+          pnpm --filter web run type-check
+          pnpm --filter web run test:coverage
+          pnpm --filter web run build
+      - name: Record successful source and run
+        id: identity
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  addons:
+    name: Fork addons (${{ matrix.group }})
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.source.outputs.addon_matrix) }}
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: ./.github/actions/setup-uv
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          cache: ''
+      - name: Install upstream test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep bubblewrap tmux
+          if [[ "${{ matrix.group }}" == inner-rest ]]; then
+            sudo apt-get install -y --no-install-recommends dbus-daemon gnome-keyring
+          fi
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          uv sync --locked --extra all --group test
+      - name: Run changed addon shard
+        env:
+          PYTHONFAULTHANDLER: '1'
+          OMNIGENT_TEST_TIMEOUT_SCALE: '4'
+          PYTEST_PROGRESS_LOG_DIR: ${{ runner.temp }}/fork-pytest/progress
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u DATABRICKS_TOKEN -u GH_TOKEN -u GOOGLE_API_KEY -u MISTRAL_API_KEY -u OPENROUTER_API_KEY -u NEBIUS_API_KEY -u XAI_API_KEY uv run --no-sync pytest ${{ matrix.paths }} \
+            -m 'not databricks' \
+            -n ${{ matrix.workers || '8' }} \
+            --dist=${{ matrix.dist || 'loadfile' }} \
+            --timeout=${{ matrix.timeout || '300' }} \
+            --junitxml="$RUNNER_TEMP/fork-pytest/junit.xml" 2>&1 | tee "$RUNNER_TEMP/fork-pytest/pytest.log"
+      - name: Capture failed worker resource diagnostics
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fork-pytest"
+          free -m > "$RUNNER_TEMP/fork-pytest/memory.txt"
+          ps -eo pid,ppid,rss,comm > "$RUNNER_TEMP/fork-pytest/processes.txt"
+          for file in memory.events memory.peak memory.max; do
+            if [[ -r "/sys/fs/cgroup/$file" ]]; then
+              cat "/sys/fs/cgroup/$file" > "$RUNNER_TEMP/fork-pytest/$file"
+            fi
+          done
+      - name: Retain shard test and worker diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-addons-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-pytest/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Record successful source and run
+        id: identity
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      run_id: ${{ steps.identity.outputs.run_id }}
+      run_attempt: ${{ steps.identity.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: ./.github/actions/setup-uv
+      - uses: ./.github/actions/setup-pnpm
+      - name: Install canonical build prerequisites
+        run: uv sync --locked --group lint
+      - name: Build and smoke-test exact source distributions
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: bash scripts/build_fork_release.sh "$SOURCE_SHA" "$RUNNER_TEMP/fork-build"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-build/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record successful source and run
+        id: identity
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+  certificate:
+    needs: [source, lint, python, web, addons, build]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.source.result == 'success' && needs.lint.result == 'success' && needs.python.result == 'success' && needs.web.result == 'success' && needs.addons.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: fork-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-build
+      - name: Certify successful jobs and downloaded bytes
+        env:
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test "$SOURCE_SHA" = "$WORKFLOW_SHA"
+          printf '%s\n' "$NEEDS_JSON" > "$RUNNER_TEMP/needs.json"
+          python scripts/fork_release.py certify --source-sha "$SOURCE_SHA" --run-id "$GITHUB_RUN_ID" --needs-json "$RUNNER_TEMP/needs.json" --artifacts "$RUNNER_TEMP/fork-build/dist" --ui-inventory "$RUNNER_TEMP/fork-build/evidence/ui-inventory.json" --out "$RUNNER_TEMP/fork-build/evidence/certificate.json"
+          python scripts/fork_release.py verify --certificate "$RUNNER_TEMP/fork-build/evidence/certificate.json" --artifacts "$RUNNER_TEMP/fork-build/dist"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence = Path(os.environ["RUNNER_TEMP"]) / "fork-build/evidence"
+          receipt = json.loads((evidence / "certificate.json").read_bytes())
+          (evidence / "SHA256SUMS").write_text("".join(f"{entry['sha256']}  {entry['filename']}\n" for entry in receipt["artifacts"]))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fork-certified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-build/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs: [source, lint, python, web, addons, build, certificate]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true && github.repository == 'mdsmithaustin/omnigent' && needs.source.result == 'success' && needs.lint.result == 'success' && needs.python.result == 'success' && needs.web.result == 'success' && needs.addons.result == 'success' && needs.build.result == 'success' && needs.certificate.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version-file: .python-version
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: fork-certified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/fork-certified
+      - name: Promote the same certified bytes to the fork release
+        env:
+          FORK_RELEASE_PUBLISH: ${{ inputs.publish }}
+          FORK_RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          test "$WORKFLOW_SHA" = "$GITHUB_SHA"
+          python scripts/fork_release.py publish --certificate "$RUNNER_TEMP/fork-certified/evidence/certificate.json" --artifacts "$RUNNER_TEMP/fork-certified/dist" --evidence "$RUNNER_TEMP/fork-certified/evidence"
