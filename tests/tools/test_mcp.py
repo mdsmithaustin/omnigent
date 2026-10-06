@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -16,7 +17,15 @@ import httpx
 import pytest
 from cachetools import TTLCache
 from mcp.shared.exceptions import McpError
-from mcp.types import CONNECTION_CLOSED, CallToolResult, ErrorData, ImageContent, TextContent
+from mcp.types import (
+    CONNECTION_CLOSED,
+    CallToolResult,
+    ElicitRequestFormParams,
+    ElicitResult,
+    ErrorData,
+    ImageContent,
+    TextContent,
+)
 from mcp.types import Tool as McpToolDef
 
 from omnigent.spec.types import MCPServerConfig, RetryPolicy
@@ -423,7 +432,7 @@ async def test_call_tool_raises_without_connect() -> None:
     """
     conn = McpServerConnection(config=_make_http_config())
 
-    with pytest.raises(RuntimeError, match="no live session"):
+    with pytest.raises(RuntimeError, match="call connect"):
         await conn.call_tool("test_tool", {"query": "hi"})
 
 
@@ -1195,6 +1204,963 @@ def test_backoff_delay_capped_at_max() -> None:
     # 10 * 2^0 = 10, capped to 5.0; jitter[0.5, 1.5] → [2.5, 7.5].
     delay = _backoff_delay(0, retry)
     assert delay <= 7.5
+
+
+@dataclass
+class ControlledMcpLifecycle:
+    tools: list[McpToolDef] = field(
+        default_factory=lambda: [McpToolDef(name="echo", inputSchema={"type": "object"})]
+    )
+    online: bool = True
+    generation: int = 1
+    sessions: list[AsyncMock] = field(default_factory=list)
+    callbacks: list[Any] = field(default_factory=list)
+    requests: list[tuple[int, str, dict[str, Any]]] = field(default_factory=list)
+    owners: list[asyncio.Task[Any] | None] = field(default_factory=list)
+    active: int = 0
+    peak_active: int = 0
+    starts: int = 0
+    on_call: Callable[[int, Any], Awaitable[CallToolResult]] | None = None
+    on_initialize: Callable[[int], Awaitable[None]] | None = None
+    on_discover: Callable[[int], Awaitable[None]] | None = None
+    on_exit: Callable[[int], Awaitable[None]] | None = None
+
+    def session(self, *args: Any, elicitation_callback: Any = None, **kwargs: Any) -> AsyncMock:
+        session = AsyncMock()
+        generation = self.generation
+        owner: asyncio.Task[Any] | None = None
+
+        async def enter(*args: Any) -> AsyncMock:
+            nonlocal owner
+            owner = asyncio.current_task()
+            self.owners.append(owner)
+            self.active += 1
+            self.peak_active = max(self.peak_active, self.active)
+            return session
+
+        async def leave(*args: Any) -> bool:
+            assert asyncio.current_task() is owner
+            try:
+                if self.on_exit is not None:
+                    await self.on_exit(generation)
+            finally:
+                self.active -= 1
+            return False
+
+        async def initialize() -> None:
+            self.starts += 1
+            if self.on_initialize is not None:
+                await self.on_initialize(generation)
+            if not self.online:
+                raise httpx.ConnectError("server offline")
+
+        async def list_tools() -> MagicMock:
+            if self.on_discover is not None:
+                await self.on_discover(generation)
+            return MagicMock(tools=self.tools)
+
+        async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
+            self.requests.append((generation, name, arguments))
+            if not self.online or generation != self.generation:
+                raise httpx.ReadError("server stopped")
+            if self.on_call is not None:
+                return await self.on_call(generation, elicitation_callback)
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"generation-{generation}")]
+            )
+
+        async def send_request(request: Any, result_type: Any) -> CallToolResult:
+            params = request.root.params.model_dump(exclude_none=True)
+            return await call_tool(params["name"], params)
+
+        session.__aenter__.side_effect = enter
+        session.__aexit__.side_effect = leave
+        session.initialize.side_effect = initialize
+        session.list_tools.side_effect = list_tools
+        session.call_tool.side_effect = call_tool
+        session.send_request.side_effect = send_request
+        self.sessions.append(session)
+        self.callbacks.append(elicitation_callback)
+        return session
+
+
+@contextmanager
+def controlled_mcp_lifecycle(
+    tools: list[McpToolDef] | None = None,
+) -> Iterator[ControlledMcpLifecycle]:
+    clear_discovery_cache()
+    lifecycle = ControlledMcpLifecycle() if tools is None else ControlledMcpLifecycle(tools=tools)
+
+    def transport(*args: Any, **kwargs: Any) -> AsyncMock:
+        context = AsyncMock()
+        context.__aenter__.return_value = (MagicMock(), MagicMock(), MagicMock())
+        context.__aexit__.return_value = False
+        return context
+
+    with (
+        patch("omnigent.tools.mcp.streamablehttp_client", side_effect=transport),
+        patch("omnigent.tools.mcp.ClientSession", side_effect=lifecycle.session),
+        patch("omnigent.tools.mcp._sleep", new_callable=AsyncMock),
+    ):
+        try:
+            yield lifecycle
+        finally:
+            clear_discovery_cache()
+
+
+def recovery_config() -> MCPServerConfig:
+    return MCPServerConfig(
+        name="recovery",
+        url="http://localhost:9000/recovery",
+        retry=RetryPolicy(max_retries=2, backoff_base_s=0.01, jitter=False),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_new_call_recovers_after_exhausted_replacement(method: str) -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {"nonce": "before"}) == "generation-1"
+            sdk.online = False
+            with pytest.raises(httpx.ConnectError, match="server offline"):
+                await conn.call_tool("echo", {"nonce": "outage"})
+            assert sdk.starts == 3
+            assert sdk.active == 0
+            sdk.online = True
+            sdk.generation = 2
+            assert await getattr(conn, method)("echo", {"nonce": "after"}) == "generation-2"
+            assert sdk.starts == 4
+            assert sdk.sessions[0] is not sdk.sessions[-1]
+            assert sdk.peak_active == 1
+            assert [request[0] for request in sdk.requests] == [1, 1, 2]
+        finally:
+            await conn.close()
+        assert sdk.active == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+@pytest.mark.parametrize("history", ["never", "failed_initial", "closed"])
+async def test_recovery_admission_requires_successful_discovery(method: str, history: str) -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            if history == "failed_initial":
+                sdk.online = False
+                with pytest.raises(httpx.ConnectError, match="server offline"):
+                    await conn.connect()
+            elif history == "closed":
+                await conn.connect()
+                assert await conn.call_tool("echo", {}) == "generation-1"
+                await conn.close()
+            starts = sdk.starts
+            with pytest.raises(RuntimeError, match="call connect"):
+                await getattr(conn, method)("echo", {})
+            assert sdk.starts == starts
+            sdk.online = True
+            await conn.connect()
+            assert await getattr(conn, method)("echo", {}) == "generation-1"
+        finally:
+            await conn.close()
+        assert sdk.active == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_empty_discovery_admits_recovery_without_inventing_tools(method: str) -> None:
+    with controlled_mcp_lifecycle(tools=[]) as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            assert await conn.connect() == []
+            sdk.online = False
+            with pytest.raises(httpx.ConnectError, match="server offline"):
+                await getattr(conn, method)("missing", {})
+            sdk.online = True
+            sdk.generation = 2
+
+            async def unknown_tool(generation: int, callback: Any) -> CallToolResult:
+                raise McpError(ErrorData(code=-32602, message="Unknown tool missing"))
+
+            sdk.on_call = unknown_tool
+            with pytest.raises(McpError, match="Unknown tool missing"):
+                await getattr(conn, method)("missing", {})
+            assert sdk.starts == 4
+            assert sdk.requests[-1][0:2] == (2, "missing")
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("request_state", ["", "opaque / + = \u2603"])
+async def test_mrtr_replacement_preserves_payload_and_repeated_input_required(
+    request_state: str,
+) -> None:
+    responses = {"eid": {"action": "accept", "content": {"nested": [False, 3, None]}}}
+    arguments = {"nonce": "reply"}
+    input_requests = {"next": {"method": "elicitation/create", "params": {"message": "Again"}}}
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            await conn.connect()
+            sdk.generation = 2
+
+            async def request_more(generation: int, callback: Any) -> CallToolResult:
+                return _make_input_required_result(
+                    input_requests=input_requests, request_state="next opaque state"
+                )
+
+            sdk.on_call = request_more
+            for _ in range(2):
+                with pytest.raises(McpElicitationRequired) as raised:
+                    await conn.call_tool_with_elicitation(
+                        "echo", arguments, input_responses=responses, request_state=request_state
+                    )
+                assert raised.value.input_requests == input_requests
+                assert raised.value.request_state == "next opaque state"
+                assert raised.value.arguments == arguments
+                assert raised.value.tool_name == "echo"
+            assert sdk.requests == [
+                (
+                    generation,
+                    "echo",
+                    {
+                        "name": "echo",
+                        "arguments": {"nonce": "reply"},
+                        "inputResponses": responses,
+                        "requestState": request_state,
+                    },
+                )
+                for generation in [1, 2, 2]
+            ]
+            assert sdk.starts == 2
+            assert conn._breaker.consecutive_failures == 0
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_recovery_bounds_and_breaker_policy(method: str) -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        conn._breaker = _CircuitBreaker(failure_threshold=2, cooldown_seconds=3600)
+        try:
+            await conn.connect()
+            sdk.online = False
+            for _ in range(2):
+                with pytest.raises(httpx.ConnectError, match="server offline"):
+                    await getattr(conn, method)("echo", {})
+            assert sdk.starts == 6
+            assert conn._breaker.consecutive_failures == (2 if method == "call_tool" else 0)
+            sdk.online = True
+            sdk.generation = 2
+            if method == "call_tool":
+                with pytest.raises(McpServerDisabledError):
+                    await conn.call_tool("echo", {})
+                assert sdk.starts == 6
+            assert await conn.call_tool_with_elicitation("echo", {}) == "generation-2"
+            assert sdk.starts == 7
+            assert conn._breaker.consecutive_failures == (2 if method == "call_tool" else 0)
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_recovery_does_not_retry_slow_tool(method: str) -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            await conn.connect()
+
+            async def slow_tool(generation: int, callback: Any) -> CallToolResult:
+                raise McpError(ErrorData(code=408, message="Slow tool timed out"))
+
+            sdk.on_call = slow_tool
+            with pytest.raises(McpError, match="Slow tool timed out"):
+                await getattr(conn, method)("echo", {})
+            assert sdk.starts == 1
+            assert len(sdk.requests) == 1
+            sdk.on_call = None
+            assert await getattr(conn, method)("echo", {}) == "generation-1"
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_close_after_failed_replacement_revokes_recovery() -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        await conn.connect()
+        sdk.online = False
+        with pytest.raises(httpx.ConnectError, match="server offline"):
+            await conn.call_tool("echo", {})
+        await conn.close()
+        assert conn._lifecycle_task is None
+        assert conn._ready_future is None
+        assert conn._close_event is None
+        assert sdk.active == 0
+        for method in [conn.call_tool, conn.call_tool_with_elicitation]:
+            with pytest.raises(RuntimeError, match="call connect"):
+                await method("echo", {})
+        assert sdk.starts == 3
+        sdk.online = True
+        await conn.connect()
+        try:
+            assert await conn.call_tool("echo", {}) == "generation-1"
+        finally:
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_method", ["call_tool", "call_tool_with_elicitation"])
+async def test_public_lifecycle_serializes_recovery_and_callback_context(
+    first_method: str,
+) -> None:
+    closing_old = asyncio.Event()
+    allow_teardown = asyncio.Event()
+    entered_call = asyncio.Event()
+    allow_call = asyncio.Event()
+    contexts: list[str] = []
+    params = ElicitRequestFormParams(message="Confirm", requestedSchema={"type": "object"})
+
+    async def callback(session_id: str, received: Any) -> ElicitResult:
+        assert received == params
+        contexts.append(session_id)
+        if session_id == "session-a":
+            entered_call.set()
+            await allow_call.wait()
+        return ElicitResult(action="accept", content={"session": session_id})
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config(), elicitation_callback=callback)
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            discoveries = await asyncio.gather(conn.connect(), conn.connect())
+            assert [[tool.name for tool in tools] for tools in discoveries] == [["echo"], ["echo"]]
+            assert sdk.starts == 1
+            old_exit = sdk.sessions[0].__aexit__.side_effect
+
+            async def delayed_exit(*args: Any) -> bool:
+                closing_old.set()
+                await allow_teardown.wait()
+                return await old_exit(*args)
+
+            sdk.sessions[0].__aexit__.side_effect = delayed_exit
+            sdk.generation = 2
+
+            async def elicit(generation: int, handler: Any) -> CallToolResult:
+                assert generation == 2
+                result = await handler(None, params)
+                return CallToolResult(
+                    content=[TextContent(type="text", text=json.dumps(result.content))]
+                )
+
+            sdk.on_call = elicit
+            first = asyncio.create_task(
+                getattr(conn, first_method)("echo", {}, session_id="session-a")
+            )
+            tasks.append(first)
+            await asyncio.wait_for(closing_old.wait(), 2)
+            second = asyncio.create_task(
+                conn.call_tool_with_elicitation("echo", {}, session_id="session-b")
+            )
+            reconnect = asyncio.create_task(conn.connect())
+            close = asyncio.create_task(conn.close())
+            tasks.extend([second, reconnect, close])
+            await asyncio.sleep(0)
+            assert not any(task.done() for task in tasks)
+            assert sdk.starts == 1
+            allow_teardown.set()
+            await asyncio.wait_for(entered_call.wait(), 2)
+            assert sdk.active == 1
+            assert sdk.starts == 2
+            assert not any(task.done() for task in tasks)
+            allow_call.set()
+            results = await asyncio.wait_for(asyncio.gather(*tasks), 2)
+            assert results[0:2] == ['{"session": "session-a"}', '{"session": "session-b"}']
+            assert [tool.name for tool in results[2]] == ["echo"]
+            assert contexts == ["session-a", "session-b"]
+            assert sdk.peak_active == 1
+            assert sdk.active == 0
+            assert sdk.starts == 2
+            assert sdk.sessions[0] is not sdk.sessions[1]
+            assert conn._active_session_id is None
+            assert conn._call_serial == 3
+            for method in [conn.call_tool, conn.call_tool_with_elicitation]:
+                with pytest.raises(RuntimeError, match="call connect"):
+                    await method("echo", {})
+        finally:
+            allow_teardown.set()
+            allow_call.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("empty_discovery", [False, True])
+async def test_cancelled_connect_waiters_share_owned_startup(empty_discovery: bool) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize(generation: int) -> None:
+        started.set()
+        await release.wait()
+
+    with controlled_mcp_lifecycle(tools=[] if empty_discovery else None) as sdk:
+        sdk.on_initialize = initialize
+        conn = McpServerConnection(config=recovery_config())
+        tasks = [asyncio.create_task(conn.connect())]
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            owner, ready = conn._lifecycle_task, conn._ready_future
+            assert owner is not None and ready is not None
+            tasks[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tasks[0]
+            assert not ready.done(), "caller cancellation poisoned shared readiness"
+            assert not owner.done()
+            assert conn._discovered_tools is None
+            for method in [conn.call_tool, conn.call_tool_with_elicitation]:
+                with pytest.raises(RuntimeError, match="call connect"):
+                    await method("echo", {})
+            tasks.append(asyncio.create_task(conn.connect()))
+            await asyncio.sleep(0)
+            assert not tasks[-1].done()
+            tasks[-1].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tasks[-1]
+            assert not ready.done()
+            tasks.append(asyncio.create_task(conn.connect()))
+            await asyncio.sleep(0)
+            assert not tasks[-1].done()
+            release.set()
+            tools = await asyncio.wait_for(tasks[-1], 2)
+            assert [tool.name for tool in tools] == ([] if empty_discovery else ["echo"])
+            assert conn._lifecycle_task is owner
+            assert conn._discovered_tools == tools
+            assert sdk.starts == 1
+            assert sdk.peak_active == 1
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+        assert owner.done() and not owner.cancelled()
+        assert sdk.active == 0
+        assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+        assert conn._session is conn._discovered_tools is conn._active_session_id is None
+        assert not conn._call_lock.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["initialize", "discover"])
+@pytest.mark.parametrize("initiator", ["call_tool", "call_tool_with_elicitation"])
+@pytest.mark.parametrize("follower", ["call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_recovery_joins_startup_before_invocation(
+    stage: str, initiator: str, follower: str
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    contexts: list[str] = []
+    params = ElicitRequestFormParams(message="Confirm", requestedSchema={"type": "object"})
+
+    async def gate(generation: int) -> None:
+        if generation == 2:
+            started.set()
+            await release.wait()
+
+    async def callback(session_id: str, received: Any) -> ElicitResult:
+        assert received == params
+        contexts.append(session_id)
+        return ElicitResult(action="accept", content={"session": session_id})
+
+    async def elicit(generation: int, handler: Any) -> CallToolResult:
+        assert generation == 2
+        answer = await handler(None, params)
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(answer.content))])
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config(), elicitation_callback=callback)
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            snapshot = await conn.connect()
+            old_owner = conn._lifecycle_task
+            sdk.generation = 2
+            clear_discovery_cache()
+            setattr(sdk, f"on_{stage}", gate)
+            sdk.on_call = elicit
+            first = asyncio.create_task(
+                getattr(conn, initiator)("echo", {"nonce": "cancel"}, session_id="cancelled")
+            )
+            tasks.append(first)
+            await asyncio.wait_for(started.wait(), 2)
+            owner, ready = conn._lifecycle_task, conn._ready_future
+            assert old_owner is not None and old_owner.done()
+            assert owner is not None and ready is not None
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert conn._discovered_tools is snapshot
+            assert conn._active_session_id is None
+            responses = {"eid": {"action": "accept", "content": {"nested": [False, None, 3]}}}
+            extra = (
+                {"input_responses": responses, "request_state": ""}
+                if follower == "call_tool_with_elicitation"
+                else {}
+            )
+            second = asyncio.create_task(
+                getattr(conn, follower)("echo", {"nonce": "next"}, session_id="next", **extra)
+            )
+            tasks.append(second)
+            await asyncio.sleep(0)
+            assert sdk.requests == [
+                (
+                    1,
+                    "echo",
+                    {"nonce": "cancel"}
+                    if initiator == "call_tool"
+                    else {"name": "echo", "arguments": {"nonce": "cancel"}},
+                )
+            ], "a request reached a half-initialized session"
+            assert not second.done(), "the follower did not join pending startup"
+            assert conn._lifecycle_task is owner
+            assert conn._ready_future is ready and not ready.done()
+            assert not conn._close_event.is_set()
+            assert sdk.starts == 2
+            release.set()
+            assert await asyncio.wait_for(second, 2) == '{"session": "next"}'
+            assert sdk.requests[-1] == (
+                2,
+                "echo",
+                {"nonce": "next"}
+                if follower == "call_tool"
+                else {
+                    "name": "echo",
+                    "arguments": {"nonce": "next"},
+                    "inputResponses": responses,
+                    "requestState": "",
+                },
+            )
+            assert contexts == ["next"]
+            assert sdk.starts == 2 and sdk.peak_active == 1
+            assert conn._active_session_id is None
+            assert conn._breaker.consecutive_failures == 0
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0
+        assert all(task is not None and task.done() for task in sdk.owners)
+        assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+        assert not conn._call_lock.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_success", [False, True])
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_startup_failure_preserves_admission(
+    prior_success: bool, method: str
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fail_discovery(generation: int) -> None:
+        started.set()
+        await release.wait()
+        raise ValueError("discovery rejected")
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            snapshot = await conn.connect() if prior_success else None
+            sdk.generation = 2
+            clear_discovery_cache()
+            sdk.on_discover = fail_discovery
+            first = asyncio.create_task(
+                getattr(conn, method)("echo", {}) if prior_success else conn.connect()
+            )
+            tasks.append(first)
+            await asyncio.wait_for(started.wait(), 2)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            second = asyncio.create_task(
+                getattr(conn, method)("echo", {}) if prior_success else conn.connect()
+            )
+            tasks.append(second)
+            await asyncio.sleep(0)
+            assert not second.done()
+            release.set()
+            with pytest.raises(ValueError, match="discovery rejected"):
+                await asyncio.wait_for(second, 2)
+            assert conn._session is None
+            assert conn._discovered_tools is snapshot
+            assert sdk.active == 0
+            assert len(sdk.requests) == (1 if prior_success else 0)
+            assert conn._breaker.consecutive_failures == (
+                1 if prior_success and method == "call_tool" else 0
+            )
+            if not prior_success:
+                with pytest.raises(RuntimeError, match="call connect"):
+                    await getattr(conn, method)("echo", {})
+            sdk.on_discover = None
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await getattr(conn, method)("echo", {}) == "generation-2"
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0 and sdk.peak_active == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_recovery_startup_failure_uses_retry_policy(method: str) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            await conn.connect()
+            sdk.generation = 2
+            clear_discovery_cache()
+
+            async def fail_once(generation: int) -> None:
+                if sdk.starts == 2:
+                    started.set()
+                    await release.wait()
+                    raise httpx.ReadError("startup transport lost")
+
+            sdk.on_discover = fail_once
+            first = asyncio.create_task(getattr(conn, method)("echo", {}))
+            tasks.append(first)
+            await asyncio.wait_for(started.wait(), 2)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            second = asyncio.create_task(getattr(conn, method)("echo", {}))
+            tasks.append(second)
+            await asyncio.sleep(0)
+            release.set()
+            assert await asyncio.wait_for(second, 2) == "generation-2"
+            assert sdk.starts == 3 and sdk.peak_active == 1
+            assert [request[0] for request in sdk.requests] == [1, 2]
+            assert conn._breaker.consecutive_failures == 0
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["close", "call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_drain_retains_lock_until_owner_exit(operation: str) -> None:
+    exiting = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_exit(generation: int) -> None:
+        if generation == 1:
+            exiting.set()
+            await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        tasks: list[asyncio.Task[Any]] = []
+        try:
+            snapshot = await conn.connect()
+            owner = conn._lifecycle_task
+            assert owner is not None
+            sdk.generation = 2
+            sdk.on_exit = delayed_exit
+            drain = asyncio.create_task(
+                conn.close() if operation == "close" else getattr(conn, operation)("echo", {})
+            )
+            tasks.append(drain)
+            await asyncio.wait_for(exiting.wait(), 2)
+            for _ in range(2):
+                drain.cancel()
+                await asyncio.sleep(0)
+                assert conn._call_lock.locked(), "cancelled drain released serialized ownership"
+                assert not drain.done()
+                assert not owner.done() and owner.cancelling() == 0
+                assert sdk.starts == 1 and sdk.active == 1
+            queued = asyncio.create_task(
+                conn.call_tool("echo", {}) if operation == "close" else conn.close()
+            )
+            tasks.append(queued)
+            await asyncio.sleep(0)
+            assert not queued.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(drain, 2)
+            if operation == "close":
+                with pytest.raises(RuntimeError, match="call connect"):
+                    await asyncio.wait_for(queued, 2)
+            else:
+                await asyncio.wait_for(queued, 2)
+            assert owner.done() and not owner.cancelled()
+            assert sdk.active == 0 and sdk.starts == 1
+            assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+            assert conn._session is conn._discovered_tools is conn._active_session_id is None
+            assert not conn._call_lock.locked()
+            assert conn._breaker.consecutive_failures == 0
+            assert [tool.name for tool in snapshot] == ["echo"]
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-2"
+            assert sdk.starts == 2 and sdk.peak_active == 1
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_success", [False, True])
+async def test_close_drains_cancelled_waiter_and_observes_detached_startup_error(
+    prior_success: bool,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    errors: list[dict[str, Any]] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: errors.append(context))
+
+    async def fail_startup(generation: int) -> None:
+        started.set()
+        await release.wait()
+        raise ValueError("detached startup failure")
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        snapshot = await conn.connect() if prior_success else None
+        sdk.generation = 2
+        sdk.on_initialize = fail_startup
+        first = asyncio.create_task(
+            conn.call_tool("echo", {}) if prior_success else conn.connect()
+        )
+        close = None
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            owner = conn._lifecycle_task
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert conn._discovered_tools is snapshot
+            close = asyncio.create_task(conn.close())
+            await asyncio.sleep(0)
+            assert not close.done()
+            close.cancel()
+            await asyncio.sleep(0)
+            assert not close.done() and conn._call_lock.locked()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(close, 2)
+            assert owner is not None and owner.done() and not owner.cancelled()
+            assert sdk.active == 0 and sdk.starts == (2 if prior_success else 1)
+            assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+            assert conn._session is conn._discovered_tools is None
+            assert not conn._call_lock.locked()
+            gc.collect()
+            await asyncio.sleep(0)
+            assert errors == []
+            sdk.on_initialize = None
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-2"
+        finally:
+            release.set()
+            await asyncio.gather(first, *([close] if close else []), return_exceptions=True)
+            await conn.close()
+            loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_owner_cancellation_settles_pending_readiness() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize(generation: int) -> None:
+        started.set()
+        await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        sdk.on_initialize = initialize
+        conn = McpServerConnection(config=recovery_config())
+        first = asyncio.create_task(conn.connect())
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            owner, ready = conn._lifecycle_task, conn._ready_future
+            assert owner is not None and ready is not None
+            owner.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await owner
+            assert ready.done(), "terminated lifecycle left readiness pending"
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(first, 2)
+            assert conn._session is conn._discovered_tools is None
+            assert sdk.active == 0
+            release.set()
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-1"
+        finally:
+            release.set()
+            first.cancel()
+            await asyncio.gather(first, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0 and sdk.peak_active == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_invocation_preserves_context_and_breaker_policy(method: str) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    contexts: list[str] = []
+    params = ElicitRequestFormParams(message="Confirm", requestedSchema={"type": "object"})
+
+    async def callback(session_id: str, received: Any) -> ElicitResult:
+        assert received == params
+        contexts.append(session_id)
+        if session_id == "cancelled":
+            started.set()
+            await release.wait()
+        return ElicitResult(action="accept", content={"session": session_id})
+
+    async def elicit(generation: int, handler: Any) -> CallToolResult:
+        answer = await handler(None, params)
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(answer.content))])
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config(), elicitation_callback=callback)
+        call = None
+        try:
+            await conn.connect()
+            sdk.on_call = elicit
+            call = asyncio.create_task(getattr(conn, method)("echo", {}, session_id="cancelled"))
+            await asyncio.wait_for(started.wait(), 2)
+            call.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await call
+            assert conn._active_session_id is None
+            assert not conn._call_lock.locked()
+            assert conn._breaker.consecutive_failures == 0
+            assert (
+                await getattr(conn, method)("echo", {}, session_id="next") == '{"session": "next"}'
+            )
+            assert contexts == ["cancelled", "next"]
+            assert sdk.starts == 1 and sdk.peak_active == 1
+        finally:
+            release.set()
+            if call is not None:
+                await asyncio.gather(call, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0
+        assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+        assert conn._active_session_id is None and not conn._call_lock.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
+async def test_cancelled_reconnect_drain_preserves_discovery(method: str) -> None:
+    exiting = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_exit(generation: int) -> None:
+        if generation == 1:
+            exiting.set()
+            await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        call = None
+        try:
+            snapshot = await conn.connect()
+            owner = conn._lifecycle_task
+            sdk.generation = 2
+            sdk.on_exit = delayed_exit
+            call = asyncio.create_task(getattr(conn, method)("echo", {}, session_id="cancelled"))
+            await asyncio.wait_for(exiting.wait(), 2)
+            call.cancel()
+            await asyncio.sleep(0)
+            assert conn._call_lock.locked()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(call, 2)
+            assert owner is not None and owner.done() and not owner.cancelled()
+            assert conn._discovered_tools is snapshot
+            assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+            assert conn._session is conn._active_session_id is None
+            assert not conn._call_lock.locked()
+            assert sdk.starts == 1 and sdk.active == 0
+            assert await getattr(conn, method)("echo", {}) == "generation-2"
+            assert sdk.starts == 2 and sdk.peak_active == 1
+            assert conn._breaker.consecutive_failures == 0
+        finally:
+            release.set()
+            if call is not None:
+                await asyncio.gather(call, return_exceptions=True)
+            await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_success", [False, True])
+async def test_close_observes_completed_detached_startup_error(prior_success: bool) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    errors: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: errors.append(context))
+
+    async def fail_startup(generation: int) -> None:
+        started.set()
+        await release.wait()
+        raise ValueError("detached startup failure")
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        first = None
+        try:
+            snapshot = await conn.connect() if prior_success else None
+            sdk.generation = 2
+            sdk.on_initialize = fail_startup
+            first = asyncio.create_task(
+                conn.call_tool("echo", {}) if prior_success else conn.connect()
+            )
+            await asyncio.wait_for(started.wait(), 2)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            first = None
+            release.set()
+            assert conn._lifecycle_task is not None
+            await asyncio.wait_for(asyncio.shield(conn._lifecycle_task), 2)
+            assert conn._discovered_tools is snapshot
+            assert sdk.active == 0
+            await conn.close()
+            assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
+            assert conn._discovered_tools is None
+            sdk.sessions.clear()
+            gc.collect()
+            await asyncio.sleep(0)
+            assert errors == [], "close discarded an unobserved startup exception"
+            sdk.on_initialize = None
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-2"
+        finally:
+            release.set()
+            if first is not None:
+                await asyncio.gather(first, return_exceptions=True)
+            await conn.close()
+            loop.set_exception_handler(previous_handler)
+        assert sdk.active == 0 and sdk.peak_active == 1
 
 
 # ── Reconnection on server death ─────────────────────────
@@ -2773,16 +3739,8 @@ def test_call_tool_result_model_extra_preserves_mrtr_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
-    """
-    ``_invoke_tool`` raises ``McpElicitationRequired`` when the
-    MCP session returns a ``CallToolResult`` with
-    ``resultType == "input_required"`` in ``model_extra``.
-
-    If this fails: the MRTR detection in ``_invoke_tool`` is broken
-    and the runner will treat an ``InputRequiredResult`` as a normal
-    (empty) tool result, silently skipping the elicitation flow.
-    """
+async def test_call_tool_raises_elicitation_on_input_required() -> None:
+    """call_tool raises McpElicitationRequired with the server's input request and state."""
     config = _make_http_config()
     mrtr_result = _make_input_required_result(
         input_requests={
@@ -2795,27 +3753,23 @@ async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
     )
 
     with _mock_mcp_transport() as mock_session:
-        # Stub session.call_tool to return the MRTR result.
         mock_session.call_tool.return_value = mrtr_result
 
         conn = McpServerConnection(config=config)
         await conn.connect()
 
         with pytest.raises(McpElicitationRequired) as exc_info:
-            await conn._invoke_tool("deploy_tool", {"env": "prod"})
+            await conn.call_tool("deploy_tool", {"env": "prod"})
 
     exc = exc_info.value
-    # input_requests carries the full elicitation payloads.
     assert "eid_abc" in exc.input_requests, (
         "input_requests must include the elicitation id from the server; "
         "if missing, the Omnigent server can't surface the elicitation to the user"
     )
-    # request_state must be echoed back verbatim on retry.
     assert exc.request_state == "state_xyz", (
         "request_state must match the server's opaque value; "
         "if wrong, the retry will be rejected by the server"
     )
-    # tool_name and arguments are preserved for the retry call.
     assert exc.tool_name == "deploy_tool", (
         "tool_name must be preserved so the retry knows which tool to call"
     )
@@ -2827,16 +3781,9 @@ async def test_invoke_tool_raises_elicitation_on_input_required() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invoke_tool_returns_normally_without_mrtr() -> None:
-    """
-    ``_invoke_tool`` returns the formatted result string when
-    ``model_extra`` does NOT contain ``resultType == "input_required"``.
-
-    If this fails: normal (non-MRTR) tool calls are broken — the
-    function is raising ``McpElicitationRequired`` when it shouldn't.
-    """
+async def test_call_tool_returns_normally_without_mrtr() -> None:
+    """call_tool returns formatted tool output when no input is required."""
     config = _make_http_config()
-    # Normal result — no extra fields triggering MRTR.
     normal_result = CallToolResult.model_validate(
         {
             "content": [{"type": "text", "text": "tool output here"}],
@@ -2850,9 +3797,8 @@ async def test_invoke_tool_returns_normally_without_mrtr() -> None:
         conn = McpServerConnection(config=config)
         await conn.connect()
 
-        result = await conn._invoke_tool("normal_tool", {"x": 1})
+        result = await conn.call_tool("normal_tool", {"x": 1})
 
-    # Normal path: formatted text returned, no exception.
     assert result == "tool output here", (
         "Normal tool results must be returned as formatted text; "
         "if McpElicitationRequired was raised instead, the MRTR "
@@ -3088,6 +4034,6 @@ async def test_managed_mcp_records_pr_before_result_formatting(
         session.call_tool.return_value = response
         connection = McpServerConnection(config=_make_http_config(name="custom-github"))
         await connection.connect()
-        result = await connection._invoke_tool("create_pull_request", {}, session_id="conv_mcp")
+        result = await connection.call_tool("create_pull_request", {}, session_id="conv_mcp")
         assert url in result
     assert [pr.url for pr in SessionPrRegistry("conv_mcp").list()] == ([] if failed else [url])

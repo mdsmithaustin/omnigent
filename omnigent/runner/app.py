@@ -13140,14 +13140,36 @@ def create_runner_app(
 
     @app.post("/v1/sessions/{session_id}/mcp/execute")
     async def mcp_execute(session_id: str, request: Request) -> JSONResponse:
-        try:
+        body: Any
+        if isinstance(request, _BodyRequest):
             body = await request.json()
-        except Exception:  # noqa: BLE001
+        else:
+            try:
+                raw_body = await request.body()
+            except ValueError as exc:
+                raise RuntimeError("MCP request body read failed") from exc
+            try:
+                body = json.loads(raw_body)
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": {"code": -32700, "message": "Parse error: invalid JSON"}},
+                )
+        if not isinstance(body, dict):
             return JSONResponse(
-                status_code=400,
-                content={"error": {"code": -32700, "message": "Parse error: invalid JSON"}},
+                status_code=200,
+                content={"error": {"code": -32600, "message": "Invalid Request"}},
             )
         method: str = body.get("method") or ""
+        if (
+            method == "tools/call"
+            and body.get("params") is not None
+            and not isinstance(body["params"], dict)
+        ):
+            return JSONResponse(
+                status_code=200,
+                content={"error": {"code": -32602, "message": "Invalid params"}},
+            )
         params: _JsonObject = body.get("params") or {}
 
         raw_operation = body.get("_omnigent_operation")
@@ -13229,7 +13251,8 @@ def create_runner_app(
                 )
             try:
                 result = await mcp_manager.schemas_for(spec)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
+                _logger.exception("MCP schema discovery failed", extra={"session_id": session_id})
                 return JSONResponse(
                     status_code=200,
                     content={
@@ -13265,8 +13288,6 @@ def create_runner_app(
                 )
 
             if tool_name == "sys_read_inbox":
-                # A scan that failed at initialization must not leave the
-                # drain reporting an empty inbox; this is a no-op once done.
                 await _recover_undrained_subagent_results(session_id)
 
             if "__" in tool_name:
@@ -13313,6 +13334,7 @@ def create_runner_app(
                             arguments,
                             input_responses=input_responses,
                             request_state=request_state,
+                            session_id=session_id,
                         )
                     else:
                         output = await mcp_manager.call_tool(
