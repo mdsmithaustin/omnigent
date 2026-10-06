@@ -1,0 +1,28 @@
+# no-mistakes push gate for this fork. Gate-control fields are read from main.
+commands:
+  # Mirrors the CI lint job in .github/workflows/lint.yml; corepack runs the pinned pnpm.
+  prepare: >-
+    uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
+    && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
+  lint: "uv run --no-sync pre-commit run --all-files --show-diff-on-failure"
+
+ignore_patterns:
+  - "uv.lock"
+  - "pnpm-lock.yaml"
+  - "**/*_pb2.py"
+  - "**/*_pb2.pyi"
+
+protected_paths:
+  - ".github/workflows/**"
+  - "omnigent/db/migrations/**"
+
+pr:
+  template: .github/pull_request_template.md
+
+ci:
+  revalidate_repairs: true
+
+test:
+  instructions: |
+    Start a local pod with `just dev`, then follow the matching verify-<harness> skill
+    (for example verify-prime-native) for the changed harness. Docs-only changes need no live run.
