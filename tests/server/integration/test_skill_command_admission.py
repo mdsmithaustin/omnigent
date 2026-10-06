@@ -51,9 +51,9 @@ async def test_stop_during_first_skill_resolution_revokes_original_ingress(
     client, app, db_uri, monkeypatch, closure, runner_origin, native_routing
 ):
     from omnigent.errors import OmnigentError
+    from omnigent.native.admission import native_operation
     from omnigent.native.source_owner import (
         NativeAdmission,
-        NativeOwner,
         NativeStop,
         NativeStopOutcome,
     )
@@ -72,12 +72,13 @@ async def test_stop_during_first_skill_resolution_revokes_original_ingress(
     if runner_origin:
         store.replace_runner_id(source_id, token_bound_runner_id("skill-runner-secret"))
         headers[RUNNER_TUNNEL_TOKEN_HEADER] = "skill-runner-secret"
-    owner = NativeOwner(provider="prime-native", environment="fixture", runtime="private-owner")
-    original = store.admit_native(source_id, owner)
+    async with native_operation(client, source_id, "prime-native") as original:
+        pass
     resolving = asyncio.Event()
     release = asyncio.Event()
     written = []
     resolutions = []
+    forwarded = []
 
     async def relay_ready(*args, **kwargs):
         return None
@@ -110,10 +111,15 @@ async def test_stop_during_first_skill_resolution_revokes_original_ingress(
                 200, json={"stop": stop.model_dump(), "result": {"outcome": closure, "detail": ""}}
             )
         if request.url.path.endswith("/events"):
-            ticket = NativeAdmission.model_validate(payload["native_admission"])
+            forwarded.append(payload)
             try:
+                if "native_admission" in payload:
+                    ticket = NativeAdmission.model_validate(payload["native_admission"])
+                else:
+                    async with native_operation(client, source_id, "prime-native") as ticket:
+                        pass
                 store.validate_native_admission(ticket)
-            except OmnigentError:
+            except (OmnigentError, httpx.HTTPStatusError):
                 return _admission_response(request, "rejected")
             written.append(payload["content"])
             return _admission_response(request, "accepted")
@@ -148,6 +154,7 @@ async def test_stop_during_first_skill_resolution_revokes_original_ingress(
             result = await asyncio.wait_for(task, 5)
             assert result.status_code == 202, result.text
             assert result.json()["delivery"]["status"] == "rejected"
+            assert forwarded == []
             assert store.get_native_source(source_id).admission.epoch == original.epoch
             retry = await client.post(f"/v1/sessions/{source_id}/events", json=_command())
             assert retry.json()["delivery"]["status"] == "rejected"
