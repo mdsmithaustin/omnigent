@@ -78,6 +78,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.version import VERSION
 
 _logger = logging.getLogger(__name__)
@@ -235,7 +236,7 @@ def _fetch_remote_config() -> TelemetryConfig | None:
 def _config_telemetry_disabled() -> bool:
     """Return ``True`` when ``telemetry: false`` is set in config.yaml.
 
-    Reads ``~/.omnigent/config.yaml`` (honouring ``OMNIGENT_CONFIG_HOME``).
+    Reads ``~/.omnigent-mdsmithaustin/config.yaml`` (honouring ``OMNIGENT_CONFIG_HOME``).
     Returns ``False`` on any error so a missing/malformed config never
     silently suppresses telemetry.
     """
@@ -246,7 +247,7 @@ def _config_telemetry_disabled() -> bool:
         if config_home:
             config_path = Path(config_home) / "config.yaml"
         else:
-            config_path = Path.home() / ".omnigent" / "config.yaml"
+            config_path = default_user_dir() / "config.yaml"
         if not config_path.exists():
             return False
         # Read raw text and match `telemetry: false` directly to avoid
@@ -274,7 +275,7 @@ def is_disabled() -> bool:
     2. ``DISABLE_TELEMETRY=true`` or ``OMNIGENT_DISABLE_TELEMETRY=true``
     3. ``DO_NOT_TRACK=1``
     4. Any CI environment variable from :data:`_CI_ENV_VARS`
-    5. ``telemetry: false`` in ``~/.omnigent/config.yaml``
+    5. ``telemetry: false`` in ``~/.omnigent-mdsmithaustin/config.yaml``
 
     Always returns a ``bool``; never raises.
     """
