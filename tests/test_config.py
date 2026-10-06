@@ -23,12 +23,12 @@ def test_effective_config_deep_merges_harness_mapping(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text(
         "harness:\n  default: claude-sdk\n  claude-sdk:\n    command: /global/claude\n"
         "  codex:\n    args: [--config, k=v]\n"
     )
-    (project / ".omnigent" / "config.yaml").write_text(
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         "harness:\n  codex:\n    command: /local/codex\n"
     )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
@@ -80,9 +80,9 @@ def test_effective_config_merges_project_over_user(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text("profile: global\nmodel: global-model\n")
-    (project / ".omnigent" / "config.yaml").write_text("profile: local\n")
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text("profile: local\n")
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))
     monkeypatch.chdir(project)
 

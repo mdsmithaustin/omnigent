@@ -512,38 +512,24 @@ async def test_window_title_none_skips_title_calls(
     )
 
 
-def test_default_history_file_matches_legacy_omnigent_path() -> None:
-    """
-    With no ``history_file`` override, the host's prompt session
-    persists input history to ``~/.omnigent_history`` — the
-    same path the legacy ``omnigent run`` CLI uses
-    (``omnigent/inner/cli.py:_cli_history_file_path``).
-
-    What this proves: a user who flips between
-    ``omnigent run agent.yaml`` (legacy) and
-    ``omnigent run agent.yaml`` sees the same ↑ / Ctrl+R
-    recall in both, instead of two divergent histories. If the
-    default drifts (e.g. back to ``~/.omnigent-history``,
-    or to a fresh location), this test fails loud at the SDK
-    boundary so the divergence doesn't ship silently. The
-    history file's location is part of the Omnigent mode-vs-legacy
-    parity contract documented in
-    ``designs/RUN_OMNIGENT_REPL_PARITY.md``.
-    """
-    import os
-
+def test_default_history_file_uses_fork_home(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path / "data"))
+    upstream = tmp_path / ".omnigent_history"
+    upstream.write_text("upstream history\n")
     host = TerminalHost(model_name="test")
+    host._prompt.history.append_string("fork input")
 
-    expected = os.path.expanduser("~/.omnigent_history")
-    actual = host._prompt.history.filename
-    assert actual == expected, (
-        f"Default history_file resolved to {actual!r}; expected "
-        f"{expected!r}. If the path is ``~/.omnigent-history`` "
-        f"(the SDK's pre-unification default), the unification "
-        f"with the legacy CLI was reverted — users flipping "
-        f"between legacy and --omnigent would lose ↑ / Ctrl+R recall "
-        f"again."
-    )
+    assert host._prompt.history.filename == str(tmp_path / ".omnigent-mdsmithaustin_history")
+    assert "+fork input" in (tmp_path / ".omnigent-mdsmithaustin_history").read_text()
+    assert upstream.read_text() == "upstream history\n"
+
+
+def test_explicit_history_file_keeps_expansion(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    host = TerminalHost(history_file="~/custom_history")
+
+    assert host._prompt.history.filename == str(tmp_path / "custom_history")
 
 
 @pytest.mark.asyncio
