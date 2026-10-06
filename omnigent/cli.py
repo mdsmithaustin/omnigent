@@ -91,6 +91,7 @@ from omnigent.host.local_server import (
     stop_untracked_local_server,
 )
 from omnigent.inner import _proc, ui
+from omnigent.installation_defaults import PROJECT_CONFIG_RELPATH, default_user_dir
 from omnigent.integration_daemon import IntegrationDaemon
 from omnigent.onboarding.sandboxes import available_providers as _sandbox_providers
 from omnigent.process_logging import (
@@ -536,93 +537,12 @@ def _server_uvicorn_log_config(
 
 # Path to the user-level global config file, analogous to ~/.gitconfig.
 # Tests may set ``OMNIGENT_CONFIG_HOME`` to isolate subprocesses from a
-# developer's real ``~/.omnigent/config.yaml``.
-_CONFIG_HOME_ENV_VAR = "OMNIGENT_CONFIG_HOME"
-_GLOBAL_CONFIG_PATH: Path = Path.home() / ".omnigent" / "config.yaml"
-
-# Per-user state directories before / after the omniagents -> omnigent rename.
-# All per-user state (config, registered agents, auth tokens, the host daemon
-# pidfile, runner identity, native session state, logs) lives under
-# :data:`_STATE_DIR`; :func:`_migrate_legacy_state_dir` relocates the old
-# directory on first run. ``OMNIGENT_DATA_DIR`` is the data-isolation override
-# a worktree / test sets; when present the user manages their own state and
-# migration is skipped.
-_STATE_DIR: Path = Path.home() / ".omnigent"
-# Pre-rename state directories, newest first. The name evolved
-# ``~/.omniagents`` -> ``~/.omnigents`` -> ``~/.omnigent``; migrate from the
-# newest legacy directory that still exists.
-_LEGACY_STATE_DIRS: tuple[Path, ...] = (
-    Path.home() / ".omnigents",
-    Path.home() / ".omniagents",
-)
-_DATA_DIR_ENV_VAR = "OMNIGENT_DATA_DIR"
-
-
-def _migrate_legacy_state_dir() -> None:
-    """
-    One-time relocation of a pre-rename state directory to ``~/.omnigent``.
-
-    Earlier releases stored all per-user state under ``~/.omniagents`` and then
-    ``~/.omnigents`` as the name evolved. To avoid silently losing that state,
-    move the newest surviving legacy directory to ``~/.omnigent`` on first run,
-    but only when **all** of the following hold:
-
-    - the new ``~/.omnigent`` does not yet exist (never clobber new state),
-    - at least one directory in :data:`_LEGACY_STATE_DIRS` exists,
-    - neither :data:`_CONFIG_HOME_ENV_VAR` nor :data:`_DATA_DIR_ENV_VAR` is set
-      (an operator who redirects state elsewhere manages it themselves), and
-    - no live host daemon is running out of that legacy directory -- moving its
-      pidfile / socket dir out from under a running daemon would wedge it.
-
-    On failure the migration is skipped with a warning rather than crashing the
-    CLI; a fresh ``~/.omnigent`` is then created normally and the legacy
-    directory is left untouched for the user to migrate by hand. Idempotent:
-    once ``~/.omnigent`` exists this is a no-op.
-
-    :returns: ``None``.
-    """
-    if _STATE_DIR.exists():
-        return
-    if os.environ.get(_CONFIG_HOME_ENV_VAR) or os.environ.get(_DATA_DIR_ENV_VAR):
-        return
-    legacy_src = next((d for d in _LEGACY_STATE_DIRS if d.exists()), None)
-    if legacy_src is None:
-        return
-
-    # Guard: a daemon spawned by the old release may still be running with its
-    # pidfile + unix socket under the legacy dir. Relocating those would leave
-    # the daemon orphaned and the CLI unable to find it.
-    legacy_pid_file = legacy_src / "host.pid"
-    if legacy_pid_file.exists():
-        try:
-            first_line = legacy_pid_file.read_text(encoding="utf-8").strip().splitlines()[0]
-            legacy_pid = int(first_line)
-        except (ValueError, OSError, IndexError):
-            legacy_pid = None
-        if legacy_pid is not None and _pid_alive(legacy_pid):
-            click.echo(
-                f"Note: found pre-rename state at {legacy_src} but a host daemon "
-                f"is still running from it; skipping migration. Run `{cli_invocation()} stop` "
-                "and re-run to migrate, or move it manually to ~/.omnigent.",
-                err=True,
-            )
-            return
-
-    try:
-        shutil.move(str(legacy_src), str(_STATE_DIR))
-    except OSError as exc:
-        click.echo(
-            f"Note: could not migrate {legacy_src} to ~/.omnigent ({exc}); "
-            f"starting with fresh state. Your old data is untouched at {legacy_src}.",
-            err=True,
-        )
-        return
-    click.echo(f"Migrated per-user state from {legacy_src} to ~/.omnigent.", err=True)
-
+# developer's real ``~/.omnigent-mdsmithaustin/config.yaml``.
+_GLOBAL_CONFIG_PATH: Path = default_user_dir() / "config.yaml"
 
 # Project-level config relative to cwd, analogous to .git/config.
 # Resolved at call time so tests can control cwd.
-_LOCAL_CONFIG_RELPATH: Path = Path(".omnigent") / "config.yaml"
+_LOCAL_CONFIG_RELPATH: Path = PROJECT_CONFIG_RELPATH
 
 # User-facing keys that ``omnigent config`` accepts. Most mirror ``run``
 # options; session-title guidance configures server-owned metadata generation.
@@ -648,7 +568,7 @@ _ConfigValue: TypeAlias = (
     str | int | float | bool | None | list["_ConfigValue"] | dict[str, "_ConfigValue"]
 )
 
-_GLOBAL_AGENTS_DIR: Path = Path.home() / ".omnigent" / "agents"
+_GLOBAL_AGENTS_DIR: Path = default_user_dir() / "agents"
 _INTERNAL_BETA_DEFAULT_AGENT_NAME: str = "databricks_coding_agent.yaml"
 _INTERNAL_BETA_BUNDLED_AGENTS: tuple[str, ...] = (
     "databricks_coding_agent.yaml",
@@ -2311,10 +2231,6 @@ def main() -> None:
     # can't encode the CLI's glyphs; harden the streams before any command
     # renders so the write degrades instead of aborting.
     _ensure_stdio_survives_unencodable_output()
-
-    # Relocate pre-rename ~/.omniagents state before anything reads ~/.omnigent
-    # (update-check cache, diagnostics logs, config). No-op once migrated.
-    _migrate_legacy_state_dir()
 
     argv, debug_logging, log_to_stderr = _extract_global_logging_flags(sys.argv[1:])
     if debug_logging:

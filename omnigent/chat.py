@@ -58,6 +58,7 @@ from omnigent.inner.databricks_executor import (
     _read_databrickscfg,
     _ReusedDatabricksTokenSource,
 )
+from omnigent.installation_defaults import default_user_dir
 from omnigent.models.model_catalog import resolve_catalog_model
 from omnigent.models.model_resolver import ModelResolutionError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
@@ -3579,7 +3580,7 @@ def _omnigent_persistent_dir() -> Path:
         subdir.
     """
     override = os.environ.get("OMNIGENT_DATA_DIR")
-    ap_dir = Path(override).expanduser() if override else Path.home() / ".omnigent"
+    ap_dir = Path(override).expanduser() if override else default_user_dir()
     ap_dir.mkdir(parents=True, exist_ok=True)
     (ap_dir / "artifacts").mkdir(exist_ok=True)
     return ap_dir

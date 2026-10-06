@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO, TypedDict
 
 from omnigent._platform import IS_POSIX
+from omnigent.installation_defaults import default_user_dir
 
 DATA_DIR_ENV_VAR = "OMNIGENT_DATA_DIR"
 LOG_LEVEL_ENV_VAR = "OMNIGENT_LOG_LEVEL"
@@ -283,7 +284,7 @@ class RedactingLogFormatter(TerminalLogFormatter):
 def data_dir() -> Path:
     """Return the runtime data directory used for DBs, artifacts, and logs."""
     value = os.environ.get(DATA_DIR_ENV_VAR)
-    return Path(value).expanduser() if value else Path.home() / ".omnigent"
+    return Path(value).expanduser() if value else default_user_dir()
 
 
 def logs_root() -> Path:

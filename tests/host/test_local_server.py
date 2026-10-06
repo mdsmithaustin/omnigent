@@ -698,7 +698,7 @@ def test_local_data_dir_honors_data_dir_not_config_home(
 ) -> None:
     """``_local_data_dir`` isolates the runtime DB via ``OMNIGENT_DATA_DIR`` only.
 
-    Two worktrees sharing ``~/.omnigent/chat.db`` with divergent Alembic
+    Two worktrees sharing ``~/.omnigent-mdsmithaustin/chat.db`` with divergent Alembic
     heads can't migrate the shared DB, so the daemon-backed server fails to
     boot. ``OMNIGENT_DATA_DIR`` is the purpose-built data-isolation knob.
     ``OMNIGENT_CONFIG_HOME`` MUST NOT move the DB — it isolates config only;
@@ -707,12 +707,11 @@ def test_local_data_dir_honors_data_dir_not_config_home(
     """
     monkeypatch.delenv("OMNIGENT_DATA_DIR", raising=False)
     monkeypatch.delenv("OMNIGENT_CONFIG_HOME", raising=False)
-    # Default: ~/.omnigent.
-    assert local_server._local_data_dir() == Path.home() / ".omnigent"
+    assert local_server._local_data_dir() == Path.home() / ".omnigent-mdsmithaustin"
     # CONFIG_HOME does NOT move the data dir — a failure here means config
     # isolation is leaking back into data-dir selection.
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / "cfg"))
-    assert local_server._local_data_dir() == Path.home() / ".omnigent"
+    assert local_server._local_data_dir() == Path.home() / ".omnigent-mdsmithaustin"
     # DATA_DIR is the data-isolation knob.
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path / "data"))
     assert local_server._local_data_dir() == tmp_path / "data"

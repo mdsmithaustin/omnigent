@@ -33,6 +33,7 @@ import psutil  # type: ignore[import-untyped]
 
 from omnigent.config import global_config_path
 from omnigent.inner import _proc
+from omnigent.installation_defaults import default_user_dir
 from omnigent.process_logging import (
     PROCESS_LOG_FILE_ENV_VAR,
     child_logging_popen_kwargs,
@@ -99,7 +100,7 @@ def _local_data_dir() -> Path:
     value = os.environ.get("OMNIGENT_DATA_DIR")
     if value:
         return Path(value).expanduser()
-    return Path.home() / ".omnigent"
+    return default_user_dir()
 
 
 # Pidfile carrying the background local server's PID + port (two lines).
