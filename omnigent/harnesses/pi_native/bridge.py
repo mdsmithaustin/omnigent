@@ -15,6 +15,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.native import native_bridge_common
 from omnigent.util.json_types import JsonObject as _JsonObject
 
@@ -56,7 +57,7 @@ def pi_native_env_unset(environ: Mapping[str, str]) -> list[str]:
     return sorted({name.strip() for name in raw.split(",") if name.strip()})
 
 
-_BRIDGE_ROOT = Path.home() / ".omnigent" / "pi-native"
+_BRIDGE_ROOT = default_user_dir() / "pi-native"
 _CONFIG_FILE = "config.json"
 _EXTENSION_FILE = "omnigent_pi_native_extension.js"
 _EXTENSION_PACKAGE = "omnigent.resources.pi_native"
@@ -76,7 +77,7 @@ def bridge_dir_for_session_id(session_id: str) -> Path:
     Return the bridge directory for a native Pi session.
 
     :param session_id: Omnigent conversation id, e.g. ``"conv_abc123"``.
-    :returns: Absolute bridge directory under ``~/.omnigent/pi-native``.
+    :returns: Absolute bridge directory under ``~/.omnigent-mdsmithaustin/pi-native``.
     """
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
     return _BRIDGE_ROOT / digest

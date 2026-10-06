@@ -9,7 +9,7 @@ it can inject web turns over REST.
 
 Layout (per bridge id):
 
-    ~/.omnigent/opencode-native/<sha256(bridge_id)[:32]>/
+    ~/.omnigent-mdsmithaustin/opencode-native/<sha256(bridge_id)[:32]>/
         state.json          # runtime state (mutates each turn)
         auth.secret         # OPENCODE_SERVER_PASSWORD for this server
         xdg-data/           # XDG_DATA_HOME for the per-session opencode
@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from omnigent.installation_defaults import default_user_dir
 from omnigent.native import native_bridge_common
 
 if TYPE_CHECKING:
@@ -221,7 +222,7 @@ def write_opencode_policy_plugin(bridge_dir: Path) -> Path:
 
 
 _STATE_VERSION = 1
-_BRIDGE_ROOT = Path.home() / ".omnigent" / "opencode-native"
+_BRIDGE_ROOT = default_user_dir() / "opencode-native"
 _ID_HASH_CHARS = 32
 
 
@@ -232,7 +233,7 @@ def bridge_root() -> Path:
     Tests may monkeypatch :data:`_BRIDGE_ROOT` to isolate bridge files.
 
     :returns: Absolute root for OpenCode-native bridge directories, e.g.
-        ``Path("~/.omnigent/opencode-native")``.
+        ``Path("~/.omnigent-mdsmithaustin/opencode-native")``.
     """
     return _BRIDGE_ROOT
 
@@ -301,7 +302,7 @@ def bridge_dir_for_bridge_id(bridge_id: str) -> Path:
 
     :param bridge_id: Opaque bridge id, e.g. ``"conv_abc123"``.
     :returns: Absolute bridge directory under
-        ``~/.omnigent/opencode-native``.
+        ``~/.omnigent-mdsmithaustin/opencode-native``.
     """
     digest = hashlib.sha256(bridge_id.encode("utf-8")).hexdigest()[:_ID_HASH_CHARS]
     return _BRIDGE_ROOT / digest

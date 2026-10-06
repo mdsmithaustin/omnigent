@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import click
 
 from omnigent._platform import stable_user_id
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -36,7 +37,9 @@ if TYPE_CHECKING:
 #: Env var carrying the bridge dir into the harness executor process.
 BRIDGE_DIR_ENV_VAR = "HARNESS_CURSOR_NATIVE_BRIDGE_DIR"
 
-_BRIDGE_ROOT = Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "cursor-native"
+_BRIDGE_ROOT = (
+    Path(tempfile.gettempdir()) / f"{NATIVE_TMP_PREFIX}-{stable_user_id()}" / "cursor-native"
+)
 _TMUX_FILE = "tmux.json"
 _BRIDGE_CONFIG_FILE = "bridge.json"
 _MCP_CONFIG_FILE = "mcp.json"

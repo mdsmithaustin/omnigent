@@ -53,6 +53,7 @@ from omnigent.harnesses.codex_egress import (
     is_connection_retry,
 )
 from omnigent.inner.agent_env import clean_agent_env, declared_passthrough
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.models import model_catalog
 from omnigent.models.codex_model_vocabulary import (
@@ -1010,9 +1011,9 @@ def _is_omnigent_private_codex_home(path: Path) -> bool:
     nested launches must not treat them as the real login directory.
 
     :param path: Candidate ``CODEX_HOME`` path, e.g.
-        ``"/home/user/.omnigent/codex-native/<hash>/codex-home"``.
+        ``"/home/user/.omnigent-mdsmithaustin/codex-native/<hash>/codex-home"``.
     :returns: ``True`` when *path* matches a native bridge home or the
-        wrapped executor's temporary ``omnigent-codex-home-*`` naming.
+        wrapped executor's temporary ``mdma-codex-home-*`` naming.
     """
     expanded = path.expanduser()
     parts = expanded.parts
@@ -1020,7 +1021,7 @@ def _is_omnigent_private_codex_home(path: Path) -> bool:
         expanded.name == "codex-home"
         and len(parts) >= 4
         and parts[-3] == "codex-native"
-        and parts[-4] == ".omnigent"
+        and parts[-4] == USER_DIRNAME
     ):
         return True
     return expanded.name.startswith(CODEX_HOME_PREFIX)
@@ -1037,7 +1038,7 @@ def _private_codex_home_config_source(path: Path) -> Path | None:
     hard-linked credential store.
 
     :param path: Private ``CODEX_HOME`` path, e.g.
-        ``"/home/user/.omnigent/codex-native/<hash>/codex-home"``.
+        ``"/home/user/.omnigent-mdsmithaustin/codex-native/<hash>/codex-home"``.
     :returns: The shared parent directory of bridged config symlink targets,
         or ``None`` if the private home has no usable source symlink.
     """
