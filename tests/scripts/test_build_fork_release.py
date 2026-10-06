@@ -58,7 +58,7 @@ def test_wheel_coexistence_is_required_before_build_completion(tmp_path, accepta
         "from pathlib import Path\n"
         "args = sys.argv[1:]\n"
         "with open(os.environ['UV_LOG'], 'a') as log:\n"
-        "    log.write(json.dumps(args) + '\\n')\n"
+        "    log.write(json.dumps({'args': args, 'cwd': str(Path.cwd())}) + '\\n')\n"
         "if args[0] == 'venv':\n"
         "    python = Path(args[-1]) / 'bin/python'\n"
         "    python.parent.mkdir(parents=True)\n"
@@ -105,9 +105,18 @@ def test_wheel_coexistence_is_required_before_build_completion(tmp_path, accepta
     assert upstream_python.parents[2] == fork_python.parents[2]
     assert receipt["invoked_python"] == str(fork_python)
     assert receipt["require_ui"] is True
-    commands = [json.loads(line) for line in log.read_text().splitlines()]
+    invocations = [json.loads(line) for line in log.read_text().splitlines()]
+    commands = [invocation["args"] for invocation in invocations]
     assert ["venv", "--python", "3.12", str(upstream_python.parent.parent)] in commands
-    assert ["pip", "install", "--python", str(upstream_python), "omnigent==0.16.1"] in commands
+    upstream_install = next(
+        invocation
+        for invocation in invocations
+        if invocation["args"]
+        == ["pip", "install", "--python", str(upstream_python), "omnigent==0.16.1"]
+    )
+    upstream_install_cwd = Path(upstream_install["cwd"])
+    assert not upstream_install_cwd.is_relative_to(checkout.resolve())
+    assert upstream_install_cwd == upstream_python.parents[2].resolve()
     assert not fork_python.exists()
     assert not upstream_python.exists()
     if acceptance_exit:
