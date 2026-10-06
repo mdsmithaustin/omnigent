@@ -26,6 +26,7 @@ import yaml
 from packaging.version import Version
 
 from omnigent.harnesses.pi_native.main import _materialize_pi_agent_spec
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.onboarding.harness_install import PI_KEY, harness_install_spec
 from tests._helpers.live_server import local_server_env
 from tests._helpers.server_runner import server_runner
@@ -149,7 +150,7 @@ def test_real_pi_cli_version_floor(
         "entry_point": "launch-cli" if surface == "cli" else "launch-web/server-native-route",
     }
     with server_runner(tmp_path / "stack", base_env=clean_env, server_cwd=_ROOT) as stack:
-        config_dir = stack.runner_home / ".omnigent"
+        config_dir = stack.runner_home / USER_DIRNAME
         config_dir.mkdir(exist_ok=True)
         (config_dir / "config.yaml").write_text(
             yaml.safe_dump(

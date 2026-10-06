@@ -13,6 +13,7 @@ import httpx
 import psutil
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 from tests._helpers.server_runner import ServerRunner, server_runner
 from tests.e2e.conftest import (
@@ -71,7 +72,7 @@ def _config(root: Path) -> dict[str, str]:
 def _server_log(stack: ServerRunner) -> str:
     return "\n".join(
         path.read_text(errors="replace")
-        for path in (stack.server_home / ".omnigent" / "logs" / "server").glob("*.log")
+        for path in (stack.server_home / USER_DIRNAME / "logs" / "server").glob("*.log")
     )
 
 

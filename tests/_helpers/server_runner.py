@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner.identity import token_bound_runner_id
 from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 from tests._helpers.compat import (
@@ -102,7 +103,7 @@ class ServerRunner:
         """Include captured output and rolling process logs in startup failures."""
         paths = set(self.root.glob("*.log"))
         for home in (self.runner_home, self.server_home):
-            paths.update((home / ".omnigent" / "logs").rglob("*.log"))
+            paths.update((home / USER_DIRNAME / "logs").rglob("*.log"))
         tails = []
         for path in sorted(paths):
             try:
@@ -264,7 +265,7 @@ def server_runner(
             poll_interval=poll_interval,
         )
         # Register before process callbacks so direct children terminate first.
-        for scope in (root, stack.runner_home / ".omnigent", stack.server_home / ".omnigent"):
+        for scope in (root, stack.runner_home / USER_DIRNAME, stack.server_home / USER_DIRNAME):
             resources.callback(_reap, scope)
         stack.start_server(wait_ready=wait_ready)
         yield stack
