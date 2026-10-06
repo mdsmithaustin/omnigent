@@ -15,6 +15,8 @@ from omnigent.harnesses.codex_native.stderr_diagnostics import (
     codex_app_server_diagnostic_env,
 )
 from omnigent.process_logging import HARNESS_STDERR_ENABLED_ENV_VAR
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 def test_default_filter_supports_both_http_clients_without_legacy_payload_tracing() -> None:
@@ -69,6 +71,7 @@ def test_explicit_launch_filter_wins_without_mutating_input(
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("host_filter", [None, "off"])
 async def test_app_server_start_passes_native_filter_only_to_enabled_subprocess(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     enabled: bool,
@@ -107,6 +110,8 @@ async def test_app_server_start_passes_native_filter_only_to_enabled_subprocess(
         codex_path="/test/codex",
         reconcile_process_registry=False,
     )
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     original_env = dict(server.env)
 
     with pytest.raises(SpawnObserved):
