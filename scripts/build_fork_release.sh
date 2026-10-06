@@ -22,6 +22,7 @@ export UV_INDEX_URL=https://pypi.org/simple
 export PIP_INDEX_URL=https://pypi.org/simple
 export NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 version=$(python -c 'import json; print(json.load(open(".github/fork-release.json"))["version"])')
+upstream_version=$(python -c 'import json; print(json.load(open(".github/fork-release.json"))["upstream"]["tag"][1:])')
 uv run --no-sync python scripts/update_versions.py check --expect "$version"
 python scripts/normalize_uv_lock_registry.py --check uv.lock
 uv lock --check
@@ -89,6 +90,12 @@ smoke_wheels() {
     (cd "$smoke_root" && env -u PYTHONPATH "$environment/bin/python" -I "$smoke_root/smoke.py" "$version" "$repo_root" "$output/evidence/ui-inventory.json")
 }
 smoke_wheels "$output/dist" "$smoke_root/wheels"
+uv venv --python 3.12 "$smoke_root/upstream"
+uv pip install --python "$smoke_root/upstream/bin/python" "omnigent==$upstream_version"
+env -u PYTHONPATH "$smoke_root/wheels/bin/python" -I "$repo_root/scripts/verify_fork_coexistence.py" \
+    --upstream-python "$smoke_root/upstream/bin/python" \
+    --fork-python "$smoke_root/wheels/bin/python" \
+    --require-ui --evidence "$output/evidence/coexistence"
 mkdir -p "$smoke_root/rebuilt" "$smoke_root/sources"
 export OMNIGENT_SKIP_WEB_UI=true
 for sdist in "$output"/dist/*.tar.gz; do
