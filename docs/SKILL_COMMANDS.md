@@ -27,6 +27,12 @@ is `accepted`, `rejected`, or `unknown`. Only accepted admission sets
 `queued=true`. Admission describes the runner's responsibility for the command.
 It does not establish native completion or a successful side effect.
 
+A native session must have a ready, recorded native owner before skill dispatch.
+Start or resume its native terminal first. If delivery is rejected before owner
+readiness or because Stop revoked a deferred command, retrying its original
+identity keeps that rejection. Send a new invocation after owner readiness.
+See [native Stop and admission](NATIVE_STOP.md#admission-and-insertion-boundary).
+
 The durable claim binds the workspace, conversation, client identity, original
 creator, and submitted fingerprint. When a saved claim exists, reposting the
 same identity reads that claim without forwarding again. An absent claim does
