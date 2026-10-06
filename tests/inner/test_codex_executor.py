@@ -1406,7 +1406,7 @@ class TestCodexExecutor(unittest.TestCase):
                     self.assertIn("CODEX_HOME", recorded_env)
                     codex_home = Path(recorded_env["CODEX_HOME"])
                     self.assertTrue(codex_home.is_dir())
-                    self.assertTrue(codex_home.name.startswith("omnigent-codex-home-"))
+                    self.assertTrue(codex_home.name.startswith("mdma-codex-home-"))
                     self.assertTrue(
                         codex_home.is_relative_to(Path(tempfile.gettempdir()).resolve())
                     )
@@ -4199,7 +4199,7 @@ def test_app_server_start_uses_real_home_for_private_inherited_codex_home(
     """
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    inherited = home / ".omnigent" / "codex-native" / "abc123" / "codex-home"
+    inherited = home / ".omnigent-mdsmithaustin" / "codex-native" / "abc123" / "codex-home"
     inherited.mkdir(parents=True)
     monkeypatch.setenv("CODEX_HOME", str(inherited))
     real_codex_home = home / ".codex"
@@ -4287,7 +4287,7 @@ def test_app_server_start_preserves_custom_home_from_inherited_private_symlink(
     default_home.mkdir(parents=True)
     (default_home / "auth.json").write_text('{"auth_mode": "default"}')
     (default_home / "config.toml").write_text('model_provider = "default"')
-    inherited = home / ".omnigent" / "codex-native" / "abc123" / "codex-home"
+    inherited = home / ".omnigent-mdsmithaustin" / "codex-native" / "abc123" / "codex-home"
     inherited.mkdir(parents=True)
     (inherited / "auth.json").symlink_to(custom_home / "auth.json")
     (inherited / "config.toml").symlink_to(custom_home / "config.toml")
@@ -4347,7 +4347,9 @@ def test_codex_home_source_preserves_custom_home_from_inherited_credentials_hard
     custom_home.mkdir()
     (custom_home / "config.toml").write_text('model_provider = "custom"')
     (custom_home / ".credentials.json").write_text('{"linear|abc": {"access_token": "t"}}')
-    inherited = tmp_path / "home" / ".omnigent" / "codex-native" / "abc123" / "codex-home"
+    inherited = (
+        tmp_path / "home" / ".omnigent-mdsmithaustin" / "codex-native" / "abc123" / "codex-home"
+    )
     inherited.mkdir(parents=True)
 
     _populate_codex_home_config(inherited, custom_home)
@@ -5173,7 +5175,7 @@ class TestCodexAppServerSessionHomeStaging(unittest.TestCase):
             skills = codex_home / "skills"
             self.assertTrue(skills.is_dir())
             self.assertTrue(skills.is_symlink())
-            self.assertTrue(skills.resolve().name.startswith("omnigent-codex-skills-"))
+            self.assertTrue(skills.resolve().name.startswith("mdma-codex-skills-"))
             self.assertEqual(list(skills.iterdir()), [])
 
         self._start_until_worker_spawn(_check, skills_filter="none")
@@ -5191,7 +5193,7 @@ class TestCodexAppServerSessionHomeStaging(unittest.TestCase):
         def _check(codex_home: Path) -> None:
             manifest = (codex_home / "skills" / "alpha" / "SKILL.md").resolve()
             self.assertTrue(manifest.is_file())
-            self.assertTrue(manifest.parents[1].name.startswith("omnigent-codex-skills-"))
+            self.assertTrue(manifest.parents[1].name.startswith("mdma-codex-skills-"))
 
         with tempfile.TemporaryDirectory() as root:
             bundle = Path(root) / "bundle"

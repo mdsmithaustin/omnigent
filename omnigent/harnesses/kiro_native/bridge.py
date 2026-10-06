@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, TypedDict
 
 from omnigent._platform import stable_user_id
 from omnigent.harnesses.claude_native import bridge as claude_bridge
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -35,7 +36,9 @@ class _KiroMcpConfig(TypedDict):
 KIRO_NATIVE_BRIDGE_DIR_ENV_VAR = "HARNESS_KIRO_NATIVE_BRIDGE_DIR"
 KIRO_ACP_RECORD_PATH_ENV_VAR = "KIRO_ACP_RECORD_PATH"
 
-_BRIDGE_ROOT = Path(tempfile.gettempdir()) / f"omnigent-{stable_user_id()}" / "kiro-native"
+_BRIDGE_ROOT = (
+    Path(tempfile.gettempdir()) / f"{NATIVE_TMP_PREFIX}-{stable_user_id()}" / "kiro-native"
+)
 _TMUX_FILE = "tmux.json"
 _FORWARDER_READY_FILE = "kiro_session_forwarder_ready.json"
 _ACP_RECORD_FILE = "kiro_acp_record.jsonl"
