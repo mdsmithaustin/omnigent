@@ -25,6 +25,8 @@ from tests.harnesses.codex_native.app_server._support import (
     _disable_codex_startup_rpc,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 async def test_discover_codex_model_options_strips_secrets_and_stops_process(
@@ -140,6 +142,7 @@ async def test_discover_codex_model_options_strips_secrets_and_stops_process(
 
 @pytest.mark.parametrize("gateway_rows", ["matching", "missing", "malformed", "current", None])
 async def test_start_uses_fresh_gateway_catalog_before_debug_models(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     gateway_rows: str | None,
@@ -168,6 +171,8 @@ async def test_start_uses_fresh_gateway_catalog_before_debug_models(
         tmp_path / "bridge",
         workspace,
     )
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     server.trust_project = True
     server.pinned_model = "gpt-5.4"
     if gateway_rows is not None:
