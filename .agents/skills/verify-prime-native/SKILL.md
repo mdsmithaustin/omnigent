@@ -83,10 +83,13 @@ The existing `mcp_tool` scenario runs three independent calls against one
 stateless HTTP endpoint. It records a generation-1 success, stops and reaps that
 child, and waits for a completed native outage error with no server invocation.
 Only then does it start generation 2 and require a fresh successful call.
-Compare `mcp-before-witness.json`, `mcp-outage-witness.json`, and
-`mcp-after-witness.json` with the phase captures and per-generation ledgers.
-Require exact native, public, model-continuation, and server result text and
-matching call IDs. The declared `call_id` argument supplies fixture correlation.
+Compare the before and after witnesses with their phase captures. Each successful
+call must have one row in its generation ledger. Require exact native, public,
+Chat Completions continuation, and server result text with matching call IDs.
+For `mcp-outage-witness.json`, require matching native, public, and Chat Completions
+error text and call IDs, plus native `isError: true`. Require no outage invocation
+or outage row in either generation ledger. Public outputs need no error flag.
+The declared `call_id` argument supplies fixture correlation.
 It does not prove the SDK execute callback ID or the JSON-RPC wire request ID.
 
 Inspect `mcp-continuity.json`. The existing count-42 object must advance to 43

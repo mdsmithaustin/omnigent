@@ -3220,9 +3220,44 @@ def test_mcp_memory_rejects_recreated_or_changed_state(field):
 
 
 def _fixture_env(probe):
-    import os
+    return {"PYTHONPATH": str(probe.REPO)}
 
-    return dict(os.environ) | {"PYTHONPATH": str(probe.REPO)}
+
+def test_mcp_fixture_uses_only_explicit_child_configuration(tmp_path, monkeypatch):
+    probe = _adapter_probe()
+    monkeypatch.setattr(probe.os, "environ", {"OMNIGENT_TEST_AMBIENT": "must-not-reach-child"})
+    original = probe.subprocess.Popen
+    launches = []
+
+    def launch(argv, **kwargs):
+        launches.append((argv, kwargs["env"]))
+        return original(argv, **kwargs)
+
+    monkeypatch.setattr(probe.subprocess, "Popen", launch)
+    child = probe.subprocess.run(
+        [
+            probe.sys.executable,
+            "-c",
+            "import json, os; print(json.dumps([os.environ.get('OMNIGENT_TEST_AMBIENT', "
+            "'absent'), os.environ['PYTHONPATH']]))",
+        ],
+        env=_fixture_env(probe),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert json.loads(child.stdout) == ["absent", str(probe.REPO)]
+    launches.clear()
+    fixture = probe.McpFixture(probe.Evidence(tmp_path), _fixture_env(probe), "run")
+    try:
+        first = fixture.start_first()
+        assert first.number == 1
+        assert not fixture.refused()
+        assert launches[0][0][0] == probe.sys.executable
+        assert launches[0][1] == {"PYTHONPATH": str(probe.REPO)}
+    finally:
+        cleanup = fixture.close()
+    assert cleanup.outputs_closed and cleanup.endpoint_refused and cleanup.errors == ()
 
 
 def _fixture_outage(probe, fixture, first):
@@ -3245,6 +3280,7 @@ def test_mcp_loopback_stop_replacement_and_repeated_settlement(tmp_path):
     fixture = probe.McpFixture(probe.Evidence(tmp_path), _fixture_env(probe), "run")
     try:
         first = fixture.start_first()
+        assert fixture.generations[0].started.identity == first
         assert not fixture.refused()
         with pytest.raises(RuntimeError, match="completed outage"):
             fixture.restart(_fixture_outage(probe, fixture, first))
@@ -3308,6 +3344,8 @@ def test_mcp_partial_start_keeps_exact_handles_for_cleanup(
             else:
                 fixture.restart(_fixture_outage(probe, fixture, first))
         assert len(fixture.generations) == generation
+        with pytest.raises(RuntimeError, match="has not completed startup"):
+            _ = fixture.generations[-1].started
     finally:
         cleanup = fixture.close()
     assert cleanup.outputs_closed and cleanup.endpoint_refused
@@ -3393,7 +3431,9 @@ def test_adapter_allocation_precedes_fixture_launch(tmp_path, monkeypatch):
         probe.Evidence(tmp_path / "evidence"),
         requested,
     )
-    assert run.fixture is None
+    assert run._fixture is None
+    with pytest.raises(RuntimeError, match="has not completed startup"):
+        _ = run.fixture
     assert run.mcp.generations == []
     assert run.server is None
     monkeypatch.setattr(
@@ -3440,7 +3480,22 @@ def test_mcp_model_accepts_identical_history_and_rejects_another_execution(tmp_p
         fixture.close()
 
 
-def test_mcp_memory_waiter_matches_a_json_prompt_with_escaped_code(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        {"pid": True},
+        {"pid": 99},
+        {"token": 1},
+        {"count": "42"},
+        {"count": True},
+        {"object_id": None},
+        {"socket_id": []},
+        {"socket_fileno": False},
+        {"socket_fileno": -1},
+    ],
+)
+def test_mcp_memory_waiter_matches_a_json_prompt_with_escaped_code(tmp_path, monkeypatch, change):
     probe = _adapter_probe()
     root = _selected_root_identity(probe)
 
@@ -3463,7 +3518,8 @@ def test_mcp_memory_waiter_matches_a_json_prompt_with_escaped_code(tmp_path, mon
                     "object_id": 101,
                     "socket_id": 102,
                     "socket_fileno": 9,
-                },
+                }
+                | (change or {}),
             )
             return SimpleNamespace(status_code=202)
 
@@ -3477,6 +3533,10 @@ def test_mcp_memory_waiter_matches_a_json_prompt_with_escaped_code(tmp_path, mon
             return root
 
     run = Run()
+    if change is not None:
+        with pytest.raises(RuntimeError, match="MCP memory"):
+            probe._mcp_memory(run, object(), root, "before")
+        return
     result = probe._mcp_memory(run, object(), root, "before")
     assert dataclasses.asdict(result) == {
         "kernel": dataclasses.asdict(root.roles.kernel),
@@ -3562,8 +3622,10 @@ def test_mcp_failed_phase_attempts_final_continuity_and_preserves_first_failure(
         mcp=SimpleNamespace(
             generations=[
                 SimpleNamespace(
-                    identity=probe.GenerationIdentity(
-                        1, "startup", probe.ProcessIdentity(70, 7.0, ("python",))
+                    started=SimpleNamespace(
+                        identity=probe.GenerationIdentity(
+                            1, "startup", probe.ProcessIdentity(70, 7.0, ("python",))
+                        )
                     )
                 )
             ]

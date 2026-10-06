@@ -16,11 +16,11 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import IO, Literal
+from typing import IO, Literal, TypedDict
 
 import httpx
 import pexpect
@@ -284,8 +284,38 @@ class _GenerationHandle:
     ledger_path: Path
     startup_path: Path
     launched_at: float
-    process: subprocess.Popen[str] | None = None
-    identity: GenerationIdentity | None = None
+    state: subprocess.Popen[str] | _StartedGeneration | None = None
+
+    @property
+    def process(self) -> subprocess.Popen[str] | None:
+        return self.state.process if isinstance(self.state, _StartedGeneration) else self.state
+
+    @property
+    def identity(self) -> GenerationIdentity | None:
+        return self.state.identity if isinstance(self.state, _StartedGeneration) else None
+
+    @property
+    def started(self) -> _StartedGeneration:
+        if not isinstance(self.state, _StartedGeneration):
+            raise RuntimeError("MCP generation has not completed startup")
+        return self.state
+
+
+@dataclass(frozen=True)
+class _StartedGeneration:
+    process: subprocess.Popen[str]
+    identity: GenerationIdentity
+
+
+class _McpContinuity(TypedDict, total=False):
+    root_before: dict[str, object]
+    memory_before: Mapping[str, object]
+    memory_after: Mapping[str, object]
+    root_final: dict[str, object]
+    memory_final: Mapping[str, object]
+    first_failure: str
+    root_final_error: str
+    memory_final_error: str
 
 
 @dataclass(frozen=True)
@@ -316,6 +346,54 @@ def json_lines(path: Path) -> list[dict]:
             raise RuntimeError("MCP record is not an object")
         rows.append(row)
     return rows
+
+
+def _phase_invocation(value: object) -> PhaseInvocation:
+    if not isinstance(value, dict) or set(value) != {"phase", "call_nonce", "call_id"}:
+        raise RuntimeError("MCP phase invocation is not an object")
+    phase = value.get("phase")
+    call_nonce = value.get("call_nonce")
+    call_id = value.get("call_id")
+    if (
+        not isinstance(call_nonce, str)
+        or not call_nonce
+        or not isinstance(call_id, str)
+        or not call_id
+    ):
+        raise RuntimeError("MCP phase invocation identity differs")
+    if phase == "before":
+        return PhaseInvocation("before", call_nonce, call_id)
+    if phase == "outage":
+        return PhaseInvocation("outage", call_nonce, call_id)
+    if phase == "after":
+        return PhaseInvocation("after", call_nonce, call_id)
+    raise RuntimeError("MCP phase invocation phase differs")
+
+
+def _generation_identity(value: object) -> GenerationIdentity:
+    if not isinstance(value, dict) or not isinstance(value.get("process"), dict):
+        raise RuntimeError("MCP generation identity is not an object")
+    number = value.get("number")
+    startup_nonce = value.get("startup_nonce")
+    process = value["process"]
+    pid = process.get("pid")
+    started = process.get("started")
+    argv = process.get("argv")
+    if (
+        type(number) is not int
+        or number not in (1, 2)
+        or not isinstance(startup_nonce, str)
+        or not startup_nonce
+        or type(pid) is not int
+        or pid <= 0
+        or set(process) != {"pid", "started", "argv"}
+        or not isinstance(started, (int, float))
+        or isinstance(started, bool)
+        or not isinstance(argv, list)
+        or not all(isinstance(arg, str) for arg in argv)
+    ):
+        raise RuntimeError("MCP generation identity differs")
+    return GenerationIdentity(number, startup_nonce, ProcessIdentity(pid, started, tuple(argv)))
 
 
 def _mcp_result_text(
@@ -1516,7 +1594,7 @@ class ModelFixture:
     def reply_mcp(self, request: dict) -> tuple[dict, str]:
         prompt = self._latest_user(request["messages"])
         spec = json.loads(prompt.removeprefix("ADAPTER_MCP_PHASE "))
-        invocation = PhaseInvocation(**spec["invocation"])
+        invocation = _phase_invocation(spec["invocation"])
         self._require_tool(request, MCP_TOOL)
         tools = [
             tool["function"]
@@ -1539,11 +1617,7 @@ class ModelFixture:
             if not actual.startswith(MCP_ERROR_PREFIX):
                 raise RuntimeError("MCP model outage error missing")
         else:
-            generation = GenerationIdentity(
-                spec["generation"]["number"],
-                spec["generation"]["startup_nonce"],
-                ProcessIdentity(**spec["generation"]["process"]),
-            )
+            generation = _generation_identity(spec["generation"])
             if actual != _mcp_result_text(self.nonce, generation, invocation):
                 raise RuntimeError("MCP generation-bound result differs")
             literal = json.loads(actual)["value"]
@@ -1613,18 +1687,19 @@ class McpFixture:
                 str(config),
             ]
             self.evidence.record_launch(f"mcp_fixture_{number}", argv, REPO, self.env)
-            handle.process = subprocess.Popen(
+            child = subprocess.Popen(
                 argv, cwd=REPO, env=self.env, stdout=output, stderr=subprocess.STDOUT, text=True
             )
-            self.evidence.record_launch_start(f"mcp_fixture_{number}", handle.process.pid)
-            process = psutil.Process(handle.process.pid)
+            handle.state = child
+            self.evidence.record_launch_start(f"mcp_fixture_{number}", child.pid)
+            process = psutil.Process(child.pid)
             identity = ProcessIdentity(
                 process.pid, process.create_time(), tuple(process.cmdline())
             )
 
             def listening() -> bool:
-                if handle.process.poll() is not None:
-                    raise RuntimeError(f"MCP fixture exited with {handle.process.returncode}")
+                if child.poll() is not None:
+                    raise RuntimeError(f"MCP fixture exited with {child.returncode}")
                 if not handle.startup_path.is_file():
                     return False
                 try:
@@ -1644,8 +1719,9 @@ class McpFixture:
                 or not startup["startup_nonce"]
             ):
                 raise RuntimeError("MCP child startup identity differs")
-            handle.identity = GenerationIdentity(number, startup["startup_nonce"], identity)
-            return handle.identity
+            generation = GenerationIdentity(number, startup["startup_nonce"], identity)
+            handle.state = _StartedGeneration(child, generation)
+            return generation
         except FINALIZATION_ERRORS as exc:
             self.errors.append(f"generation {number} startup: {type(exc).__name__}: {exc}")
             raise
@@ -1661,8 +1737,15 @@ class McpFixture:
                 if handle.process.poll() is None:
                     handle.process.terminate()
                 handle.process.wait(timeout=10)
-                if handle.identity and live_initial_process_records(
-                    [asdict(handle.identity.process)]
+                identity = handle.identity
+                if identity and live_initial_process_records(
+                    [
+                        {
+                            "pid": identity.process.pid,
+                            "started": identity.process.started,
+                            "argv": list(identity.process.argv),
+                        }
+                    ]
                 ):
                     raise RuntimeError("MCP stopped generation identity survives")
         except CLEANUP_ERRORS as exc:
@@ -1693,7 +1776,8 @@ class McpFixture:
             raise RuntimeError("MCP stopped endpoint is not refused")
 
     def restart(self, outage: CompletedOutage) -> GenerationIdentity:
-        first = self.generations[0]
+        handle = self.generations[0]
+        first = handle.started
         if (
             len(self.generations) != 1
             or outage.run_nonce != self.run_nonce
@@ -1702,9 +1786,8 @@ class McpFixture:
             or outage.invocation.phase != "outage"
             or outage.completed_at > time.monotonic()
             or not outage.error_text.startswith(MCP_ERROR_PREFIX)
-            or first.process is None
             or first.process.poll() is None
-            or not first.output.closed
+            or not handle.output.closed
             or not self.refused()
             or self.errors
         ):
@@ -1733,7 +1816,7 @@ class McpFixture:
         except OSError as exc:
             refused = False
             self.errors.append(f"MCP cleanup refusal: {exc}")
-        records = tuple(
+        records: tuple[dict[str, object], ...] = tuple(
             {
                 "number": handle.number,
                 "identity": asdict(handle.identity) if handle.identity else None,
@@ -1789,8 +1872,14 @@ class AdapterRun:
         self.owned_session_ids: list[str] = []
         self.allowed: PrimeSession | None = None
         self.denied: PrimeSession | None = None
-        self.fixture: ModelFixture | None = None
+        self._fixture: ModelFixture | None = None
         self.mcp = McpFixture(evidence, self.env(), self.nonce)
+
+    @property
+    def fixture(self) -> ModelFixture:
+        if self._fixture is None:
+            raise RuntimeError("Model fixture has not completed startup")
+        return self._fixture
 
     def _write_prime_config(self) -> None:
         endpoint = self.fixture.server.server_port
@@ -1947,7 +2036,7 @@ class AdapterRun:
         return directory
 
     def start(self) -> None:
-        self.fixture = ModelFixture(
+        self._fixture = ModelFixture(
             self.evidence.root,
             self.workspace,
             self.nonce,
@@ -2590,10 +2679,11 @@ class AdapterRun:
             except CLEANUP_ERRORS as exc:
                 errors.append(f"server: {type(exc).__name__}: {exc}")
         try:
-            if self.fixture is not None:
-                self.fixture.close()
+            if self._fixture is not None:
+                self._fixture.close()
         except CLEANUP_ERRORS as exc:
             errors.append(f"model fixture: {type(exc).__name__}: {exc}")
+        mcp_cleanup: FixtureCleanup | None = None
         try:
             mcp_cleanup = self.mcp.close()
             record["mcp_fixture"] = asdict(mcp_cleanup)
@@ -2623,7 +2713,7 @@ class AdapterRun:
             errors.append(f"copy own logs: {type(exc).__name__}: {exc}")
         record["server_returncode"] = self.server.poll() if self.server else None
         record["model_fixture_thread_alive"] = (
-            self.fixture.thread.is_alive() if self.fixture else False
+            self._fixture.thread.is_alive() if self._fixture else False
         )
         record["mcp_fixture_returncodes"] = [
             handle.process.poll() if handle.process else None for handle in self.mcp.generations
@@ -2633,12 +2723,12 @@ class AdapterRun:
             final_owned_census=final_owned_census,
             forced_native_fallback=bool(record.get("forced_native_fallback")),
             server_stopped=self.server is not None and self.server.poll() is not None,
-            fixture_stopped=self.fixture is None
-            or (not self.fixture.thread.is_alive() and self.fixture.server.fileno() == -1),
-            mcp_stopped=bool(record.get("mcp_fixture"))
-            and all(item["exited"] for item in record["mcp_fixture"]["generations"])
-            and record["mcp_fixture"]["outputs_closed"]
-            and record["mcp_fixture"]["endpoint_refused"],
+            fixture_stopped=self._fixture is None
+            or (not self._fixture.thread.is_alive() and self._fixture.server.fileno() == -1),
+            mcp_stopped=mcp_cleanup is not None
+            and all(item["exited"] for item in mcp_cleanup.generations)
+            and mcp_cleanup.outputs_closed
+            and mcp_cleanup.endpoint_refused,
             errors=errors,
         )
         return ok, record
@@ -2716,15 +2806,27 @@ def _mcp_memory(
     current = run.selected_root_identity(session)
     assert_same_selected_root_identity(root, current)
     record = json.loads(path.read_text())
-    if record["pid"] != root.roles.kernel.pid or record["socket_fileno"] < 0:
+    if not isinstance(record, dict):
+        raise RuntimeError("MCP memory observation is not an object")
+    pid = record.get("pid")
+    token = record.get("token")
+    count = record.get("count")
+    object_id = record.get("object_id")
+    socket_id = record.get("socket_id")
+    socket_fileno = record.get("socket_fileno")
+    if (
+        type(pid) is not int
+        or not isinstance(token, str)
+        or type(count) is not int
+        or type(object_id) is not int
+        or type(socket_id) is not int
+        or type(socket_fileno) is not int
+    ):
+        raise RuntimeError("MCP memory observation fields differ")
+    if pid != root.roles.kernel.pid or socket_fileno < 0:
         raise RuntimeError("MCP memory kernel or open descriptor differs")
     return KernelMemoryObservation(
-        root.roles.kernel,
-        record["token"],
-        record["count"],
-        record["object_id"],
-        record["socket_id"],
-        record["socket_fileno"],
+        root.roles.kernel, token, count, object_id, socket_id, socket_fileno
     )
 
 
@@ -2890,9 +2992,10 @@ def verify_mcp_reconnect(run: AdapterRun, session: PrimeSession) -> ReconnectObs
     memory_before = _mcp_memory(run, session, root, "before")
     if memory_before.token != run.nonce or memory_before.count != 42:
         raise RuntimeError("MCP existing count-42 memory missing")
+    phases: tuple[Literal["before", "outage", "after"], ...] = ("before", "outage", "after")
     invocations = {
         phase: PhaseInvocation(phase, uuid.uuid4().hex, f"adapter_{uuid.uuid4().hex}")
-        for phase in ("before", "outage", "after")
+        for phase in phases
     }
     config = json.loads(Path(root.config_path).read_text())
     declared = [tool for tool in config.get("tools", []) if tool.get("name") == MCP_TOOL]
@@ -2900,10 +3003,11 @@ def verify_mcp_reconnect(run: AdapterRun, session: PrimeSession) -> ReconnectObs
         raise RuntimeError("MCP deployed declaration missing")
     _mcp_schema(declared[0])
     write_json(run.evidence.root / "mcp-declared-tool.json", declared[0])
-    first = run.mcp.generations[0].identity
-    failure = None
-    observation = None
-    continuity = {
+    first_started = run.mcp.generations[0].started
+    first = first_started.identity
+    failure: BaseException | None = None
+    observation: ReconnectObservation | None = None
+    continuity: _McpContinuity = {
         "root_before": selected_root_identity_record(root),
         "memory_before": asdict(memory_before),
     }
@@ -2922,7 +3026,7 @@ def verify_mcp_reconnect(run: AdapterRun, session: PrimeSession) -> ReconnectObs
                 "generation": asdict(first),
                 "endpoint_refused": run.mcp.refused(),
                 "output_closed": run.mcp.generations[0].output.closed,
-                "returncode": run.mcp.generations[0].process.poll(),
+                "returncode": first_started.process.poll(),
                 "monotonic": time.monotonic(),
             },
         )
@@ -2963,35 +3067,27 @@ def verify_mcp_reconnect(run: AdapterRun, session: PrimeSession) -> ReconnectObs
         failure = exc
         continuity["first_failure"] = f"{type(exc).__name__}: {exc}"
     finally:
-        for name, read in (
-            (
-                "root_final",
-                lambda: selected_root_identity_record(run.selected_root_identity(session)),
-            ),
-            ("memory_final", lambda: asdict(_mcp_memory(run, session, root, "final"))),
-        ):
-            try:
-                continuity[name] = read()
-                if name == "root_final":
-                    assert_same_selected_root_identity(root, run.selected_root_identity(session))
-                else:
-                    record = continuity[name]
-                    final = KernelMemoryObservation(
-                        root.roles.kernel,
-                        record["token"],
-                        record["count"],
-                        record["object_id"],
-                        record["socket_id"],
-                        record["socket_fileno"],
-                    )
-                    _require_memory(memory_before, final, 43 if observation else 42)
-            except FINALIZATION_ERRORS as exc:
-                continuity[f"{name}_error"] = f"{type(exc).__name__}: {exc}"
-                if failure is None:
-                    failure = exc
+        try:
+            final_root = run.selected_root_identity(session)
+            continuity["root_final"] = selected_root_identity_record(final_root)
+            assert_same_selected_root_identity(root, final_root)
+        except FINALIZATION_ERRORS as exc:
+            continuity["root_final_error"] = f"{type(exc).__name__}: {exc}"
+            if failure is None:
+                failure = exc
+        try:
+            final_memory = _mcp_memory(run, session, root, "final")
+            continuity["memory_final"] = asdict(final_memory)
+            _require_memory(memory_before, final_memory, 43 if observation else 42)
+        except FINALIZATION_ERRORS as exc:
+            continuity["memory_final_error"] = f"{type(exc).__name__}: {exc}"
+            if failure is None:
+                failure = exc
         write_json(run.evidence.root / "mcp-continuity.json", continuity)
     if failure is not None:
         raise failure
+    if observation is None:
+        raise RuntimeError("MCP reconnect observation missing")
     return observation
 
 
@@ -3790,7 +3886,9 @@ def serve_mcp(port: int, calls: Path, generation_config: Path) -> int:
     def echo(value: str, phase: str, call_nonce: str, call_id: str) -> str:
         """Return one generation-bound verification result."""
         nonlocal sequence
-        invocation = PhaseInvocation(phase, call_nonce, call_id)
+        invocation = _phase_invocation(
+            {"phase": phase, "call_nonce": call_nonce, "call_id": call_id}
+        )
         text = _mcp_result_text(config["run_nonce"], generation, invocation, value)
         sequence += 1
         append_json(

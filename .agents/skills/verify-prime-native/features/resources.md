@@ -33,9 +33,12 @@ Prime binary and kernel entry. Require exit zero, all ten scenarios `VERIFIED`,
 an empty `fatal` list, and clean cleanup. In the `mcp_tool` records, require a
 real first success, reaped generation 1 and connection refusal, a completed
 native outage error, and then a separate success from generation 2 at the same
-endpoint. Match each call's complete text and IDs across native, public, local
-Chat Completions, and per-generation ledger records. Public outputs do not carry
-a required error flag. The native `isError` field establishes the outage error.
+endpoint. Each successful before and after call must have one row in its generation
+ledger. Match its complete text and call IDs across native, public, local Chat
+Completions, and server records. For the outage, require matching native, public,
+and Chat Completions error text and call IDs, with native `isError: true`.
+Require no outage invocation or outage row in either generation ledger.
+Public outputs do not require an error flag.
 
 Require the same schema and selected root across all phases. Inspect
 `mcp-continuity.json` for the original token, object, socket, descriptor, and
