@@ -1,5 +1,3 @@
-"""Default namespaces for the mdsmithaustin installation."""
-
 from pathlib import Path
 from typing import Final
 

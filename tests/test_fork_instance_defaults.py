@@ -1,5 +1,3 @@
-"""Fork instance identities at service, secrets, cookie, and stop boundaries."""
-
 from __future__ import annotations
 
 import importlib
