@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
+from omnigent.installation_defaults import LAUNCHD_HOST_LABEL, SYSTEMD_HOST_UNIT, default_user_dir
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 SCHEMA_VERSION = 1
@@ -31,7 +32,7 @@ def utc_now() -> str:
 def state_dir() -> Path:
     if data_dir := os.environ.get("OMNIGENT_DATA_DIR"):
         return Path(data_dir).expanduser()
-    return Path.home() / ".omnigent"
+    return default_user_dir()
 
 
 def ledger_path() -> Path:
@@ -488,31 +489,29 @@ def observed_launch_agents(*, deep: bool) -> list[LaunchAgentEntry]:
     if not deep:
         return []
     entries: list[LaunchAgentEntry] = []
-    launchd_dir = Path.home() / "Library" / "LaunchAgents"
-    if launchd_dir.is_dir():
-        for path in sorted(launchd_dir.glob("*omnigent*.plist")):
-            entries.append(
-                LaunchAgentEntry(
-                    kind="launchd",
-                    path=str(path),
-                    label=path.stem,
-                    source="observed",
-                    confidence="high",
-                )
+    launchd_path = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_HOST_LABEL}.plist"
+    if launchd_path.is_file():
+        entries.append(
+            LaunchAgentEntry(
+                kind="launchd",
+                path=str(launchd_path),
+                label=LAUNCHD_HOST_LABEL,
+                source="observed",
+                confidence="high",
             )
+        )
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    systemd_dir = config_home / "systemd" / "user"
-    if systemd_dir.is_dir():
-        for path in sorted(systemd_dir.glob("*omnigent*.service")):
-            entries.append(
-                LaunchAgentEntry(
-                    kind="systemd_user",
-                    path=str(path),
-                    label=path.name,
-                    source="observed",
-                    confidence="high",
-                )
+    systemd_path = config_home / "systemd" / "user" / SYSTEMD_HOST_UNIT
+    if systemd_path.is_file():
+        entries.append(
+            LaunchAgentEntry(
+                kind="systemd_user",
+                path=str(systemd_path),
+                label=SYSTEMD_HOST_UNIT,
+                source="observed",
+                confidence="high",
             )
+        )
     return entries
 
 

@@ -319,7 +319,6 @@ def test_server_stop_stops_server_and_local_daemon(monkeypatch: pytest.MonkeyPat
     )
     stop_server = Mock()
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", stop_server)
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     result = CliRunner().invoke(cli, ["server", "stop"])
 
@@ -335,7 +334,6 @@ def test_server_stop_no_server_running(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("omnigent.cli._find_daemon_record", lambda target: None)
     stop_server = Mock()
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", stop_server)
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     result = CliRunner().invoke(cli, ["server", "stop"])
 
@@ -361,7 +359,6 @@ def test_stop_terminates_all_daemons_and_server(monkeypatch: pytest.MonkeyPatch)
     )
     stop_server = Mock()
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", stop_server)
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     result = CliRunner().invoke(cli, ["stop"])
 
@@ -376,7 +373,6 @@ def test_stop_nothing_running(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("omnigent.cli._list_daemon_records", list)
     monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     result = CliRunner().invoke(cli, ["stop"])
 
@@ -396,7 +392,6 @@ def test_stop_surfaces_failures_and_suggests_force(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr("omnigent.cli._terminate_daemon", _terminate)
     monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     result = CliRunner().invoke(cli, ["stop"])
 
@@ -419,7 +414,6 @@ def test_stop_clears_stale_legacy_host_pid(
     monkeypatch.setattr("omnigent.cli._HOST_PID_PATH", host_pid)
     monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
     monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: None)
 
     first = CliRunner().invoke(cli, ["stop"])
     assert first.exit_code == 0, first.output
@@ -427,43 +421,3 @@ def test_stop_clears_stale_legacy_host_pid(
 
     second = CliRunner().invoke(cli, ["stop"])
     assert "Nothing to stop." in second.output  # phantom does not reappear
-
-
-def test_stop_reports_untracked_orphan_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``stop`` sweeps and reports an orphaned server the pidfile lost track of.
-
-    Reproduces the reported symptom: no daemons, no pidfile-tracked server,
-    yet a live server lingers on :6767. The off-switch must stop it (via
-    :func:`stop_untracked_local_server`) and say so — not "Nothing to stop."
-    """
-    monkeypatch.setattr("omnigent.cli._list_daemon_records", list)
-    monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
-    monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: 93359)
-
-    result = CliRunner().invoke(cli, ["stop"])
-
-    assert result.exit_code == 0, result.output
-    assert "untracked server on :6767 (pid 93359)" in result.output
-    assert "Nothing to stop." not in result.output
-
-
-def test_server_stop_finds_untracked_orphan_when_pidfile_lost(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``server stop`` reports success when only an untracked orphan is found.
-
-    The pidfile is gone (``local_server_url_if_healthy`` → ``None``), but a
-    live server is still on :6767. Previously this printed "No background
-    server is running" while the server kept running; now the orphan sweep
-    catches it.
-    """
-    monkeypatch.setattr("omnigent.cli.local_server_url_if_healthy", lambda: None)
-    monkeypatch.setattr("omnigent.cli._find_daemon_record", lambda target: None)
-    monkeypatch.setattr("omnigent.cli.stop_local_omnigent_server", Mock())
-    monkeypatch.setattr("omnigent.cli.stop_untracked_local_server", lambda: 93359)
-
-    result = CliRunner().invoke(cli, ["server", "stop"])
-
-    assert result.exit_code == 0, result.output
-    assert "Stopped the background server." in result.output
