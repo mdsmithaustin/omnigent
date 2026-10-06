@@ -212,7 +212,7 @@ executor:
 ```
 
 To route through OpenRouter / a gateway, declare a key/gateway provider in
-`~/.omnigent/config.yaml` and reference it (`auth: {type: provider, name: …}`),
+`~/.omnigent-mdsmithaustin/config.yaml` and reference it (`auth: {type: provider, name: …}`),
 or set `auth.base_url` to the OpenAI-compatible endpoint alongside the key.
 For Databricks, use `auth: {type: databricks, profile: …}`.
 
@@ -233,7 +233,7 @@ executor:
 By default Kimi authenticates against Moonshot AI's backend — Omnigent
 declares no `executor.auth` block. To route through a gateway, either set
 `HARNESS_KIMI_GATEWAY_BASE_URL` + `HARNESS_KIMI_GATEWAY_API_KEY` in the
-shell, declare a key/gateway provider in `~/.omnigent/config.yaml`, or use
+shell, declare a key/gateway provider in `~/.omnigent-mdsmithaustin/config.yaml`, or use
 `executor.auth: {type: databricks, profile: …}` and let Omnigent resolve
 the workspace.
 
@@ -260,7 +260,7 @@ missing executor values.
 ## Custom ACP agents
 
 `harness: acp:<slug>` runs any configured Agent Client Protocol server command.
-Register commands in `~/.omnigent/config.yaml` under `acp.agents`; the slug is
+Register commands in `~/.omnigent-mdsmithaustin/config.yaml` under `acp.agents`; the slug is
 derived from the agent name.
 
 OpenClaw's Gateway ACP bridge is one such server. It rejects per-session

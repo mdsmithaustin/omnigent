@@ -19,7 +19,7 @@ registry locations:
 - `~/.acpx/config.json`
 - `~/.openclaw/openclaw.json`
 
-To import the discovered agents into `~/.omnigent/config.yaml`, run:
+To import the discovered agents into `~/.omnigent-mdsmithaustin/config.yaml`, run:
 
 ```bash
 omni setup
@@ -43,7 +43,7 @@ OpenClaw's Gateway session, memory, routing, or channels into the conversation.
 ## Drive the OpenClaw Gateway
 
 The `openclaw acp` command exposes a live OpenClaw Gateway session as an ACP
-server over stdio. Register that command in `~/.omnigent/config.yaml`:
+server over stdio. Register that command in `~/.omnigent-mdsmithaustin/config.yaml`:
 
 ```yaml
 acp:
@@ -55,7 +55,7 @@ acp:
 
 > [!CAUTION]
 > Prefer `--token-file` so the Gateway token is not stored in the launch
-> command. Do not commit or share `~/.omnigent/config.yaml`, and use a token
+> command. Do not commit or share `~/.omnigent-mdsmithaustin/config.yaml`, and use a token
 > with the narrowest permissions OpenClaw supports.
 
 Replace `<gateway-url>` and `<token-file>` with the connection details for your
