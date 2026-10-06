@@ -103,6 +103,23 @@ pytestmark = pytest.mark.asyncio
 _REAL_PREWARM_MODEL_OPTIONS = HostProcess._prewarm_model_options
 
 
+@pytest.fixture
+def _subscription_model_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnigent.models.model_catalog import ResolvedModelProvider
+
+    cli_by_harness = {
+        "claude-native": "claude",
+        "claude-sdk": "claude",
+        "codex-native": "codex",
+    }
+    monkeypatch.setattr(
+        "omnigent.models.model_catalog.resolve_model_provider",
+        lambda _spec, harness: ResolvedModelProvider(
+            kind="subscription", cli=cli_by_harness[harness]
+        ),
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolated_model_catalog_store(
     monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
@@ -408,6 +425,7 @@ async def test_host_reports_mcp_inventory_failure(monkeypatch: pytest.MonkeyPatc
     assert result.error is not None and "boom" not in result.error
 
 
+@pytest.mark.usefixtures("_subscription_model_provider")
 async def test_handle_model_options_serves_the_claude_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6444,6 +6462,7 @@ async def test_drain_runner_stop_tasks_removes_completed_tasks_before_callbacks(
     assert not host._runner_stop_tasks
 
 
+@pytest.mark.usefixtures("_subscription_model_provider")
 async def test_handle_model_options_serves_codex_probe_rows_and_caches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6500,6 +6519,7 @@ async def test_handle_model_options_serves_codex_probe_rows_and_caches(
     _cleanup_host(host)
 
 
+@pytest.mark.usefixtures("_subscription_model_provider")
 async def test_handle_model_options_serves_claude_sdk_endpoint_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6538,6 +6558,7 @@ async def test_handle_model_options_serves_claude_sdk_endpoint_listing(
     _cleanup_host(host)
 
 
+@pytest.mark.usefixtures("_subscription_model_provider")
 async def test_handle_model_options_claude_sdk_rides_the_probe_when_endpoints_list_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6583,6 +6604,7 @@ async def test_handle_model_options_claude_sdk_rides_the_probe_when_endpoints_li
     _cleanup_host(host)
 
 
+@pytest.mark.usefixtures("_subscription_model_provider")
 async def test_model_options_frame_replies_off_the_receive_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
