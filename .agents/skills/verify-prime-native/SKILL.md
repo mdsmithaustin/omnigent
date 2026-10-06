@@ -79,6 +79,31 @@ PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scr
 
 Require exit zero, `VERIFIED final`, every required scenario marked `VERIFIED`, and an empty `fatal` list in `outcomes.json`. Inspect `artifact.json` for imported source paths and the exact runtime. Each scenario records its public actions and literal observations. Inspect those records, the terminal transcripts, model requests, tool results, native compaction entry, child side effect, `cleanup.json`, and `final-report.md`. Require no owned survivors, forced cleanup, or cleanup errors.
 
+The existing `mcp_tool` scenario runs three independent calls against one
+stateless HTTP endpoint. It records a generation-1 success, stops and reaps that
+child, and waits for a completed native outage error with no server invocation.
+Only then does it start generation 2 and require a fresh successful call.
+Compare `mcp-before-witness.json`, `mcp-outage-witness.json`, and
+`mcp-after-witness.json` with the phase captures and per-generation ledgers.
+Require exact native, public, model-continuation, and server result text and
+matching call IDs. The declared `call_id` argument supplies fixture correlation.
+It does not prove the SDK execute callback ID or the JSON-RPC wire request ID.
+
+Inspect `mcp-continuity.json`. The existing count-42 object must advance to 43
+with the same token, object ID, socket ID, open descriptor, kernel, and selected
+root. Final continuity attempts after a phase failure preserve that first failure.
+Inspect `mcp-fixture-cleanup.json` for every allocated generation, including
+partial starts. Require exited children, closed outputs, a refused endpoint, and
+empty errors. The model server must close and its thread must join.
+
+The phase catalog records show actual proxy listing and model advertisement.
+Explicit unavailable and restored readiness remain `NOTOBSERVED`, so original
+N19 remains partial. This case does not qualify stateful MCP sessions, stdio,
+MRTR or approval recovery, other providers, or all 31 requirements. Both the
+outer runtime scratch and the evidence directory remain retained. Their paths
+appear in `cleanup.json` and the printed report. Clean process settlement does
+not prove outer scratch removal.
+
 `reattach.json` keeps the run-wide process census under `raw` and the requested conversation's private root under `selected`. Require the selected before and after records to match, including the binding, native session ID, and TUI, supervisor, worker, and kernel process identities. Unrelated Prime helper churn in `raw` does not change this result. `cleanup.json` records the exact owned host registry and `omnigent host stop --server <owned URL> --daemon-only` invocation. Require successful session DELETE statuses, a successful qualified host stop, `forced_native_fallback: false`, an empty `final_owned_census`, no cleanup errors, and copied owned logs for diagnosis. The final census rechecks identities seen at launch as well as a fresh exact-root scan, so an initially observed process that becomes unlisted still blocks a clean result while alive.
 
 `source-before.json` and `source-after.json` independently inventory tracked and nonignored untracked regular files under `omnigent`, the probe drivers, and the environment package files. `source-integrity.json` must contain empty added, removed, and changed lists. A source drift, missing import origin, or finalization failure prevents `VERIFIED` even when every behavioral scenario passed. `launch-witnesses.json` records the actual child commands, working directories, checkout-selecting environment, and PIDs. Those records are separate from the probe process's import witnesses. `deployed-extension-identities.json` compares the live extension bytes with the packaged source. Require each recorded identity to match.
@@ -90,7 +115,9 @@ The final `manifest.json` hashes the retained evidence. `--production-ready` rec
 Run each negative control separately by adding one of these options to the same command:
 
 - `--expected-tool WRONG` must exit 1 at the literal Python memory-read mismatch.
-- `--expected-mcp WRONG` must exit 1 at the literal declared MCP-result mismatch.
+- `--expected-mcp WRONG` must exit 1 at `mcp tool result differs` after the real
+  first invocation validates its generation-bound envelope. It compares the
+  literal value field and still requires clean owned cleanup.
 - `--expected-side-effect present` must exit 1 because the denied write's marker is absent.
 
 Require the named mismatch in the failed scenario and zero owned survivors in each run. An earlier failure or a missing tool does not qualify the control. The default probe stops at the intended mismatch and still performs cleanup.

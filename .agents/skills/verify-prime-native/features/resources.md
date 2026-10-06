@@ -26,6 +26,31 @@ Preconditions are a fixture workspace, installed skill resources, and the declar
 - Call a harmless MCP tool and compare its result with a literal expected value. A wrong-result control must fail.
 - Deny a marker write, then attempt it through both interfaces. Require the denial event and absence of the marker. Record descendant and native-client bypass coverage separately.
 
+## Repeat the local-model MCP reconnect case
+
+Run the existing [adapter command](../SKILL.md#full-adapter-probe) with the admitted
+Prime binary and kernel entry. Require exit zero, all ten scenarios `VERIFIED`,
+an empty `fatal` list, and clean cleanup. In the `mcp_tool` records, require a
+real first success, reaped generation 1 and connection refusal, a completed
+native outage error, and then a separate success from generation 2 at the same
+endpoint. Match each call's complete text and IDs across native, public, local
+Chat Completions, and per-generation ledger records. Public outputs do not carry
+a required error flag. The native `isError` field establishes the outage error.
+
+Require the same schema and selected root across all phases. Inspect
+`mcp-continuity.json` for the original token, object, socket, descriptor, and
+kernel while the count advances from 42 to 43. No missing object is reseeded.
+Run the same command separately with `--expected-mcp WRONG`. Require exit 1
+specifically at `mcp tool result differs` after the first real call, with clean
+settlement of every allocated generation and the model thread.
+
+The phase catalog records distinguish actual listing and model advertisement
+from readiness. Explicit unavailable and restored readiness remain
+`NOTOBSERVED`. Original N19 remains partial. The fixture uses stateless HTTP.
+It does not qualify stateful sessions, stdio, MRTR or approval recovery,
+commercial provider authentication, or full31. Outer runtime scratch and evidence
+remain retained at the reported paths.
+
 ## Repeat the regular HTTP MCP reconnect case
 
 Run from the checkout to qualify with the documented runtime dependencies

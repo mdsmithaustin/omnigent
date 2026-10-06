@@ -2970,3 +2970,646 @@ def test_seed_diagnostic_is_bound_to_current_failure_and_typed_tool(
     previous = json.loads((tmp_path / "kernel-seed-native-predicates.json").read_text())
     assert previous["observation_state"] == "previous_poll"
     assert "diagnostic" not in previous
+
+
+def _mcp_capture(probe, phase="before"):
+    invocation = probe.PhaseInvocation(phase, "call-nonce", "adapter-call")
+    generation = probe.GenerationIdentity(
+        1, "startup", probe.ProcessIdentity(70, 7.0, ("python",))
+    )
+    text = (
+        probe.MCP_ERROR_PREFIX + "/owned/runner.log"
+        if phase == "outage"
+        else probe._mcp_result_text("run", generation, invocation)
+    )
+    prompt = "ADAPTER_MCP_PHASE " + json.dumps(
+        {
+            "invocation": dataclasses.asdict(invocation),
+            "generation": dataclasses.asdict(generation),
+        }
+    )
+    call = {
+        "id": invocation.call_id,
+        "name": probe.MCP_TOOL,
+        "type": "toolCall",
+        "arguments": invocation.arguments(),
+    }
+    native = (
+        {"id": "user", "parentId": "baseline", "message": {"role": "user", "content": prompt}},
+        {
+            "id": "call",
+            "parentId": "user",
+            "message": {
+                "role": "assistant",
+                "api": "openai-completions",
+                "provider": "verify",
+                "content": [call],
+            },
+        },
+        {
+            "id": "result",
+            "parentId": "call",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": invocation.call_id,
+                "toolName": probe.MCP_TOOL,
+                "isError": phase == "outage",
+                "content": [{"type": "text", "text": text}],
+            },
+        },
+        {
+            "id": "final",
+            "parentId": "result",
+            "message": {
+                "role": "assistant",
+                "stopReason": "stop",
+                "content": invocation.acknowledgement(),
+            },
+        },
+    )
+    public = (
+        {"type": "message", "role": "user", "status": "completed", "content": prompt},
+        {
+            "type": "function_call",
+            "name": probe.MCP_TOOL,
+            "call_id": invocation.call_id,
+            "arguments": json.dumps(invocation.arguments()),
+            "status": "completed",
+            "response_id": "turn",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": invocation.call_id,
+            "output": text,
+            "status": "completed",
+            "response_id": "turn",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": invocation.acknowledgement()}],
+        },
+    )
+    request = {
+        "messages": [
+            {"role": "user", "content": prompt},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": invocation.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": probe.MCP_TOOL,
+                            "arguments": json.dumps(invocation.arguments()),
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": invocation.call_id, "content": text},
+        ]
+    }
+    ledger = (
+        ()
+        if phase == "outage"
+        else (
+            {
+                "run_nonce": "run",
+                "generation": json.loads(json.dumps(dataclasses.asdict(generation))),
+                "arguments": invocation.arguments(),
+                "sequence": 1,
+                "result_text": text,
+            },
+        )
+    )
+    capture = probe._PhaseCapture(
+        native,
+        public,
+        (request,),
+        ledger,
+        f"MCP tool dispatch failed for {probe.MCP_TOOL}" if phase == "outage" else "",
+        _selected_root_identity(probe),
+        probe.ToolAvailabilityObservation(phase, True, True),
+        time.monotonic(),
+    )
+    return invocation, generation, capture
+
+
+def test_mcp_success_and_outage_require_complete_correlated_records():
+    probe = _adapter_probe()
+    invocation, generation, capture = _mcp_capture(probe)
+    result = probe._require_success("run", invocation, generation, capture)
+    assert result.server_invocation.result_text == (
+        '{"call_id": "adapter-call", "call_nonce": "call-nonce", "generation": 1, '
+        '"phase": "before", "run_nonce": "run", "startup_nonce": "startup", '
+        '"value": "ADAPTER_MCP_LITERAL_RESULT"}'
+    )
+    repeated = dataclasses.replace(capture, model_requests=capture.model_requests * 2)
+    assert probe._require_success("run", invocation, generation, repeated) == result
+    invocation, generation, capture = _mcp_capture(probe, "outage")
+    outage = probe._require_outage("run", "http://loopback/mcp", generation, invocation, capture)
+    assert outage.error_text == probe.MCP_ERROR_PREFIX + "/owned/runner.log"
+    assert outage.availability.explicit_runtime_state == "NOTOBSERVED"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "run",
+        "generation",
+        "startup",
+        "id",
+        "value",
+        "whitespace",
+        "duplicate_ledger",
+        "public_missing",
+        "public_id",
+        "native_error",
+        "native_parent",
+        "conflicting_history",
+        "stale_history",
+        "advertisement",
+    ],
+)
+def test_mcp_success_rejects_mutated_boundaries(mutation):
+    probe = _adapter_probe()
+    invocation, generation, capture = _mcp_capture(probe)
+    if mutation == "run":
+        with pytest.raises(RuntimeError):
+            probe._require_success("wrong", invocation, generation, capture)
+        return
+    if mutation in {"generation", "startup"}:
+        field = {"generation": "number", "startup": "startup_nonce"}[mutation]
+        generation = dataclasses.replace(
+            generation, **{field: 2 if field == "number" else "wrong"}
+        )
+    elif mutation in {"id", "value", "whitespace", "native_error", "native_parent"}:
+        native = json.loads(json.dumps(capture.native_rows))
+        if mutation == "id":
+            native[2]["message"]["toolCallId"] = "wrong"
+        elif mutation == "native_error":
+            native[2]["message"]["isError"] = True
+        elif mutation == "native_parent":
+            native[3]["parentId"] = "baseline"
+        else:
+            native[2]["message"]["content"][0]["text"] += (
+                " " if mutation == "whitespace" else "wrong"
+            )
+        capture = dataclasses.replace(capture, native_rows=tuple(native))
+    elif mutation == "duplicate_ledger":
+        capture = dataclasses.replace(capture, ledger_rows=capture.ledger_rows * 2)
+    elif mutation == "public_missing":
+        capture = dataclasses.replace(capture, public_items=(capture.public_items[0],))
+    elif mutation == "public_id":
+        public = json.loads(json.dumps(capture.public_items))
+        public[2]["call_id"] = "wrong"
+        capture = dataclasses.replace(capture, public_items=tuple(public))
+    elif mutation in {"conflicting_history", "stale_history"}:
+        request = json.loads(json.dumps(capture.model_requests[0]))
+        if mutation == "conflicting_history":
+            request["messages"][-1]["content"] = "wrong"
+        else:
+            request["messages"].append({"role": "user", "content": "unrelated"})
+        capture = dataclasses.replace(capture, model_requests=(request,))
+    else:
+        capture = dataclasses.replace(
+            capture, availability=probe.ToolAvailabilityObservation("before", False, True)
+        )
+    with pytest.raises(RuntimeError):
+        probe._require_success("run", invocation, generation, capture)
+
+
+@pytest.mark.parametrize("mutation", ["error_flag", "ledger", "runner", "public"])
+def test_mcp_outage_rejects_incomplete_error(mutation):
+    probe = _adapter_probe()
+    invocation, generation, capture = _mcp_capture(probe, "outage")
+    if mutation == "error_flag":
+        rows = json.loads(json.dumps(capture.native_rows))
+        rows[2]["message"]["isError"] = False
+        capture = dataclasses.replace(capture, native_rows=tuple(rows))
+    elif mutation == "ledger":
+        capture = dataclasses.replace(capture, ledger_rows=({"call": "outage"},))
+    elif mutation == "runner":
+        capture = dataclasses.replace(capture, runner_delta="")
+    else:
+        capture = dataclasses.replace(capture, public_items=())
+    with pytest.raises(RuntimeError):
+        probe._require_outage("run", "endpoint", generation, invocation, capture)
+
+
+@pytest.mark.parametrize(
+    "field", ["kernel", "token", "count", "object_id", "socket_id", "socket_fileno"]
+)
+def test_mcp_memory_rejects_recreated_or_changed_state(field):
+    probe = _adapter_probe()
+    before = probe.KernelMemoryObservation(
+        probe.ProcessIdentity(13, 3.0, ("python",)), "run", 42, 1, 2, 3
+    )
+    after = dataclasses.replace(before, count=43)
+    probe._require_memory(before, after, 43)
+    value = (
+        probe.ProcessIdentity(14, 4.0, ("python",))
+        if field == "kernel"
+        else "wrong"
+        if field == "token"
+        else 99
+    )
+    with pytest.raises(RuntimeError, match="continuity"):
+        probe._require_memory(before, dataclasses.replace(after, **{field: value}), 43)
+
+
+def _fixture_env(probe):
+    import os
+
+    return dict(os.environ) | {"PYTHONPATH": str(probe.REPO)}
+
+
+def _fixture_outage(probe, fixture, first):
+    invocation = probe.PhaseInvocation("outage", "outage-nonce", "outage-id")
+    return probe.CompletedOutage(
+        fixture.run_nonce,
+        fixture.url,
+        first,
+        invocation,
+        probe.MCP_ERROR_PREFIX + "/owned/runner.log",
+        "/owned/runner.log",
+        probe.ToolAvailabilityObservation("outage", True, True),
+        _selected_root_identity(probe),
+        time.monotonic(),
+    )
+
+
+def test_mcp_loopback_stop_replacement_and_repeated_settlement(tmp_path):
+    probe = _adapter_probe()
+    fixture = probe.McpFixture(probe.Evidence(tmp_path), _fixture_env(probe), "run")
+    try:
+        first = fixture.start_first()
+        assert not fixture.refused()
+        with pytest.raises(RuntimeError, match="completed outage"):
+            fixture.restart(_fixture_outage(probe, fixture, first))
+        fixture.stop_first()
+        assert fixture.refused()
+        outage = _fixture_outage(probe, fixture, first)
+        with pytest.raises(RuntimeError, match="completed outage"):
+            fixture.restart(dataclasses.replace(outage, run_nonce="other"))
+        second = fixture.restart(outage)
+        assert second.number == 2
+        assert second.startup_nonce != first.startup_nonce
+        assert second.process != first.process
+        assert fixture.generations[1].launched_at > outage.completed_at
+    finally:
+        cleanup = fixture.close()
+    assert cleanup.outputs_closed and cleanup.endpoint_refused and cleanup.errors == ()
+    assert len(cleanup.generations) == 2
+    assert all(record["exited"] for record in cleanup.generations)
+    assert fixture.close() == cleanup
+
+
+@pytest.mark.parametrize("generation", [1, 2])
+@pytest.mark.parametrize("failure", ["popen", "launch_record", "identity", "readiness"])
+def test_mcp_partial_start_keeps_exact_handles_for_cleanup(
+    tmp_path, monkeypatch, generation, failure
+):
+    probe = _adapter_probe()
+    evidence = probe.Evidence(tmp_path)
+    fixture = probe.McpFixture(evidence, _fixture_env(probe), "run")
+    try:
+        if generation == 2:
+            first = fixture.start_first()
+            fixture.stop_first()
+        if failure == "popen":
+            monkeypatch.setattr(
+                probe.subprocess,
+                "Popen",
+                lambda *a, **k: (_ for _ in ()).throw(OSError("launch failed")),
+            )
+        elif failure == "launch_record":
+            monkeypatch.setattr(
+                evidence,
+                "record_launch_start",
+                lambda *a: (_ for _ in ()).throw(RuntimeError("record failed")),
+            )
+        elif failure == "identity":
+            monkeypatch.setattr(
+                probe.psutil,
+                "Process",
+                lambda *a: (_ for _ in ()).throw(RuntimeError("identity failed")),
+            )
+        else:
+            monkeypatch.setattr(
+                probe,
+                "wait_for",
+                lambda *a: (_ for _ in ()).throw(RuntimeError("readiness failed")),
+            )
+        with pytest.raises((OSError, RuntimeError)):
+            if generation == 1:
+                fixture.start_first()
+            else:
+                fixture.restart(_fixture_outage(probe, fixture, first))
+        assert len(fixture.generations) == generation
+    finally:
+        cleanup = fixture.close()
+    assert cleanup.outputs_closed and cleanup.endpoint_refused
+    assert all(record["exited"] for record in cleanup.generations)
+    assert len(cleanup.errors) >= 1
+
+
+def test_mcp_refusal_requires_connection_refused(tmp_path, monkeypatch):
+    probe = _adapter_probe()
+    fixture = probe.McpFixture(probe.Evidence(tmp_path), {}, "run")
+    assert fixture.refused()
+    monkeypatch.setattr(
+        probe.socket,
+        "create_connection",
+        lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timeout")),
+    )
+    with pytest.raises(TimeoutError):
+        fixture.refused()
+    assert fixture.close().errors
+
+
+def test_model_constructor_closes_server_after_thread_start_failure(tmp_path, monkeypatch):
+    probe = _adapter_probe()
+    original = probe.ThreadingHTTPServer
+    servers = []
+
+    def server(*args, **kwargs):
+        result = original(*args, **kwargs)
+        servers.append(result)
+        return result
+
+    monkeypatch.setattr(probe, "ThreadingHTTPServer", server)
+    monkeypatch.setattr(
+        probe.threading.Thread,
+        "start",
+        lambda *a: (_ for _ in ()).throw(RuntimeError("thread failed")),
+    )
+    with pytest.raises(RuntimeError, match="thread failed"):
+        probe.ModelFixture(tmp_path, tmp_path, "run", None, None)
+    assert servers[0].fileno() == -1
+
+
+def test_mcp_model_negative_control_validates_envelope_before_literal(tmp_path):
+    probe = _adapter_probe()
+    fixture = probe.ModelFixture(tmp_path, tmp_path, "run", None, "WRONG")
+    try:
+        invocation, _, capture = _mcp_capture(probe)
+        request = capture.model_requests[0]
+        request["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": probe.MCP_TOOL,
+                    "parameters": {
+                        "type": "object",
+                        "required": ["value", "phase", "call_nonce", "call_id"],
+                        "properties": {key: {"type": "string"} for key in invocation.arguments()},
+                    },
+                },
+            }
+        ]
+        with pytest.raises(RuntimeError, match="mcp tool result differs"):
+            fixture.reply_mcp(request)
+        request["messages"][-1]["content"] += " "
+        with pytest.raises(RuntimeError, match="generation-bound"):
+            fixture.reply_mcp(request)
+    finally:
+        fixture.close()
+
+
+def test_adapter_allocation_precedes_fixture_launch(tmp_path, monkeypatch):
+    probe = _adapter_probe()
+    requested, _ = _kernel_pair(probe)
+    monkeypatch.setattr(probe.tempfile, "mkdtemp", lambda **kwargs: str(tmp_path / "runtime"))
+    (tmp_path / "runtime").mkdir()
+    run = probe.AdapterRun(
+        SimpleNamespace(
+            expected_tool=None,
+            expected_mcp=None,
+            prime_path=Path("/prime"),
+            kernel_python=Path("/kernel/bin/python"),
+        ),
+        probe.Evidence(tmp_path / "evidence"),
+        requested,
+    )
+    assert run.fixture is None
+    assert run.mcp.generations == []
+    assert run.server is None
+    monkeypatch.setattr(
+        probe,
+        "ModelFixture",
+        lambda *a: (_ for _ in ()).throw(RuntimeError("model startup failed")),
+    )
+    with pytest.raises(RuntimeError, match="model startup failed"):
+        run.start()
+    result = run.mcp.close()
+    assert result.endpoint_refused and result.outputs_closed and result.errors == ()
+
+
+def test_mcp_model_accepts_identical_history_and_rejects_another_execution(tmp_path):
+    probe = _adapter_probe()
+    fixture = probe.ModelFixture(tmp_path, tmp_path, "run", None, None)
+    try:
+        invocation, _, capture = _mcp_capture(probe)
+        request = capture.model_requests[0]
+        request["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": probe.MCP_TOOL,
+                    "parameters": {
+                        "type": "object",
+                        "required": ["value", "phase", "call_nonce", "call_id"],
+                        "properties": {key: {"type": "string"} for key in invocation.arguments()},
+                    },
+                },
+            }
+        ]
+        initial = json.loads(json.dumps(request))
+        initial["messages"] = initial["messages"][:1]
+        delta, reason = fixture.reply_mcp(initial)
+        assert reason == "tool_calls"
+        assert delta["tool_calls"][0]["id"] == "adapter-call"
+        with pytest.raises(RuntimeError, match="duplicate model"):
+            fixture.reply_mcp(initial)
+        expected = {"role": "assistant", "content": "ADAPTER_MCP_DONE call-nonce"}
+        assert fixture.reply_mcp(request) == (expected, "stop")
+        assert fixture.reply_mcp(request) == (expected, "stop")
+    finally:
+        fixture.close()
+
+
+def test_mcp_memory_waiter_matches_a_json_prompt_with_escaped_code(tmp_path, monkeypatch):
+    probe = _adapter_probe()
+    root = _selected_root_identity(probe)
+
+    class Run:
+        evidence = SimpleNamespace(root=tmp_path)
+
+        def wait_for_idle(self, _session):
+            return {}
+
+        def post_event(self, _scenario, _session, body):
+            prompt = body["data"]["content"][0]["text"]
+            self.spec = json.loads(prompt.removeprefix("ADAPTER_MCP_MEMORY "))
+            self.prompt = prompt
+            probe.write_json(
+                tmp_path / "mcp-memory-before.json",
+                {
+                    "pid": 13,
+                    "token": "token",
+                    "count": 42,
+                    "object_id": 101,
+                    "socket_id": 102,
+                    "socket_fileno": 9,
+                },
+            )
+            return SimpleNamespace(status_code=202)
+
+        def wait_for_reply(self, _session, expected, prompt, _timeout):
+            transcript = {"content": self.prompt, "reply": self.spec["ack"]}
+            assert prompt in json.dumps(transcript)
+            assert expected == self.spec["ack"]
+            return transcript
+
+        def selected_root_identity(self, _session):
+            return root
+
+    run = Run()
+    result = probe._mcp_memory(run, object(), root, "before")
+    assert dataclasses.asdict(result) == {
+        "kernel": dataclasses.asdict(root.roles.kernel),
+        "token": "token",
+        "count": 42,
+        "object_id": 101,
+        "socket_id": 102,
+        "socket_fileno": 9,
+    }
+
+
+@pytest.mark.parametrize("failure", ["stop", "output_close"])
+def test_mcp_cleanup_retains_stop_and_output_errors(tmp_path, monkeypatch, failure):
+    probe = _adapter_probe()
+    fixture = probe.McpFixture(probe.Evidence(tmp_path), _fixture_env(probe), "run")
+    original_output = None
+    try:
+        fixture.start_first()
+        handle = fixture.generations[0]
+        if failure == "stop":
+            monkeypatch.setattr(
+                handle.process,
+                "terminate",
+                lambda: (_ for _ in ()).throw(RuntimeError("stop failed")),
+            )
+        else:
+            original_output = handle.output
+
+            class Output:
+                attempts = 0
+
+                @property
+                def closed(self):
+                    return original_output.closed
+
+                def close(self):
+                    self.attempts += 1
+                    if self.attempts == 1:
+                        raise RuntimeError("output failed")
+                    original_output.close()
+
+            handle.output = Output()
+        first = fixture.close()
+        second = fixture.close()
+        assert first.errors and second.errors[: len(first.errors)] == first.errors
+        assert second.outputs_closed and second.endpoint_refused
+        assert all(record["exited"] for record in second.generations)
+    finally:
+        fixture.close()
+        if original_output is not None:
+            original_output.close()
+
+
+def test_mcp_failed_phase_attempts_final_continuity_and_preserves_first_failure(
+    tmp_path, monkeypatch
+):
+    probe = _adapter_probe()
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "name": probe.MCP_TOOL,
+                        "parameters": {
+                            "type": "object",
+                            "required": ["value", "phase", "call_nonce", "call_id"],
+                            "properties": {
+                                key: {"type": "string"}
+                                for key in ["value", "phase", "call_nonce", "call_id"]
+                            },
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    root = dataclasses.replace(_selected_root_identity(probe), config_path=str(config))
+    memory = probe.KernelMemoryObservation(root.roles.kernel, "run", 42, 1, 2, 3)
+    run = SimpleNamespace(
+        nonce="run",
+        evidence=probe.Evidence(tmp_path),
+        mcp=SimpleNamespace(
+            generations=[
+                SimpleNamespace(
+                    identity=probe.GenerationIdentity(
+                        1, "startup", probe.ProcessIdentity(70, 7.0, ("python",))
+                    )
+                )
+            ]
+        ),
+        selected_root_identity=lambda _session: root,
+    )
+
+    def memory_read(_run, _session, _root, name, **kwargs):
+        if name == "final":
+            raise RuntimeError("final memory failed")
+        return memory
+
+    monkeypatch.setattr(probe, "_mcp_memory", memory_read)
+    monkeypatch.setattr(
+        probe,
+        "_mcp_phase",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("first phase failed")),
+    )
+    with pytest.raises(RuntimeError, match="first phase failed"):
+        probe.verify_mcp_reconnect(run, object())
+    receipt = json.loads((tmp_path / "mcp-continuity.json").read_text())
+    assert receipt["first_failure"] == "RuntimeError: first phase failed"
+    assert receipt["memory_final_error"] == "RuntimeError: final memory failed"
+    assert receipt["root_final"]["session_id"] == "session-1"
+
+
+def test_mcp_journal_selects_native_session_before_parsing_other_logs(tmp_path):
+    probe = _adapter_probe()
+    root = dataclasses.replace(_selected_root_identity(probe), bridge_root=str(tmp_path))
+    journal = tmp_path / "prime-session-1.jsonl"
+    journal.write_text('{"type":"session","id":"prime-session-1"}\n{"id":"native-user"}\n')
+    (tmp_path / "kernel-history.jsonl").write_text("\nnot a native journal\n")
+    run = SimpleNamespace(
+        prime_sessions=tmp_path, fixture=SimpleNamespace(conversation_logs=set())
+    )
+    assert probe._mcp_journal(run, root) == [
+        {"type": "session", "id": "prime-session-1"},
+        {"id": "native-user"},
+    ]
+    journal.write_text('{"type":"session","id":"prime-session-1"}\nmalformed\n')
+    with pytest.raises(json.JSONDecodeError):
+        probe._mcp_journal(run, root)
+
+
+def test_mcp_success_rejects_after_phase_from_first_generation():
+    probe = _adapter_probe()
+    invocation, generation, capture = _mcp_capture(probe, "after")
+    with pytest.raises(RuntimeError, match="phase generation"):
+        probe._require_success("run", invocation, generation, capture)
