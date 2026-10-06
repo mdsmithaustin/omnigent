@@ -611,6 +611,12 @@ class TerminalRegistry:
         for entry in failures:
             await self._close_failed_launch(conversation_id, entry)
 
+    def has_retained_owners(self, conversation_id: str) -> bool:
+        return bool(
+            self._by_conversation.get(conversation_id)
+            or self._failed_launches.get(conversation_id)
+        )
+
     async def close_launch(
         self,
         conversation_id: str,

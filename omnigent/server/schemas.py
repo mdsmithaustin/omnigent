@@ -31,6 +31,7 @@ from omnigent.entities import (
     ConversationItem,
 )
 from omnigent.inner.native_attachments import reject_authored_framework_notices
+from omnigent.native.source_owner import NativeAdmission, NativeStopResult
 
 # ── Shared ──────────────────────────────────────────────────────
 
@@ -1051,6 +1052,7 @@ class CreateResponseRequest(BaseModel):
     conversation: ConversationRef | None = None
     # Reasoning config, e.g. {"effort": "low"|"medium"|"high"}
     reasoning: dict[str, str] | None = None
+    native_admission: NativeAdmission | None = None
     # Per-request LLM model override (distinct from ``model``, which
     # carries the agent name). See class docstring for semantics.
     model_override: str | None = None
@@ -2184,6 +2186,7 @@ class SessionResponse(BaseModel):
     agent_id: str
     agent_name: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
+    native_stop: NativeStopResult | None = None
     background_task_count: int | None = None
     background_tasks: list[BackgroundTaskInfo] | None = None
     created_at: int

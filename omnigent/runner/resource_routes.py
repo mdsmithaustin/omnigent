@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import mimetypes
@@ -117,6 +118,7 @@ def register_resource_routes(
     _native_pane_names: Callable[[str], set[str]],
     _opencode_terminal_ensure_locks: dict[str, asyncio.Lock],
     _pi_terminal_ensure_locks: dict[str, asyncio.Lock],
+    _prime_terminal_ensure_locks: dict[str, asyncio.Lock],
     _publish_event: Callable[[str, Mapping[str, object]], None],
     _qwen_terminal_ensure_locks: dict[str, asyncio.Lock],
     _record_session_claude_launch_config: Callable[[str, ClaudeNativeUcodeConfig | None], None],
@@ -332,6 +334,24 @@ def register_resource_routes(
         session_id: str,
         request: Request,
     ) -> JSONResponse:
+        from omnigent.native.admission import bind_native_admission, native_operation
+        from omnigent.native.source_owner import NativeAdmission
+
+        body = await request.json()
+        native_agent = native_coding_agent_for_terminal_name(body.get("terminal"))
+        if native_agent is None:
+            return await _create_session_terminal(session_id, request)
+        raw_admission = body.get("native_admission")
+        binding = (
+            bind_native_admission(NativeAdmission.model_validate(raw_admission))
+            if raw_admission is not None
+            else contextlib.nullcontext()
+        )
+        with binding:
+            async with native_operation(server_client, session_id, native_agent.key):
+                return await _create_session_terminal(session_id, request)
+
+    async def _create_session_terminal(session_id: str, request: Request) -> JSONResponse:
         body = await request.json()
         terminal_name = body.get("terminal")
         session_key = body.get("session_key")
@@ -366,6 +386,7 @@ def register_resource_routes(
                     "claude": _claude_terminal_ensure_locks,
                     "codex": _codex_terminal_ensure_locks,
                     "pi": _pi_terminal_ensure_locks,
+                    "prime-native": _prime_terminal_ensure_locks,
                     "cursor": _cursor_terminal_ensure_locks,
                     "kiro": _kiro_terminal_ensure_locks,
                     "antigravity": _antigravity_terminal_ensure_locks,
@@ -464,7 +485,7 @@ def register_resource_routes(
                     "and could not be closed."
                 )
 
-            elif terminal_name in ("pi", "opencode"):
+            elif terminal_name in ("pi", "prime-native", "opencode"):
                 # pi/opencode resolve the spec unwrapped — a resolution error
                 # surfaces as a terminal-start error (the resolver does not
                 # swallow it).
@@ -815,6 +836,11 @@ def register_resource_routes(
                 source_session_id=session_id,
                 target_session_id=target_session_id,
                 terminal_id=terminal_id,
+            )
+        except OmnigentError as exc:
+            return JSONResponse(
+                status_code=exc.http_status,
+                content={"error": {"code": exc.code, "message": exc.message}},
             )
         except RuntimeError as exc:
             return JSONResponse(

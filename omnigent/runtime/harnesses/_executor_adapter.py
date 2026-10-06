@@ -217,6 +217,8 @@ class ExecutorAdapter(HarnessApp):
         if request.max_output_tokens is not None:
             extra["max_tokens"] = int(request.max_output_tokens)
         # model_override is the per-request override; takes precedence over the spec default.
+        if request.native_admission is not None:
+            extra["native_admission"] = request.native_admission.model_dump()
         config = ExecutorConfig(model=request.model_override, extra=extra)
         tools = _normalize_tool_schemas(request.tools or [])
         system_prompt = request.instructions or ""

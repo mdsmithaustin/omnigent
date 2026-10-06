@@ -1061,6 +1061,9 @@ class SessionsNamespace:
         on the wire. The server returns 202 with a small ack body
         (``{"queued": true, "item_id": "..."}`` for persisted
         item events; ``{"queued": false}`` for interrupt / approval).
+        Native ``stop_session`` also returns ``native_stop`` with an
+        ``outcome`` of ``verified``, ``unknown``, or ``failed``. Only
+        ``verified`` qualifies a different-agent fork; HTTP 202 alone does not.
 
         :param session_id: Session/conversation identifier, e.g.
             ``"conv_abc123"``.

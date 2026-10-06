@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from omnigent.inner.os_env import OSEnvironment
 from omnigent.inner.terminal import TerminalInstance
+from tests.native_source_helpers import NativeSourceServer
 
 
 class NullServerClient:
@@ -17,6 +21,10 @@ class NullServerClient:
     Used wherever ``create_runner_app`` is called in tests that only
     exercise runner-local behavior with no real Omnigent server.
     """
+
+    def __init__(self) -> None:
+        self._native_sources: NativeSourceServer | None = None
+        self._native_root: tempfile.TemporaryDirectory[str] | None = None
 
     class _Response:
         """Stub HTTP response that looks like a 200 with an empty body."""
@@ -40,13 +48,21 @@ class NullServerClient:
         del url, kwargs
         return self._Response()
 
-    async def post(self, url: str, **kwargs: Any) -> _Response:
+    async def post(self, url: str, **kwargs: Any) -> _Response | httpx.Response:
         """Return an empty 200 for any POST request.
 
         :param url: Request URL (ignored).
         :param kwargs: Extra keyword arguments (ignored).
         :returns: Stub 200 response with empty JSON body.
         """
+        if "/native-admission" in url:
+            if self._native_sources is None:
+                self._native_root = tempfile.TemporaryDirectory()
+                self._native_sources = NativeSourceServer(Path(self._native_root.name))
+            request = httpx.Request("POST", f"http://source{url}", json=kwargs["json"])
+            response = self._native_sources.respond(request)
+            response.request = request
+            return response
         del url, kwargs
         return self._Response()
 

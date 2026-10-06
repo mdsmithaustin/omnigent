@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from omnigent.onboarding.provider_config import ProviderEntry
     from omnigent.spec.types import AgentSpec
 
+import httpx
+
 from omnigent.cli_invocation import cli_invocation
 from omnigent.harnesses.codex_native.bridge import write_policy_hook_config
 from omnigent.harnesses.codex_native.launch_args import (
@@ -89,6 +91,7 @@ from omnigent.inner.databricks_executor import (
     _read_databrickscfg_host,
 )
 from omnigent.models.codex_model_vocabulary import codex_reachable_model_slug, codex_spawn_model
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.process_logging import (
     harness_stderr_capture_enabled,
     log_info_once,
@@ -1836,6 +1839,20 @@ class CodexNativeAppServer:
 
         :returns: None.
         """
+        from omnigent.native.admission import admit_native, bind_native_admission
+
+        if self.session_id is None or self.ap_server_url is None:
+            raise RuntimeError("Codex native launch requires its source admission server.")
+        async with httpx.AsyncClient(
+            base_url=self.ap_server_url, headers=self.ap_auth_headers
+        ) as client:
+            admission = await admit_native(client, self.session_id, "codex")
+            with bind_native_admission(admission):
+                await self._start_admitted(client, admission)
+
+    async def _start_admitted(
+        self, admission_client: httpx.AsyncClient, admission: NativeAdmission
+    ) -> None:
         config_source = _codex_home_config_source_from_env()
         if self.codex_home.resolve() == config_source.resolve():
             raise ValueError(
@@ -2000,30 +2017,35 @@ class CodexNativeAppServer:
         proc_env = codex_app_server_diagnostic_env(
             {**self.env, "CODEX_HOME": str(self.codex_home)}
         )
-        self.process_owner_lock = acquire_codex_native_process_owner_lock()
-        try:
-            self.proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-                env=proc_env,
-                cwd=str(self.cwd),
-                executable=self.codex_path,
-                **_proc.spawn_kwargs(),
-            )
-        except BaseException:
+        from omnigent.native.admission import validate_native
+        from omnigent.native.native_bridge_common import async_bridge_dir_preparation_lock
+
+        async with async_bridge_dir_preparation_lock(Path(admission.owner.runtime)):
+            await validate_native(admission_client, admission)
+            self.process_owner_lock = acquire_codex_native_process_owner_lock()
+            try:
+                self.proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=proc_env,
+                    cwd=str(self.cwd),
+                    executable=self.codex_path,
+                    **_proc.spawn_kwargs(),
+                )
+            except BaseException:
+                if self.process_owner_lock is not None:
+                    self.process_owner_lock.close()
+                    self.process_owner_lock = None
+                raise
             if self.process_owner_lock is not None:
-                self.process_owner_lock.close()
-                self.process_owner_lock = None
-            raise
-        if self.process_owner_lock is not None:
-            register_codex_native_process(
-                pid=self.proc.pid,
-                pgid=_process_group_id(self.proc),
-                session_tag=self.process_registry_tag,
-                owner_lock_path=self.process_owner_lock.path,
-            )
+                register_codex_native_process(
+                    pid=self.proc.pid,
+                    pgid=_process_group_id(self.proc),
+                    session_tag=self.process_registry_tag,
+                    owner_lock_path=self.process_owner_lock.path,
+                )
         self.recent_stderr = []
         self.stderr_task = asyncio.create_task(
             self._stderr_loop(),

@@ -41,6 +41,12 @@ import httpx
 from fastapi.responses import JSONResponse, Response
 
 from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+from omnigent.native.source_owner import (
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopReceipt,
+    NativeStopResult,
+)
 from omnigent.runner.native.orchestration import (
     _cancel_auto_forwarder_task,
     _claude_native_bridge_id_for_session,
@@ -367,6 +373,7 @@ class NativeInterruptRunner:
         # send that reused the same child session.
         self._pending_interrupts: dict[str, str | None] = {}
         self._pending_interrupt_timers: dict[str, asyncio.TimerHandle] = {}
+        self.native_stop_receipts: dict[str, NativeStopReceipt] = {}
 
     async def interrupt(self, harness_name: str | None, conv_id: str) -> Response | None:
         """Dispatch an interrupt to the harness's bridge.
@@ -396,7 +403,9 @@ class NativeInterruptRunner:
             return None
         return await self._uniform_interrupt(spec, conv_id, terminal_role=agent.harness)
 
-    async def stop(self, harness_name: str | None, conv_id: str) -> Response | None:
+    async def stop(
+        self, harness_name: str | None, conv_id: str, *, source_stop: NativeStop | None = None
+    ) -> Response | None:
         """Dispatch a stop_session to the harness's bridge.
 
         codex/pi have no distinct stop — they route to their interrupt handler,
@@ -407,8 +416,85 @@ class NativeInterruptRunner:
         """
         agent = native_coding_agent_for_harness(harness_name)
         if agent is None:
-            return None
+            if source_stop is None:
+                return None
+            receipt = NativeStopReceipt(
+                stop=source_stop,
+                result=NativeStopResult(
+                    outcome=NativeStopOutcome.UNKNOWN,
+                    detail="The current mode has no qualified native close provider.",
+                ),
+            )
+            self.native_stop_receipts[conv_id] = receipt
+            return JSONResponse(content=receipt.model_dump(mode="json"))
         key = agent.key
+        if source_stop is not None:
+            if key != "prime-native":
+                from omnigent.native.admission import native_owner
+
+                result = NativeStopResult(
+                    outcome=NativeStopOutcome.UNKNOWN,
+                    detail="This native provider cannot verify current owner shutdown.",
+                )
+                if key is not None and source_stop.admission.owner == native_owner(conv_id, key):
+                    response = await self._server_client.post(
+                        f"/v1/sessions/{conv_id}/native-admission/validate",
+                        json=source_stop.model_dump(),
+                    )
+                    response.raise_for_status()
+                    if response.json() != {"current": True}:
+                        raise RuntimeError("Native Stop does not name the current source owner.")
+                    await self.stop(harness_name, conv_id)
+                receipt = NativeStopReceipt(stop=source_stop, result=result)
+                self.native_stop_receipts[conv_id] = receipt
+                return JSONResponse(content=receipt.model_dump(mode="json"))
+            terminals = self._resource_registry.terminal_registry
+            if terminals is None or not terminals.has_retained_owners(conv_id):
+                result = NativeStopResult(
+                    outcome=NativeStopOutcome.UNKNOWN,
+                    detail="The current terminal owner is not retained on this runner.",
+                )
+            else:
+                from omnigent.harnesses.prime_native.process import stop_session
+
+                work_id = (
+                    self._subagent_work_id_for_session(conv_id)
+                    if self._subagent_work_id_for_session is not None
+                    else None
+                )
+                try:
+                    await asyncio.to_thread(stop_session, conv_id, source_stop=source_stop)
+                    await self._teardown_session_terminals(conv_id, require_confirmation=True)
+                except (
+                    RuntimeError,
+                    OSError,
+                    subprocess.SubprocessError,
+                    httpx.HTTPError,
+                    ValueError,
+                    KeyError,
+                ) as exc:
+                    result = NativeStopResult(
+                        outcome=NativeStopOutcome.FAILED,
+                        detail=self._client_safe_error_detail(exc, context="Prime owner Stop"),
+                    )
+                else:
+                    result = NativeStopResult(
+                        outcome=NativeStopOutcome.UNKNOWN
+                        if source_stop.unresolved_owners
+                        else NativeStopOutcome.VERIFIED,
+                        detail="Previous native ownership remains unqualified."
+                        if source_stop.unresolved_owners
+                        else "",
+                    )
+                    self._publish_event(conv_id, {"type": "session.status", "status": "idle"})
+                    self.clear_pending_interrupt(conv_id)
+                    if work_id is not None:
+                        self._mark_subagent_terminal_and_wake(
+                            conv_id, status="cancelled", output=None, only_if_work_id=work_id
+                        )
+            receipt = NativeStopReceipt(stop=source_stop, result=result)
+            self.native_stop_receipts[conv_id] = receipt
+            return JSONResponse(content=receipt.model_dump(mode="json"))
         if key == "claude":
             return await self._claude_stop(conv_id)
         from omnigent.native.native_dispatch import resolve_hook_for_key

@@ -9,6 +9,12 @@ import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
+
+    from omnigent.native.source_owner import NativeAdmission
 
 from omnigent.harnesses.pi_native.bridge import _atomic_text
 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
@@ -75,8 +81,14 @@ class ControlOutcome:
 
 
 class PrimeExtensionBinding:
-    def __init__(self, bridge_dir: Path) -> None:
+    def __init__(
+        self,
+        bridge_dir: Path,
+        *,
+        native_admission: tuple[httpx.AsyncClient, NativeAdmission] | None = None,
+    ) -> None:
         self._root = bridge_dir / "controls"
+        self._native_admission = native_admission
 
     def _incarnation(self) -> str:
         record = json.loads((self._root / "binding.json").read_text())
@@ -127,14 +139,28 @@ class PrimeExtensionBinding:
         request_id = uuid.uuid4().hex
         request = self._root / "requests" / f"{request_id}.json"
         result = self._root / "results" / f"{request_id}.json"
-        payload.update(
-            id=request_id, incarnation=incarnation, expiresAt=time.time() * 1000 + timeout_s * 1000
-        )
         deadline = time.monotonic() + timeout_s
         dispatched = False
         try:
-            _atomic_text(request, json.dumps(payload))
-            dispatched = True
+            from omnigent.native.admission import validate_native
+            from omnigent.native.native_bridge_common import async_bridge_dir_preparation_lock
+
+            scope = (
+                async_bridge_dir_preparation_lock(Path(self._native_admission[1].owner.runtime))
+                if self._native_admission is not None
+                else contextlib.nullcontext()
+            )
+            async with scope:
+                if self._native_admission is not None:
+                    await validate_native(*self._native_admission)
+                    incarnation = self._incarnation()
+                payload.update(
+                    id=request_id,
+                    incarnation=incarnation,
+                    expiresAt=time.time() * 1000 + timeout_s * 1000,
+                )
+                _atomic_text(request, json.dumps(payload))
+                dispatched = True
             while time.monotonic() < deadline:
                 try:
                     record = json.loads(result.read_text())

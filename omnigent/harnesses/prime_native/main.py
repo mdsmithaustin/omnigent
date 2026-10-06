@@ -213,8 +213,15 @@ async def _attach_session(
 
 
 async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView:
+    from omnigent.native.admission import admit_native, current_native_admission
+
+    if ctx.server_client is None:
+        raise RuntimeError("Prime launch requires source admission.")
+    admission = current_native_admission(ctx.session_id) or await admit_native(
+        ctx.server_client, ctx.session_id, "prime-native"
+    )
     paths = runtime_paths(ctx.session_id)
-    reservation = reserve_prime_launch(paths)
+    reservation = await asyncio.to_thread(reserve_prime_launch, paths)
     dispatched = False
     reservation_active = True
     terminal_spec = None
@@ -283,12 +290,14 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
 
         extension_settings = json.loads(extension_config.read_text())
         extension_settings["primeControlsDir"] = str(paths.root / "controls")
+        extension_settings["nativeAdmission"] = admission.model_dump()
         _atomic_text(extension_config, json.dumps(extension_settings))
         from omnigent.runtime.prompt import build_instructions_nullable
 
         instructions = build_instructions_nullable(spec, None, tools) if spec else None
         model = config.model_override or (spec.executor.model if spec else None)
-        launch = build_prime_launch(
+        launch = await asyncio.to_thread(
+            build_prime_launch,
             paths,
             executable=executable,
             extension=extension,

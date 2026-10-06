@@ -4636,8 +4636,10 @@ function ConversationRowImpl({
             <DialogHeader>
               <DialogTitle>Stop session?</DialogTitle>
               <DialogDescription>
-                This terminates the running session for <span className="font-medium">{label}</span>{" "}
-                and stops its runner. The conversation and its history are kept.
+                Stop the running session for <span className="font-medium">{label}</span> and its
+                runner. The conversation and its history are kept. Native shutdown must be verified
+                before forking with a different agent; otherwise an error explains what remains
+                unresolved.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

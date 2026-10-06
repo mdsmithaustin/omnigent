@@ -12,6 +12,7 @@ import httpx
 from omnigent.debug_logging import debug_event, runner_log_scope
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCategory
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.runner.session_init_protocol import build_runner_session_init_payload
 
 if TYPE_CHECKING:
@@ -52,10 +53,10 @@ class RunnerSessionInitializer:
         self._conversation_store = conversation_store
         self._file_store = file_store
         self._tasks: dict[
-            tuple[str, int, str, str, str | None, bool],
+            tuple[str, int, str, str, str | None, bool, str | None],
             asyncio.Task[httpx.Response],
         ] = {}
-        self._recovery_ids: dict[tuple[str, int, str, str, str | None, bool], str] = {}
+        self._recovery_ids: dict[tuple[str, int, str, str, str | None, bool, str | None], str] = {}
 
     async def initialize(
         self,
@@ -65,6 +66,7 @@ class RunnerSessionInitializer:
         timeout: float,
         suppress_recovery_turn: bool = False,
         resume_interrupted_turn: bool = False,
+        native_admission: NativeAdmission | None = None,
     ) -> httpx.Response:
         """Initialize once for the current connection and persisted snapshot."""
         runner_id = conversation.runner_id
@@ -76,6 +78,12 @@ class RunnerSessionInitializer:
         # identity fallback keeps embedded/test transports usable without
         # weakening the real tunnel-generation key.
         generation = id(connection) if connection is not None else id(runner_client)
+        if native_admission is None and self._conversation_store is not None:
+            native_source = await asyncio.to_thread(
+                self._conversation_store.get_native_source, conversation.id
+            )
+            if native_source is not None:
+                native_admission = native_source.admission
         key = (
             runner_id,
             generation,
@@ -83,6 +91,7 @@ class RunnerSessionInitializer:
             agent_id,
             conversation.sub_agent_name,
             resume_interrupted_turn,
+            native_admission.epoch if native_admission is not None else None,
         )
         task = self._tasks.get(key)
         if task is None:
@@ -97,6 +106,7 @@ class RunnerSessionInitializer:
                 suppress_recovery_turn=suppress_recovery_turn,
                 resume_interrupted_turn=resume_interrupted_turn,
                 recovery_id=recovery_id,
+                native_admission=native_admission,
             )
 
             async def post_session_init() -> httpx.Response:
