@@ -1947,7 +1947,6 @@ interface ComposerProps {
   isWorking: boolean;
   disabled: boolean;
   onSend: (text: string, files?: File[], replyDraft?: StoredReplyDraft) => void;
-  /** Invoke a catalog skill through structured admission when provided. */
   onSendSlashCommand?: (name: string, args: string) => void;
   onStop: () => void;
   agents: Agent[] | undefined;

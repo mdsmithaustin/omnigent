@@ -3349,34 +3349,37 @@ async def test_prime_message_preflight_exit_does_not_start_resource_turn(
     tmp_path: Path,
     preflight_exit: str,
 ) -> None:
+    from unittest.mock import create_autospec
+
     from omnigent.harnesses.prime_native import bridge
     from omnigent.harnesses.prime_native.controls import PrimeExtensionBinding
+    from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
 
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr("omnigent.harnesses.prime_native.main.launch_prime_terminal", AsyncMock())
     monkeypatch.setattr(PrimeExtensionBinding, "wait_until_ready", AsyncMock(return_value=True))
 
-    class HistoryServer(NullServerClient):
+    class HistoryServer(httpx.AsyncClient):
         mode = preflight_exit
 
         def __init__(self) -> None:
+            super().__init__(base_url="http://server", transport=httpx.MockTransport(self.respond))
             self.awaiting_history = asyncio.Event()
 
-        async def get(self, url: str, **kwargs: Any) -> Any:
-            if url.endswith("/items"):
-                if kwargs.get("params", {}).get("order") == "asc" and self.mode == "cancelled":
+        async def respond(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/items"):
+                if request.url.params.get("order") == "asc" and self.mode == "cancelled":
                     self.awaiting_history.set()
                     await asyncio.Event().wait()
                 return httpx.Response(
                     200,
                     json={
                         "data": [None]
-                        if self.mode == "malformed"
-                        and kwargs.get("params", {}).get("order") == "asc"
+                        if self.mode == "malformed" and request.url.params.get("order") == "asc"
                         else []
                     },
                 )
-            return await super().get(url, **kwargs)
+            return httpx.Response(200, json={})
 
     spec = AgentSpec(
         spec_version=1,
@@ -3391,16 +3394,21 @@ async def test_prime_message_preflight_exit_does_not_start_resource_turn(
     harness = _ScriptedHarnessClient(
         [_sse({"type": "response.completed", "response": {"id": "delivered"}})]
     )
+    process_manager = create_autospec(HarnessProcessManager, instance=True)
+    process_manager.get_client.return_value = harness
+    process_manager.has_session.return_value = True
+    process_manager.has_active_turn.return_value = False
+    process_manager.handles_tool_dispatch = True
     server = HistoryServer()
     app = create_runner_app(
-        process_manager=_FakeProcessManager(harness),  # type: ignore[arg-type]
+        process_manager=process_manager,
         spec_resolver=resolver,
-        server_client=server,  # type: ignore[arg-type]
+        server_client=server,
     )
     session_id = f"prime-preflight-{preflight_exit}"
     message = {"type": "message", "content": [{"type": "input_text", "text": "hello"}]}
 
-    async with _runner_client(app) as client:
+    async with server, _runner_client(app) as client:
         created = await client.post(
             "/v1/sessions", json={"session_id": session_id, "agent_id": "agent"}
         )
