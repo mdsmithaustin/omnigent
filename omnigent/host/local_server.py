@@ -82,8 +82,8 @@ def _local_data_dir() -> Path:
     """Return the local runtime data dir (db, artifacts, logs, pidfile).
 
     Honors ``OMNIGENT_DATA_DIR`` (the purpose-built data-isolation knob),
-    else ``~/.omnigent``. This lets a checkout/worktree isolate its local
-    runtime DB: two worktrees otherwise share ``~/.omnigent/chat.db``, and
+    else ``~/.omnigent-mdsmithaustin``. This lets a checkout/worktree isolate its local
+    runtime DB: two worktrees otherwise share ``~/.omnigent-mdsmithaustin/chat.db``, and
     if their Alembic heads have diverged the shared DB can't migrate and the
     daemon-backed local server fails to boot ("schema is out of date").
 
@@ -361,7 +361,7 @@ def _write_local_server_record(
         invocation with no opinion of its own falls back to it instead of
         assuming root.
     :param log_path: Absolute path of the spawned server's captured log file,
-        e.g. ``Path("/Users/alice/.omnigent/logs/server/server-ab12cd.log")``.
+        e.g. ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/server/server-ab12cd.log")``.
         ``None`` for a foreground server whose logs stream to the terminal —
         any stale log-ref sidecar is then removed so status never reports a
         log file that doesn't apply to the running server.
@@ -386,7 +386,7 @@ def _read_local_server_log_path() -> Path | None:
     """Read the running local server's captured-log path from its sidecar.
 
     :returns: The absolute log path the background server writes to, e.g.
-        ``Path("/Users/alice/.omnigent/logs/server/server-ab12cd.log")``, or
+        ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/server/server-ab12cd.log")``, or
         ``None`` when the sidecar is absent (foreground server, legacy
         record, or no server) or unreadable.
     """
@@ -400,7 +400,7 @@ def _read_local_server_log_path() -> Path | None:
 def _atomic_write(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` atomically via a same-dir temp + replace.
 
-    :param path: Destination file, e.g. ``~/.omnigent/local_server.pid``.
+    :param path: Destination file, e.g. ``~/.omnigent-mdsmithaustin/local_server.pid``.
     :param text: Full file contents to write.
     """
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
@@ -521,7 +521,7 @@ class LocalServerInfo:
     :param url: Base URL when running, e.g. ``"http://127.0.0.1:8123"``;
         ``None`` when not running.
     :param log_path: Absolute path of the background server's captured log
-        file, e.g. ``Path("/Users/alice/.omnigent/logs/server/server-ab12cd.log")``.
+        file, e.g. ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/server/server-ab12cd.log")``.
         ``None`` for a foreground server (logs stream to its terminal) or a
         legacy record without the log-path sidecar.
     """
@@ -536,7 +536,7 @@ class LocalServerInfo:
 def local_server_status() -> LocalServerInfo:
     """Report the detached background local server's status.
 
-    Reads ``~/.omnigent/local_server.pid`` for the recorded pid/port and
+    Reads ``~/.omnigent-mdsmithaustin/local_server.pid`` for the recorded pid/port and
     probes ``/health`` to decide ``running``. A stale pidfile (PID dead or
     health failing) reports ``running=False`` while still surfacing the
     recorded pid/port for diagnostics.
@@ -568,7 +568,7 @@ class LocalServerStartup:
         offer to stop a server they actually brought up, never one the user
         started independently.
     :param log_path: Absolute path of the background server's captured log
-        file, e.g. ``Path("/Users/alice/.omnigent/logs/server/server-ab12cd.log")``
+        file, e.g. ``Path("/Users/alice/.omnigent-mdsmithaustin/logs/server/server-ab12cd.log")``
         — surfaced so callers (``server --background``) can point the user at the
         exact log. For a spawned server this is the freshly created log; for
         a reused one it is read back from the log-path sidecar, and may be
@@ -586,7 +586,7 @@ def ensure_local_omnigent_server() -> LocalServerStartup:
 
     Reuses a healthy server recorded in the pidfile; otherwise spawns a
     detached ``omnigent server`` on a free loopback port, backed by the
-    persistent ``~/.omnigent`` data store so conversations survive across
+    persistent ``~/.omnigent-mdsmithaustin`` data store so conversations survive across
     invocations (designs/RUN_OMNIGENT_SESSION_RESUMPTION.md). The server runs
     accounts mode (the default) so the daemon and CLI
     both authenticate via built-in accounts and runner launches authorize.
@@ -618,7 +618,7 @@ def ensure_local_omnigent_server() -> LocalServerStartup:
         # a fresh one below so the invocation's intent takes effect.
         stop_local_omnigent_server()
 
-    # Prefer the stable :6767 so the daemon-spawned server lands on the
+    # Prefer the stable :6768 so the daemon-spawned server lands on the
     # same URL as a manual `omnigent server` (and reuse via the pidfile
     # keeps them from ever both running); fall back to a free port if
     # taken.
@@ -679,7 +679,7 @@ class _SpawnedLocalServer:
 
     :param proc: The ``omnigent server`` subprocess handle.
     :param log_path: File capturing the child's stdout/stderr, e.g.
-        ``Path("~/.omnigent/logs/server/server-ab12cd.log")``.
+        ``Path("~/.omnigent-mdsmithaustin/logs/server/server-ab12cd.log")``.
     :param base_url: Loopback URL the child was asked to bind, e.g.
         ``"http://127.0.0.1:6767"``.
     """

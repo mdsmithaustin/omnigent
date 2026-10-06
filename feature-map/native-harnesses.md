@@ -321,7 +321,7 @@ quality. Broader Smart Routing journeys remain outside this Pi-specific recipe.
 
 **Launch settings (own environment):** connect a host with Claude/Codex
 configured, and put a command and two args under
-`harness.claude-native` / `harness.codex-native` in its `~/.omnigent/config.yaml`.
+`harness.claude-native` / `harness.codex-native` in its `~/.omnigent-mdsmithaustin/config.yaml`.
 Open each harness through both its gear and card → Settings. Check one Startup
 configuration block with Command, Environment, and Arguments, plus source and
 credential. Repeat with `command: /usr/bin/env`

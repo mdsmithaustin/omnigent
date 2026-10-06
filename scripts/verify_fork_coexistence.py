@@ -137,6 +137,7 @@ def main() -> None:
         receipt["upstream_health_after_fork_stop"] = health(upstream_port)
         assert (home / ".omnigent/local_server.pid").is_file()
         with socket.socket() as probe_socket:
+            probe_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe_socket.bind(("127.0.0.1", 6768))
         fixture_code = """
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -147,7 +148,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"status":"ok"}')
     def log_message(self, *args):
         pass
-HTTPServer(('127.0.0.1', 6768), Handler).serve_forever()
+class Server(HTTPServer):
+    allow_reuse_address = True
+Server(('127.0.0.1', 6768), Handler).serve_forever()
 """
         fixture = subprocess.Popen(
             [str(args.upstream_python), "-I", "-c", fixture_code],
