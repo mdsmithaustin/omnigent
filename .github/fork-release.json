@@ -1,0 +1,86 @@
+{
+  "addons": [
+    {
+      "applied_commit": "c89fbdbb81343db0e9b04d8b518c665b431946e8",
+      "name": "release-policy-v17",
+      "reason": "Adapt the previously reviewed fork Python certification tooling and examples to released upstream v0.17.0.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d2a0fff327b11b00ed570cc0d49acf0c0fe6c3a9",
+      "name": "prime-native-v17",
+      "reason": "Port the existing Prime native addon onto the released v0.17.0 source and retain its verification entry points.",
+      "source_commit": "b80e7897cd2c5edc22f6a81323556f768270dfcd"
+    },
+    {
+      "applied_commit": "e7e4568c80999c034e91a8074602a078f598ac04",
+      "name": "skill-command-recovery-v17",
+      "reason": "Port durable skill invocation claims, unknown admission recovery, REQUEST reevaluation and saved-history replay guards; retain v0.17 route semantics.",
+      "source_commit": "0273257b592104c80779441c08214b5e3cb6cd03"
+    },
+    {
+      "applied_commit": "393e2c715e71da64c5b427740111ff5f9311cbc7",
+      "name": "prime-verification-map",
+      "reason": "Document Prime as the thirteenth native provider and link the maintained CLI, terminal and HTTP verification entry points.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "193f7f2c3fc273597d23ccd58ceab4f84dd42c85",
+      "name": "prime-preflight-types-and-comment-audit",
+      "reason": "Apply the addon comment audit and repair the Prime preflight test collaborators with the actual typed client and process-manager interfaces.",
+      "source_commit": "a0871d75221cf9ec769e67880ea8708f82dead74"
+    },
+    {
+      "applied_commit": "6dfacadd4f5b2eed2555fe2ad4254db1b281ea6c",
+      "name": "fork-installation-guide",
+      "reason": "Direct fork users to verified released assets and the maintained installation and upgrade instructions.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2aca4d1f419c643b58ab55e9920314b1951a8493",
+      "name": "skill-recovery-documentation-repair",
+      "reason": "Include the history-resume replay regression suite in the documented command-recovery checks; close independent review finding DOC-001.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4c7b7bced234c7cc375459c31bc135af1cd2b14e",
+      "name": "fork-version-v17",
+      "reason": "Stamp all four packages, runtime version and sibling lock records as 0.17.0+mdsmithaustin.1; preserve all upstream third-party records.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "222b6de7985af2ae498861cec78e5fac37ed4a03",
+      "name": "native-ownership-filelock-floor",
+      "reason": "Require the frozen and tested filelock 3.29.1 API for asynchronous native ownership locking without changing resolved third-party artifacts.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ccea8ae71a33b09d0945b4efb8c1a8dfb146a340",
+      "name": "native-source-stop-authority",
+      "reason": "Persist the typed source owner, admission epoch and exact Stop outcome; check qualified closure in the destination insertion transaction.",
+      "source_commit": "7677de103a9c583bfffc8ab9ae2e8e253759c562"
+    },
+    {
+      "applied_commit": "8185a4cef706e82ec91c49dcce229f4a9d00a51f",
+      "name": "native-source-stop-runtime",
+      "reason": "Fence native creation and deferred input with their original source admission, serialize Prime requests and physical close, expose honest owner Stop outcomes and reader fork behavior.",
+      "source_commit": "c4563add408a1051bc894b5f87cfc027f6e1d9a5"
+    },
+    {
+      "applied_commit": "2b99dd3e6421b8f78ec5973b17ee55ad203849c1",
+      "name": "native-stop-schema-and-comment-audit",
+      "reason": "Regenerate the published Stop result schema, remove seven scoped prose units, and name the existing wrapper lock ownership predicate without changing the lock protocol.",
+      "source_commit": null
+    }
+  ],
+  "payload_commit": "2b99dd3e6421b8f78ec5973b17ee55ad203849c1",
+  "profile": "python-distributions-v1",
+  "upstream": {
+    "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
+    "published_at": "2026-10-06T02:02:33Z",
+    "release_id": 404171628,
+    "repository": "omnigent-ai/omnigent",
+    "tag": "v0.17.0"
+  },
+  "version": "0.17.0+mdsmithaustin.1"
+}
