@@ -32,15 +32,11 @@ review:
     - path: "*"
       instructions: |
         Fork seam check. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
-        Run `git fetch --quiet https://github.com/omnigent-ai/omnigent.git main`; a path is upstream-owned when `git cat-file -e FETCH_HEAD:<path>` succeeds.
-        For each upstream-owned file the change edits, flag the edit when fork behavior could live in a new fork-owned file reached through an existing extension point (harness registry, adapter, config, hook),
-        when it renames, moves, reorders, or reformats upstream code beyond what the behavior needs,
-        when it changes a signature or shared type that other upstream modules depend on,
-        or when the fork-only logic is spread across the file instead of isolated behind one small, clearly named call site.
-        If the fetch fails, report that ownership could not be checked instead of guessing.
+        Run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent` for each edited path; exit 0 means upstream-owned. If gh fails, report that ownership could not be checked instead of guessing.
+        For each upstream-owned file the change edits, flag fork behavior that could use a new fork-owned file through an existing extension point (harness registry, adapter, config, hook), unnecessary upstream renaming, moves, reordering, or reformatting,
+        changes to signatures or shared types other upstream modules depend on, or fork-only logic spread across the file instead of isolated behind one small, clearly named call site.
     - path: "*"
       instructions: |
         Test value check. For each added or changed test, confirm it calls the code the way real callers do and asserts a concrete expected result.
-        Flag a test that would still pass if the code under test returned None or did nothing, that only asserts a mock was called,
-        that restates the implementation, that duplicates coverage an existing test already provides, or that depends on sleeps or wall-clock timing.
-        For each behavior change in non-test code, flag it when no test in the change would fail without it, unless the PR explains why a test is impractical.
+        Flag a test that would still pass if the code under test returned None or did nothing, that duplicates coverage an existing test already provides, or that depends on sleeps or wall-clock timing.
+        For each behavior change in non-test code, flag it when no test in the change would fail without it, unless the stated intent or commit message explains why a test is impractical.
