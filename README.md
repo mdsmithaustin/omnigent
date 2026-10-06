@@ -15,6 +15,10 @@ Omnigent is an open-source **meta-harness** that gives you a common orchestratio
 
 </div>
 
+This fork builds on the released upstream `v0.17.0` tag. To install and verify
+the fork with its Prime and skill-command addons, follow the
+[fork release guide](docs/FORK_RELEASES.md).
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/omnigent-ai/omnigent/main/docs/images/omnigent-desktop.png" alt="The Omnigent desktop app: starting a new session, with pinned and project-grouped sessions in the sidebar" width="720" />
 </p>
