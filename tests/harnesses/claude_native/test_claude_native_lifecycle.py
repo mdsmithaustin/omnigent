@@ -477,7 +477,7 @@ def test_generated_session_end_command_records_evidence_in_an_isolated_process(
 ) -> None:
     monkeypatch.setattr(bridge, "_TRUSTED_PARENT", tmp_path)
     monkeypatch.setattr(
-        bridge, "_BRIDGE_ROOT", tmp_path / f"omnigent-{stable_user_id()}" / "claude-native"
+        bridge, "_BRIDGE_ROOT", tmp_path / f"mdma-{stable_user_id()}" / "claude-native"
     )
     directory = bridge.prepare_bridge_dir("synthetic-session", workspace=tmp_path)
     trace = TerminalLifecycleTrace(session_id="synthetic-session")

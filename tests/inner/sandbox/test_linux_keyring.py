@@ -71,7 +71,7 @@ def desktop_keyring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
         daemon.stdin.close()
         probe = (
             "from keyring.backends.SecretService import Keyring; "
-            "Keyring().set_password('omnigent', 'desktop-test', 'test-only-credential')"
+            "Keyring().set_password('mdsmithaustin-omni', 'desktop-test', 'test-only-credential')"
         )
         while True:
             ready = subprocess.run(
@@ -136,7 +136,7 @@ def test_runner_and_granted_goose_read_real_desktop_keyring(
     lookup = (
         "resolve_secret('keychain:desktop-test')"
         if recipient == "runner"
-        else "keyring.get_password('omnigent', 'desktop-test')"
+        else "keyring.get_password('mdsmithaustin-omni', 'desktop-test')"
     )
     probe = f"""
 import keyring
