@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
@@ -1509,7 +1510,7 @@ async def _auto_create_opencode_terminal(
         server_client=server_client,
     )
     workspace = str(launch_config.workspace)
-    bridge_dir = prepare_bridge_dir(session_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, session_id)
     # Seed the token the shared ``serve-mcp`` reads at boot (idempotent) so the
     # Omnigent builtin-tool relay (wired below) can start. Safe to call before
     # the relay; ``start_tool_relay`` mints its own relay token in
@@ -2474,7 +2475,7 @@ async def _auto_create_pi_terminal(
         server_client=server_client,
     )
     workspace = str(launch_config.workspace)
-    bridge_dir = prepare_bridge_dir(session_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, session_id)
     # Drop stale payloads so a relaunched Pi process can't replay them.
     clear_inbox(bridge_dir)
     pi_extension = pi_extension_path(bridge_dir)
@@ -3604,7 +3605,7 @@ async def _auto_create_kiro_terminal(
     if not workspace_path.exists():
         raise RuntimeError(f"Kiro workspace does not exist for session {session_id!r}.")
     workspace = str(workspace_path)
-    bridge_dir = prepare_bridge_dir(session_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, session_id)
     # Declare the Omnigent MCP server in the workspace-scoped kiro config so
     # kiro-cli can call Omnigent tools. Only when the tool relay will actually
     # start (server_client + ensure_comment_relay present), else serve-mcp would
@@ -3756,7 +3757,7 @@ async def _auto_create_devin_terminal(
     if not workspace_path.exists():
         raise RuntimeError(f"Devin workspace does not exist for session {session_id!r}.")
     workspace = str(workspace_path)
-    bridge_dir = prepare_bridge_dir(session_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, session_id)
 
     # Deliver a custom agent's instructions as an always-on Windsurf rule (the
     # only channel Devin applies to every turn); a plain agent clears any stale
@@ -4074,7 +4075,7 @@ async def _auto_create_qwen_terminal(
     # Create fresh, empty input + event files before launch: qwen ``watchFile``\\s
     # the ``--input-file`` (it must exist) and a relaunched terminal must not
     # replay a prior process's queued commands or events.
-    prepare_bridge_files(bridge_dir)
+    await asyncio.to_thread(prepare_bridge_files, bridge_dir)
     in_path = input_file_path(bridge_dir)
     out_path = events_file_path(bridge_dir)
 
@@ -4790,7 +4791,7 @@ async def _auto_create_codex_terminal(
     )
     original_external_session_id = launch_config.external_session_id
     workspace = str(launch_config.workspace)
-    bridge_dir = prepare_bridge_dir(session_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, session_id)
     socket_path = socket_path_for_bridge_dir(bridge_dir)
     codex_home = codex_home_for_bridge_dir(bridge_dir)
     app_server = _AUTO_CODEX_APP_SERVERS.get(session_id)
@@ -6373,7 +6374,7 @@ async def _auto_create_antigravity_terminal(
     # keeps mirroring with stale state alongside the one spawned below (mirrors the
     # claude/codex auto-create teardown ordering).
     await _cancel_auto_forwarder_task(session_id)
-    bridge_dir = prepare_bridge_dir(bridge_id)
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, bridge_id)
     # Clear stale turn/conversation state so the reader binds this run's real agy
     # conversation id (the cold-start mints it below) instead of a prior run's.
     clear_bridge_state(bridge_dir)
@@ -8200,7 +8201,8 @@ async def _auto_create_claude_terminal(
     # agent's declared os_env.sandbox, already overridden by any
     # enforce_sandbox/force_sandbox policy verdict upstream.
     agent_os_env = _agent_os_env_from_spec(agent_spec)
-    bridge_dir = prepare_bridge_dir(
+    bridge_dir = await asyncio.to_thread(
+        prepare_bridge_dir,
         session_id,
         bridge_id=bridge_id,
         workspace=Path(workspace),
@@ -9395,6 +9397,7 @@ class NativeLaunchContext:
     session_id: str
     resource_registry: SessionResourceRegistry
     publish_event: Callable[[str, _JsonObject], None]
+    native_admission: NativeAdmission | None = None
     server_client: httpx.AsyncClient | None = None
     event_dispatcher: RunnerEventDispatcher | None = None
     ensure_comment_relay: _EnsureCommentRelay | None = None
@@ -9637,77 +9640,84 @@ async def _launch_native_terminal(
     if provider is None:
         return None
 
-    lock = ensure_locks.setdefault(ctx.session_id, asyncio.Lock())
-    async with lock:
-        registry = ctx.resource_registry.terminal_registry
-        has_terminal = (
-            registry is not None
-            and registry.get(ctx.session_id, agent.terminal_name, "main") is not None
-        )
-        decision = await pre_launch(has_terminal) if pre_launch is not None else PreLaunchResult()
-        if has_terminal and decision.force_recreate:
-            if registry is not None:
-                await registry.cleanup_conversation(ctx.session_id)
-            has_terminal = False
-        if has_terminal:
-            return True
-        if decision.skip or not decision.needs_terminal:
-            return False
+    from omnigent.native.admission import bind_native_admission, native_operation
 
-        adapter = resolve_hook(provider, "auto_create_terminal")
-        if adapter is None:
-            return None
-        _publish_terminal_pending(ctx.publish_event, ctx.session_id, True)
-        try:
-            if build_context is not None:
-                ctx = await build_context(ctx)
-            elif resolve_agent_spec is not None:
-                ctx = dataclasses.replace(ctx, agent_spec=await resolve_agent_spec())
-            _logger.info(
-                "Native input startup",
-                extra=debug_event(
-                    "native_input_starting",
-                    session_id=ctx.session_id,
-                    harness=harness_name,
-                    stage="native_input",
-                ),
+    lock = ensure_locks.setdefault(ctx.session_id, asyncio.Lock())
+    retained = ctx.native_admission
+    binding = bind_native_admission(retained) if retained is not None else contextlib.nullcontext()
+    with binding:
+        async with native_operation(ctx.server_client, ctx.session_id, agent.key), lock:
+            registry = ctx.resource_registry.terminal_registry
+            has_terminal = (
+                registry is not None
+                and registry.get(ctx.session_id, agent.terminal_name, "main") is not None
             )
-            await adapter(ctx)
-            _logger.info(
-                "Native terminal started",
-                extra=debug_event(
-                    "terminal_started",
-                    session_id=ctx.session_id,
-                    harness=harness_name,
-                    stage="terminal_start",
-                ),
+            decision = (
+                await pre_launch(has_terminal) if pre_launch is not None else PreLaunchResult()
             )
-            return True
-        except Exception as exc:
-            _logger.exception(
-                "Failed to auto-create %s terminal for %s",
-                agent.terminal_name,
-                ctx.session_id,
-                extra=debug_event(
-                    "terminal_start_failed",
-                    session_id=ctx.session_id,
-                    harness=harness_name,
-                    stage="terminal_start",
-                    error_impact=ErrorImpact.BLOCKING.value,
-                    error_phase=ErrorPhase.HARNESS_STARTUP.value,
-                ),
-            )
-            if reraise:
-                raise
-            _publish_native_terminal_start_error(
-                ctx.publish_event,
-                ctx.session_id,
-                agent.display_name,
-                exc,
-            )
-            return False
-        finally:
-            _publish_terminal_pending(ctx.publish_event, ctx.session_id, False)
+            if has_terminal and decision.force_recreate:
+                if registry is not None:
+                    await registry.cleanup_conversation(ctx.session_id)
+                has_terminal = False
+            if has_terminal:
+                return True
+            if decision.skip or not decision.needs_terminal:
+                return False
+
+            adapter = resolve_hook(provider, "auto_create_terminal")
+            if adapter is None:
+                return None
+            _publish_terminal_pending(ctx.publish_event, ctx.session_id, True)
+            try:
+                if build_context is not None:
+                    ctx = await build_context(ctx)
+                elif resolve_agent_spec is not None:
+                    ctx = dataclasses.replace(ctx, agent_spec=await resolve_agent_spec())
+                _logger.info(
+                    "Native input startup",
+                    extra=debug_event(
+                        "native_input_starting",
+                        session_id=ctx.session_id,
+                        harness=harness_name,
+                        stage="native_input",
+                    ),
+                )
+                await adapter(ctx)
+                _logger.info(
+                    "Native terminal started",
+                    extra=debug_event(
+                        "terminal_started",
+                        session_id=ctx.session_id,
+                        harness=harness_name,
+                        stage="terminal_start",
+                    ),
+                )
+                return True
+            except Exception as exc:
+                _logger.exception(
+                    "Failed to auto-create %s terminal for %s",
+                    agent.terminal_name,
+                    ctx.session_id,
+                    extra=debug_event(
+                        "terminal_start_failed",
+                        session_id=ctx.session_id,
+                        harness=harness_name,
+                        stage="terminal_start",
+                        error_impact=ErrorImpact.BLOCKING.value,
+                        error_phase=ErrorPhase.HARNESS_STARTUP.value,
+                    ),
+                )
+                if reraise:
+                    raise
+                _publish_native_terminal_start_error(
+                    ctx.publish_event,
+                    ctx.session_id,
+                    agent.display_name,
+                    exc,
+                )
+                return False
+            finally:
+                _publish_terminal_pending(ctx.publish_event, ctx.session_id, False)
 
 
 def _ensure_native_terminal_default_response(view: SessionResourceView) -> JSONResponse:
@@ -9774,92 +9784,100 @@ async def _ensure_native_terminal(
     respond = finalize or _ensure_native_terminal_default_response
 
     terminal_id = terminal_resource_id(terminal_name, "main")
-    lock = ensure_locks.setdefault(ctx.session_id, asyncio.Lock())
-    async with lock:
-        existing = await ctx.resource_registry.get_terminal_resource(ctx.session_id, terminal_id)
-        if existing is not None:
-            if is_owned is None or is_owned(ctx.resource_registry, existing):
-                _logger.info(
-                    "%s terminal ensure returning existing resource: session=%s terminal_id=%s",
-                    agent.display_name,
-                    ctx.session_id,
-                    terminal_id,
-                    extra={"session_id": ctx.session_id},
-                )
-                return respond(existing)
-            _logger.info(
-                "Replacing non-native %s terminal %s for session %s",
-                terminal_name,
-                terminal_id,
-                ctx.session_id,
-            )
-            closed = await ctx.resource_registry.close_terminal(ctx.session_id, terminal_id)
-            if not closed:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "error": {
-                            "code": "terminal_conflict",
-                            "message": conflict_message
-                            or "Existing terminal could not be closed.",
-                        }
-                    },
-                )
+    from omnigent.native.admission import bind_native_admission, native_operation
 
-        adapter = resolve_hook(provider, "auto_create_terminal")
-        if adapter is None:
-            return None
-        try:
-            if build_context is not None:
-                ctx = await build_context(ctx)
-            _logger.info(
-                "Native input startup",
-                extra=debug_event(
-                    "native_input_starting",
-                    session_id=ctx.session_id,
-                    harness=agent.harness,
-                    stage="native_input",
-                ),
+    lock = ensure_locks.setdefault(ctx.session_id, asyncio.Lock())
+    retained = ctx.native_admission
+    binding = bind_native_admission(retained) if retained is not None else contextlib.nullcontext()
+    with binding:
+        async with native_operation(ctx.server_client, ctx.session_id, agent.key), lock:
+            existing = await ctx.resource_registry.get_terminal_resource(
+                ctx.session_id, terminal_id
             )
-            view = await adapter(ctx)
-            _logger.info(
-                "Native terminal started",
-                extra=debug_event(
-                    "terminal_started",
-                    session_id=ctx.session_id,
-                    terminal_name=terminal_name,
-                    stage="terminal_start",
-                ),
-            )
-        except Exception as exc:
-            if isinstance(exc, OmnigentError) and exc.code == ErrorCode.SESSION_AGENT_MISSING:
-                # Expected lifecycle event (agent deleted/rebound), not an
-                # ensure defect: log without a stack so it stays out of the
-                # terminal-startup error signal.
-                _logger.warning(
-                    "%s terminal ensure skipped; session %s agent unavailable: %s",
-                    agent.display_name,
+            if existing is not None:
+                if is_owned is None or is_owned(ctx.resource_registry, existing):
+                    _logger.info(
+                        "%s terminal ensure returning existing resource: "
+                        "session=%s terminal_id=%s",
+                        agent.display_name,
+                        ctx.session_id,
+                        terminal_id,
+                        extra={"session_id": ctx.session_id},
+                    )
+                    return respond(existing)
+                _logger.info(
+                    "Replacing non-native %s terminal %s for session %s",
+                    terminal_name,
+                    terminal_id,
                     ctx.session_id,
-                    exc,
-                    extra={"session_id": ctx.session_id},
                 )
-            else:
-                _logger.exception(
-                    "%s terminal ensure failed for session=%s",
-                    agent.display_name,
-                    ctx.session_id,
+                closed = await ctx.resource_registry.close_terminal(ctx.session_id, terminal_id)
+                if not closed:
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "error": {
+                                "code": "terminal_conflict",
+                                "message": conflict_message
+                                or "Existing terminal could not be closed.",
+                            }
+                        },
+                    )
+
+            adapter = resolve_hook(provider, "auto_create_terminal")
+            if adapter is None:
+                return None
+            try:
+                if build_context is not None:
+                    ctx = await build_context(ctx)
+                _logger.info(
+                    "Native input startup",
                     extra=debug_event(
-                        "terminal_start_failed",
+                        "native_input_starting",
+                        session_id=ctx.session_id,
+                        harness=agent.harness,
+                        stage="native_input",
+                    ),
+                )
+                view = await adapter(ctx)
+                _logger.info(
+                    "Native terminal started",
+                    extra=debug_event(
+                        "terminal_started",
                         session_id=ctx.session_id,
                         terminal_name=terminal_name,
                         stage="terminal_start",
-                        error_impact=ErrorImpact.BLOCKING.value,
                     ),
                 )
-            return _native_terminal_start_error_response(
-                exc, agent.display_name, session_id=ctx.session_id
-            )
-        return respond(view)
+            except Exception as exc:
+                if isinstance(exc, OmnigentError) and exc.code == ErrorCode.SESSION_AGENT_MISSING:
+                    # Expected lifecycle event (agent deleted/rebound), not an
+                    # ensure defect: log without a stack so it stays out of the
+                    # terminal-startup error signal.
+                    _logger.warning(
+                        "%s terminal ensure skipped; session %s agent unavailable: %s",
+                        agent.display_name,
+                        ctx.session_id,
+                        exc,
+                        extra={"session_id": ctx.session_id},
+                    )
+                else:
+                    _logger.exception(
+                        "%s terminal ensure failed for session=%s",
+                        agent.display_name,
+                        ctx.session_id,
+                        extra=debug_event(
+                            "terminal_start_failed",
+                            session_id=ctx.session_id,
+                            terminal_name=terminal_name,
+                            stage="terminal_start",
+                            error_impact=ErrorImpact.BLOCKING.value,
+                        ),
+                    )
+                return _native_terminal_start_error_response(
+                    exc, agent.display_name, session_id=ctx.session_id
+                )
+            return respond(view)
 
 
 async def _claude_native_session_wants_rebuild(

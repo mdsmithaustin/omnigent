@@ -55,6 +55,7 @@ export type { SkillCommandDelivery } from "./skillCommandDelivery";
 
 /** Response body of `POST /v1/sessions/{id}/events` (202 Accepted). */
 export interface PostEventResponse {
+  nativeStop?: { outcome: "verified" | "unknown" | "failed"; detail: string };
   delivery?: SkillCommandDelivery;
   /** For skill commands, true only when the runner accepted responsibility. */
   queued: boolean;
@@ -448,6 +449,7 @@ export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
 }
 
 function postEventResponseFromWire(wire: {
+  native_stop?: PostEventResponse["nativeStop"];
   delivery?: SkillCommandDelivery;
   queued: boolean;
   item_id?: string;
@@ -457,6 +459,7 @@ function postEventResponseFromWire(wire: {
   recovery?: PostEventResponse["recovery"];
 }): PostEventResponse {
   return {
+    nativeStop: wire.native_stop,
     queued: wire.queued,
     delivery: wire.delivery,
     itemId: wire.item_id,
@@ -1401,6 +1404,7 @@ export async function postEvent(
   if (!res.ok) throw await apiErrorFromResponse(res);
   return postEventResponseFromWire(
     (await res.json()) as {
+      native_stop?: PostEventResponse["nativeStop"];
       queued: boolean;
       item_id?: string;
       denied?: boolean;
@@ -1455,12 +1459,18 @@ export function interrupt(sessionId: string, responseId?: string): Promise<PostE
 /**
  * Terminate a live session without deleting its conversation. The
  * transcript stays viewable; only the running process is stopped.
- * Owner-only server-side. For claude-native sessions the bound runner
- * hard-kills the tmux pane the `claude` binary runs in — the analog
- * of exiting from inside tmux, but driven from the web UI.
+ * Owner-only server-side. Native closure must be verified before a
+ * different-agent fork; an unresolved outcome is shown as an error.
  */
-export function stopSession(sessionId: string): Promise<PostEventResponse> {
-  return postEvent(sessionId, { type: "stop_session", data: {} });
+export async function stopSession(sessionId: string): Promise<PostEventResponse> {
+  const result = await postEvent(sessionId, { type: "stop_session", data: {} });
+  if (result.nativeStop && result.nativeStop.outcome !== "verified") {
+    throw new Error(
+      result.nativeStop.detail ||
+        "Native shutdown could not be verified. Different-agent fork remains blocked.",
+    );
+  }
+  return result;
 }
 
 /** Reconnect or relaunch the existing runner without replaying user input. */

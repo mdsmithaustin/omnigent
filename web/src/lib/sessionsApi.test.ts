@@ -1513,6 +1513,29 @@ describe("interrupt", () => {
 });
 
 describe("stopSession", () => {
+  it.each(["unknown", "failed"])(
+    "shows an unqualified native Stop outcome: %s",
+    async (outcome) => {
+      fetchMock.mockResolvedValueOnce(
+        mockJsonResponse({
+          queued: false,
+          native_stop: { outcome, detail: "Native owner remains unqualified." },
+        }),
+      );
+      await expect(stopSession("conv_native")).rejects.toThrow("Native owner remains unqualified.");
+    },
+  );
+
+  it("returns a verified native Stop receipt", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        queued: false,
+        native_stop: { outcome: "verified", detail: "" },
+      }),
+    );
+    expect((await stopSession("conv_native")).nativeStop?.outcome).toBe("verified");
+  });
+
   it("posts {type: 'stop_session', data: {}} to the events endpoint", async () => {
     fetchMock.mockResolvedValueOnce(mockJsonResponse({ queued: false }));
 

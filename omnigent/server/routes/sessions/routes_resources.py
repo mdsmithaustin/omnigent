@@ -1316,6 +1316,13 @@ def register_resources_routes(
         """
         conv = await _validate_session(session_id, request, LEVEL_EDIT)
         body = await request.json()
+        body.pop("native_admission", None)
+        if native_coding_agent_for_terminal_name(body.get("terminal")) is not None:
+            admission = await asyncio.to_thread(
+                conversation_store.invalidate_native_proof, session_id
+            )
+            if admission is not None:
+                body["native_admission"] = admission.model_dump()
         is_native_bootstrap = (
             bool(body.get("ensure_native_terminal") or body.get("bridge_inject_dir"))
             and native_coding_agent_for_terminal_name(body.get("terminal")) is not None

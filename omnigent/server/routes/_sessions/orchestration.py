@@ -74,6 +74,7 @@ from omnigent.native.native_coding_agents import (
     native_coding_agent_for_harness,
     native_coding_agent_for_wrapper_label,
 )
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.policies.types import (
     ElicitationRequest,
     EvaluationContext,
@@ -5062,6 +5063,7 @@ async def _ensure_runner_session_initialized(
     *,
     suppress_recovery_turn: bool = False,
     require_success: bool = False,
+    native_admission: NativeAdmission | None = None,
 ) -> bool:
     """
     Drive — and wait for — the runner's session-init handshake.
@@ -5122,6 +5124,7 @@ async def _ensure_runner_session_initialized(
                 runner_client,
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
                 suppress_recovery_turn=suppress_recovery_turn,
+                native_admission=native_admission,
             )
         else:
             from omnigent.version import VERSION
@@ -5132,6 +5135,7 @@ async def _ensure_runner_session_initialized(
                     conv,
                     server_version=VERSION,
                     suppress_recovery_turn=suppress_recovery_turn,
+                    native_admission=native_admission,
                 ),
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
             )
@@ -5233,6 +5237,7 @@ async def _ensure_native_terminal_ready(
     *,
     persist_resource_event: bool = True,
     runner_router: RunnerRouter | None = None,
+    native_admission: NativeAdmission | None = None,
 ) -> _NativeTerminalEnsureOutcome:
     """
     Ask the runner to create or return the native terminal for a message.
@@ -5273,6 +5278,11 @@ async def _ensure_native_terminal_ready(
                 "session_key": "main",
                 "ensure_native_terminal": True,
                 "persist_resource_event": persist_resource_event,
+                **(
+                    {"native_admission": native_admission.model_dump()}
+                    if native_admission is not None
+                    else {}
+                ),
             },
             timeout=10.0,
         )
@@ -5610,6 +5620,8 @@ def _build_native_terminal_message_event(
         # which always includes it.
         "agent_id": conv.agent_id,
     }
+    if "native_admission" in body.data:
+        event["native_admission"] = body.data["native_admission"]
     # The web's stable id for this message rides along so the runner can name
     # it on a turn that fails before the harness receives it; the relay then
     # settles exactly that queued entry (see _settle_undelivered_native_input).
@@ -7158,6 +7170,9 @@ async def _dispatch_session_event_to_runner_impl(
                 session_id,
                 conv,
                 runner_router=runner_router,
+                native_admission=NativeAdmission.model_validate(body.data["native_admission"])
+                if "native_admission" in body.data
+                else None,
             )
         )
         if ensure_outcome.error is not None:
@@ -12282,6 +12297,15 @@ async def _get_session_snapshot(
     response.inference_configured = inference_configured
     response.inference_error = inference_error
     response.usage_included = include_usage
+    native_source = await asyncio.to_thread(conv_store.get_native_source, session_id)
+    if native_source is not None:
+        from omnigent.native.source_owner import NativeStopOutcome, NativeStopResult
+
+        response.native_stop = native_source.result
+        if native_source.phase == "stopping" and response.native_stop is None:
+            response.native_stop = NativeStopResult(
+                outcome=NativeStopOutcome.UNKNOWN, detail="Native Stop is pending."
+            )
     return response
 
 

@@ -31,6 +31,7 @@ from pydantic import ValidationError
 from omnigent.harness_availability import HarnessAvailability, is_harness_availability
 from omnigent.host.harness_startup import HarnessStartup
 from omnigent.inner.native_attachments import CAP_FILESYSTEM_ATTACHMENTS
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.util.json_types import JsonObject as _JsonObject
 from omnigent.util.tunnel_limits import RUNNER_TUNNEL_MAX_MESSAGE_BYTES
 
@@ -281,6 +282,7 @@ class HostLaunchRunnerFrame:
     session_id: str | None = None
     harness: str | None = None
     inference_config: dict[str, Any] | None = None
+    native_admission: NativeAdmission | None = None
 
 
 @dataclass
@@ -1382,6 +1384,9 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "session_id": frame.session_id,
                 "harness": frame.harness,
                 "inference_config": frame.inference_config,
+                "native_admission": frame.native_admission.model_dump()
+                if frame.native_admission is not None
+                else None,
             }
         )
     if isinstance(frame, HostLaunchRunnerResultFrame):
@@ -2274,6 +2279,9 @@ def _decode_launch_runner(msg: _JsonObject) -> HostLaunchRunnerFrame:
         session_id=_optional_nullable_str(msg, "session_id"),
         harness=_optional_nullable_str(msg, "harness"),
         inference_config=inference_config,
+        native_admission=NativeAdmission.model_validate(msg["native_admission"])
+        if msg.get("native_admission") is not None
+        else None,
     )
 
 

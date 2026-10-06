@@ -26,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+import httpx
 from cachetools import TTLCache
 
 from omnigent.debug_logging import debug_event, runner_primary_session_id
@@ -40,9 +41,13 @@ from omnigent.entities.session_resources import (
     terminal_resource_id,
     terminal_resource_view,
 )
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inner.sandbox import contained_realpath, containment_prefix
 from omnigent.inner.terminal_lifecycle import lifecycle_log_attributes
-from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+from omnigent.native.native_coding_agents import (
+    native_coding_agent_for_harness,
+    native_coding_agent_for_terminal_name,
+)
 from omnigent.native.native_dispatch import resolve_hook_for_key
 
 if TYPE_CHECKING:
@@ -466,6 +471,7 @@ class SessionResourceRegistry:
         per_session_workspace: bool = False,
     ) -> None:
         self._terminal_registry = terminal_registry
+        self.native_server_client: httpx.AsyncClient | None = None
         if terminal_registry is not None:
             terminal_registry.environment_resolver = self._resolve_terminal_environment
         self._runner_workspace = runner_workspace
@@ -1258,29 +1264,37 @@ class SessionResourceRegistry:
         if self._terminal_registry is None:
             raise RuntimeError("Terminal registry not configured")
 
+        from omnigent.native.admission import native_spawn
         from omnigent.terminals.registry import TerminalExitedDuringLaunch
 
-        try:
-            instance = await self._terminal_registry.launch(
-                conversation_id=session_id,
-                terminal_name=terminal_name,
-                session_key=session_key,
-                spec=spec,
-                parent_os_env=parent_os_env,
-                cwd_override=cwd_override,
-                sandbox_override=sandbox_override,
-            )
-        except TerminalExitedDuringLaunch as exc:
-            await self._finalize_terminal_exit(
-                session_id=session_id,
-                terminal_name=terminal_name,
-                session_key=session_key,
-                lifecycle=lifecycle,
-                instance=exc.instance,
-                resource_role=resource_role,
-                before_observation=True,
-            )
-            raise
+        agent = native_coding_agent_for_terminal_name(terminal_name)
+        scope = (
+            native_spawn(self.native_server_client, session_id, agent.key)
+            if agent is not None
+            else contextlib.nullcontext()
+        )
+        async with scope:
+            try:
+                instance = await self._terminal_registry.launch(
+                    conversation_id=session_id,
+                    terminal_name=terminal_name,
+                    session_key=session_key,
+                    spec=spec,
+                    parent_os_env=parent_os_env,
+                    cwd_override=cwd_override,
+                    sandbox_override=sandbox_override,
+                )
+            except TerminalExitedDuringLaunch as exc:
+                await self._finalize_terminal_exit(
+                    session_id=session_id,
+                    terminal_name=terminal_name,
+                    session_key=session_key,
+                    lifecycle=lifecycle,
+                    instance=exc.instance,
+                    resource_role=resource_role,
+                    before_observation=True,
+                )
+                raise
         return await self._observe_terminal_with_lifecycle(
             lifecycle,
             session_id=session_id,
@@ -1980,6 +1994,12 @@ class SessionResourceRegistry:
                 continue
             if terminal_resource_id(entry.terminal_name, entry.session_key) != terminal_id:
                 continue
+            if native_coding_agent_for_terminal_name(entry.terminal_name) is not None:
+                raise OmnigentError(
+                    "Native terminals cannot move between sessions because Stop requires "
+                    "their original source owner.",
+                    code=ErrorCode.CONFLICT,
+                )
             moved = self._terminal_registry.transfer(
                 source_session_id,
                 target_session_id,

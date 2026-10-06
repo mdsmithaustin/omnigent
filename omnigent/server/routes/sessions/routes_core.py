@@ -42,6 +42,7 @@ from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
 from omnigent.harnesses.prime_native.controls import ControlStatus, SetEffort, SetModel
 from omnigent.models.model_override import validate_model_override
+from omnigent.native.source_owner import NativeAdmission, NativeAdmissionRequest, NativeStop
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
 )
@@ -336,6 +337,49 @@ def register_core_routes(
 ) -> None:
     """Register the core session routes on router."""
 
+    @router.post("/sessions/{session_id}/native-admission", include_in_schema=False)
+    async def admit_native_owner(
+        session_id: str, body: NativeAdmissionRequest, request: Request
+    ) -> dict[str, Any]:
+        await _require_access(
+            _get_user_id(request, auth_provider),
+            session_id,
+            LEVEL_EDIT,
+            permission_store,
+            conversation_store,
+        )
+        admission = await asyncio.to_thread(
+            conversation_store.admit_native,
+            session_id,
+            body.owner,
+            expected_epoch=body.expected_epoch,
+        )
+        return admission.model_dump()
+
+    @router.post("/sessions/{session_id}/native-admission/validate", include_in_schema=False)
+    async def validate_native_owner(
+        session_id: str, body: NativeAdmission | NativeStop, request: Request
+    ) -> dict[str, bool]:
+        await _require_access(
+            _get_user_id(request, auth_provider),
+            session_id,
+            LEVEL_EDIT,
+            permission_store,
+            conversation_store,
+        )
+        source_id = (
+            body.source_id if isinstance(body, NativeAdmission) else body.admission.source_id
+        )
+        if source_id != session_id:
+            raise OmnigentError(
+                "Native admission names a different source.", code=ErrorCode.INVALID_INPUT
+            )
+        if isinstance(body, NativeAdmission):
+            await asyncio.to_thread(conversation_store.validate_native_admission, body)
+        else:
+            await asyncio.to_thread(conversation_store.validate_native_stop, body)
+        return {"current": True}
+
     async def _schedule_managed_launch(
         request: Request,
         *,
@@ -569,12 +613,14 @@ def register_core_routes(
                 "schema constraint should have prevented this",
                 code=ErrorCode.INTERNAL_ERROR,
             )
+        native_source = await asyncio.to_thread(conversation_store.get_native_source, session_id)
         launch_frame = encode_host_frame(
             HostLaunchRunnerFrame(
                 request_id=request_id,
                 binding_token=binding_token,
                 workspace=workspace,
                 session_id=session_id,
+                native_admission=native_source.admission if native_source else None,
                 # Lets the host refuse an unconfigured harness before
                 # spawning. None (agent not resolvable) skips the
                 # host-side check.
@@ -2668,6 +2714,23 @@ def register_core_routes(
             if conv is not None
             else None
         )
+        native_admission = None
+        if (
+            native_agent is not None
+            and not body.silent
+            and body.model_fields_set.intersection(
+                {
+                    "model_override",
+                    "reasoning_effort",
+                    "plan_mode",
+                    "permission_mode",
+                    "codex_approval_mode",
+                }
+            )
+        ):
+            native_admission = await asyncio.to_thread(
+                conversation_store.invalidate_native_proof, session_id
+            )
         prime_live_settings = native_agent is not None and native_agent.harness == "prime-native"
         setting_updates: dict[str, Any] = (
             {}
@@ -2730,7 +2793,15 @@ def register_core_routes(
             outcomes: dict[str, Any] = {}
             for setting, event, control in changes:
                 result = await _forward_session_change_to_runner(
-                    session_id, runner_router, event, timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S
+                    session_id,
+                    runner_router,
+                    event,
+                    timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                    **(
+                        {"native_admission": native_admission}
+                        if native_admission is not None
+                        else {}
+                    ),
                 )
                 receipt = _decode_prime_control_receipt(result, expected=control)
                 outcomes[setting] = receipt.outcome.response_body()
@@ -2818,6 +2889,7 @@ def register_core_routes(
                 # ``/effort`` confirm dialog can render seconds after the
                 # command.
                 timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                **({"native_admission": native_admission} if native_admission is not None else {}),
             )
         if live_model_change:
             _model_forward = await _forward_session_change_to_runner(
@@ -2827,6 +2899,7 @@ def register_core_routes(
                 # The runner answers this by typing ``/model`` into the pane and
                 # confirming the dialog, which outlasts the default budget.
                 timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                **({"native_admission": native_admission} if native_admission is not None else {}),
             )
             # Append a durable [System: model changed to X] note for sessions
             # whose history Omnigent writes. Gate on the wrapper label (NOT
@@ -2872,6 +2945,7 @@ def register_core_routes(
                     "type": "plan_mode_change",
                     "enabled": _codex_plan_enabled,
                 },
+                **({"native_admission": native_admission} if native_admission is not None else {}),
             )
             _require_collaboration_mode_forward(
                 session_id,
@@ -2886,6 +2960,7 @@ def register_core_routes(
                     "type": "permission_mode_change",
                     "permission_mode": requested_permission_mode,
                 },
+                **({"native_admission": native_admission} if native_admission is not None else {}),
             )
             # Raises unless the runner confirms the switch, so the label can
             # never claim a mode Claude isn't in. Stores the mode it reached.
@@ -2924,6 +2999,7 @@ def register_core_routes(
                 # pressing the preset's digit, then confirming the echo — which
                 # outlasts the default forward budget.
                 timeout_s=_TUI_INJECT_FORWARD_TIMEOUT_S,
+                **({"native_admission": native_admission} if native_admission is not None else {}),
             )
             # Raises unless the runner drove the /permissions popup, so the label
             # can never claim a preset the Codex TUI wasn't switched to. Codex owns
@@ -3516,6 +3592,10 @@ def register_core_routes(
                 source_id,
                 title=body.title,
                 agent_id=cloned_agent_id,
+                selected_agent_id=base_agent.id,
+                source_is_native=(
+                    await asyncio.to_thread(_native_coding_agent_for_session, source) is not None
+                ),
                 cloned_agent_name=cloned_agent_name,
                 cloned_agent_bundle_location=base_agent.bundle_location,
                 cloned_agent_description=base_agent.description,

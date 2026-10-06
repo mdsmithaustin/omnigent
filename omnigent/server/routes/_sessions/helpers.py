@@ -96,6 +96,7 @@ from omnigent.native.native_coding_agents import (
     native_coding_agent_for_wrapper_label,
 )
 from omnigent.native.session_todos import validate_session_todos
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.policies.types import EvaluationContext
 from omnigent.runner.identity import (
     token_bound_runner_id,
@@ -5993,12 +5994,14 @@ async def _launch_runner_on_host_locked(
             asyncio.get_running_loop().create_future()
         )
         host_conn.pending_launches[request_id] = launch_future
+        native_source = await asyncio.to_thread(conversation_store.get_native_source, conv.id)
         launch_frame = encode_host_frame(
             HostLaunchRunnerFrame(
                 request_id=request_id,
                 binding_token=binding_token,
                 workspace=conv.workspace,
                 session_id=conv.id,
+                native_admission=native_source.admission if native_source else None,
                 # Canonical harness (see _resolve_harness) so the host runs the
                 # same configuration check it does at create-time launch. None
                 # (agent not resolvable) skips the host-side check — fail open.
@@ -6793,6 +6796,7 @@ async def _forward_session_change_to_runner_impl(
     runner_router: Any,
     event: dict[str, Any],
     timeout_s: float = 5.0,
+    native_admission: NativeAdmission | None = None,
 ) -> _RunnerForwardResult | None:
     """
     Best-effort POST a control event to the bound runner.
@@ -6847,6 +6851,8 @@ async def _forward_session_change_to_runner_impl(
         runner_client = cast("httpx.AsyncClient | None", get_runner_client())
     if runner_client is None:
         return None
+    if native_admission is not None:
+        event = {**event, "native_admission": native_admission.model_dump()}
     try:
         resp = await runner_client.post(
             f"/v1/sessions/{session_id}/events",
@@ -7464,6 +7470,11 @@ async def _dispatch_skill_slash_command_to_runner(
     if visible.deduplicated:
         return _skill_command_result(visible)
 
+    admission = (
+        await asyncio.to_thread(conversation_store.invalidate_native_proof, session_id)
+        if native
+        else None
+    )
     pending_id = None
     if native:
         pending_id = pending_inputs.record(
@@ -7480,6 +7491,8 @@ async def _dispatch_skill_slash_command_to_runner(
         "persisted_item_id": item_id if native else context_id,
         "command_admission": {"item_id": item_id, "fingerprint": fingerprint},
     }
+    if admission is not None:
+        runner_body["native_admission"] = admission.model_dump()
     effective_override = (
         body.model_override if body.model_override is not None else conv.model_override
     )

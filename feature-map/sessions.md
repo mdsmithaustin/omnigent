@@ -16,6 +16,9 @@ the header menu), and each place is a separate entry point.
   view, which can be filtered by project and paged.
 - `stop`: Stop session ends a host-launched parent and the sub-agents on its
   runner without reporting their expected disconnect as a task failure.
+- `native-stop-fork`: the source owner explicitly Stops and verifies native
+  closure before a different-agent fork. Readers can then fork; they cannot
+  Stop. Unqualified closure blocks the fork; new source input clears proof.
 - `unarchive`: offered on archived rows, in bulk selection, and in the header
   menu of an archived session.
 - `delete`: confirmed, then removed from the list and the server.
@@ -74,6 +77,8 @@ devices fold some row controls into the menu.
 **Stop session:** open the native parent's sidebar menu and choose Stop session
 while a sub-agent is working. This ends the runner; the current-turn interrupt
 control is a separate action that leaves the session connected.
+For a different-agent native fork, check the verified closure result first.
+An unresolved result appears as an error. See [the Stop workflow](../docs/NATIVE_STOP.md).
 
 **Desktop browser:** choose **+ → Browser** in the Workspace panel or press
 ⌘/Ctrl+Alt+B. Agent browser requests and chat links with in-app opening enabled

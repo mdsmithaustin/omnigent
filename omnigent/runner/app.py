@@ -31,7 +31,12 @@ if TYPE_CHECKING:
     from omnigent.harnesses.claude_native.bridge import ClaudeNativeToolRelay
     from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
     from omnigent.harnesses.codex_native.bridge import CodexNativeBridgeState
-    from omnigent.harnesses.prime_native.controls import ControlOutcome, SetEffort, SetModel
+    from omnigent.harnesses.prime_native.controls import (
+        Control,
+        ControlOutcome,
+        SetEffort,
+        SetModel,
+    )
     from omnigent.runner.mcp_manager import RunnerMcpManager
     from omnigent.runner.policy import PolicyVerdict
     from omnigent.terminals.registry import TerminalRegistry
@@ -68,6 +73,7 @@ from omnigent.harness_plugins import (
 from omnigent.native.native_coding_agents import (
     native_coding_agent_for_harness,
 )
+from omnigent.native.source_owner import NativeAdmission
 from omnigent.runner import native as _native
 from omnigent.runner import pending_approvals
 from omnigent.runner import subagent_work as _subagent_work
@@ -1178,7 +1184,7 @@ def create_runner_app(
     _session_snapshot_locks: dict[str, asyncio.Lock] = {}  # session_id → snapshot fetch lock
     _session_spec_locks: dict[str, asyncio.Lock] = {}  # session_id → spec resolution lock
     _session_init_tasks: dict[
-        tuple[str, str, str | None, str | None], asyncio.Task[JSONResponse]
+        tuple[str, str, str | None, str | None, str | None], asyncio.Task[JSONResponse]
     ] = {}
     _recovery_turn_ids: dict[str, set[str]] = {}
     _session_init_envelopes: dict[str, tuple[float, RunnerSessionInitEnvelope]] = {}
@@ -1290,14 +1296,25 @@ def create_runner_app(
 
     _prime_settings_gates: dict[str, _PrimeSettingsGate] = {}
 
+    async def _execute_prime_control(
+        session_id: str, control: Control, *, timeout_s: float = 18
+    ) -> ControlOutcome:
+        from omnigent.harnesses.prime_native.controls import PrimeExtensionBinding
+        from omnigent.native.admission import current_native_admission
+
+        admission = current_native_admission(session_id)
+        if admission is None:
+            raise RuntimeError("Prime control requires its original source admission.")
+        return await PrimeExtensionBinding(
+            Path(admission.owner.runtime), native_admission=(server_client, admission)
+        ).execute(control, timeout_s=timeout_s)
+
     async def _execute_prime_setting(
         session_id: str, control: SetModel | SetEffort
     ) -> ControlOutcome:
-        from omnigent.harnesses.prime_native.bridge import runtime_paths
         from omnigent.harnesses.prime_native.controls import (
             ControlOutcome,
             ControlStatus,
-            PrimeExtensionBinding,
         )
 
         deadline = time.monotonic() + _PRIME_SETTINGS_TIMEOUT_S
@@ -1312,8 +1329,8 @@ def create_runner_app(
                     ControlStatus.UNAVAILABLE, "Prime settings admission expired"
                 )
             acquired = True
-            return await PrimeExtensionBinding(runtime_paths(session_id).root).execute(
-                control, timeout_s=max(0, deadline - time.monotonic())
+            return await _execute_prime_control(
+                session_id, control, timeout_s=max(0, deadline - time.monotonic())
             )
         finally:
             if acquired:
@@ -1586,6 +1603,7 @@ def create_runner_app(
             runner_workspace=runner_workspace,
             per_session_workspace=per_session_workspace,
         )
+    resource_registry.native_server_client = server_client
     app.state.session_resource_registry = resource_registry
 
     def _publish_terminal_activity(session_id: str, terminal_id: str) -> None:
@@ -2320,6 +2338,18 @@ def create_runner_app(
         )
 
     async def _initialize_session(body: _JsonObject) -> JSONResponse:
+        from omnigent.native.admission import bind_native_admission, validate_native
+        from omnigent.native.source_owner import NativeAdmission
+
+        raw_admission = body.get("native_admission")
+        if raw_admission is None:
+            return await _initialize_session_impl(body)
+        admission = NativeAdmission.model_validate(raw_admission)
+        await validate_native(server_client, admission)
+        with bind_native_admission(admission):
+            return await _initialize_session_impl(body)
+
+    async def _initialize_session_impl(body: _JsonObject) -> JSONResponse:
         from omnigent.runner.session_init_protocol import RunnerInferenceConfigMismatch
 
         raw_id = body.get("session_id")
@@ -2669,6 +2699,15 @@ def create_runner_app(
             )[_native_agent.key]
             _launch_ctx = NativeLaunchContext(
                 session_id=session_id,
+                native_admission=(
+                    NativeAdmission.model_validate(body["native_admission"])
+                    if "native_admission" in body
+                    else NativeAdmission.model_validate_json(
+                        os.environ["OMNIGENT_NATIVE_START_ADMISSION"]
+                    )
+                    if os.environ.get("OMNIGENT_NATIVE_START_ADMISSION")
+                    else None
+                ),
                 resource_registry=resource_registry,
                 publish_event=_publish_event,
                 server_client=server_client,
@@ -3108,6 +3147,13 @@ def create_runner_app(
                 "reasoning_effort": None,
                 "items": [],
                 "permission_level": None,
+                "native_stop": (
+                    _native_interrupt_runner.native_stop_receipts[session_id].model_dump(
+                        mode="json"
+                    )
+                    if session_id in _native_interrupt_runner.native_stop_receipts
+                    else None
+                ),
                 "session_init_protocol_version": (
                     init_context.envelope.protocol_version
                     if init_context.envelope is not None
@@ -3148,6 +3194,9 @@ def create_runner_app(
             agent_id,
             sub_agent_name if isinstance(sub_agent_name, str) else None,
             envelope.recovery_id if envelope is not None else None,
+            NativeAdmission.model_validate(body["native_admission"]).epoch
+            if "native_admission" in body
+            else None,
         )
         task = _session_init_tasks.get(key)
         if task is None:
@@ -4778,7 +4827,19 @@ def create_runner_app(
         # context carries it for its lifetime). Coded errors keep their own phase.
         with phase_scope(ErrorPhase.TURN):
             try:
-                await _run_turn_bg_setup_and_stream(msg_body, conv)
+                from omnigent.native.admission import bind_native_admission, validate_native
+                from omnigent.native.source_owner import NativeAdmission
+
+                raw_admission = msg_body.get("native_admission")
+                if raw_admission is not None:
+                    if server_client is None:
+                        raise RuntimeError("Native input requires source admission.")
+                    admission = NativeAdmission.model_validate(raw_admission)
+                    await validate_native(server_client, admission)
+                    with bind_native_admission(admission):
+                        await _run_turn_bg_setup_and_stream(msg_body, conv)
+                else:
+                    await _run_turn_bg_setup_and_stream(msg_body, conv)
             except _ContextWindowOverflow:
                 # Re-raise so the streaming-phase handler (which publishes the
                 # error event) is never shadowed by the generic except below.
@@ -5006,6 +5067,8 @@ def create_runner_app(
             "role": "user",
             "model": msg_body.get("model", ""),
         }
+        if "native_admission" in msg_body:
+            harness_body["native_admission"] = msg_body["native_admission"]
         # The routed model rides in-band on the forwarded message. This body is
         # built field by field (not copied), so it must be threaded explicitly:
         # the harness forwards it onto CreateResponseRequest.model_override and
@@ -6155,6 +6218,34 @@ def create_runner_app(
         request: Request,
         stream: bool = Query(default=False),
     ) -> Response:
+        from omnigent.native.admission import bind_native_admission, native_operation
+        from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+        from omnigent.native.source_owner import NativeAdmission
+
+        body = await request.json()
+        agent = (
+            native_coding_agent_for_harness(
+                _session_harness_name(conversation_id) or body.get("harness")
+            )
+            if isinstance(body, dict)
+            else None
+        )
+        if agent is None or body.get("type") in {"stop_session", "interrupt"}:
+            return await _post_session_events(conversation_id, request, stream)
+        raw_admission = body.get("native_admission")
+        binding = (
+            bind_native_admission(NativeAdmission.model_validate(raw_admission))
+            if raw_admission is not None
+            else contextlib.nullcontext()
+        )
+        with binding:
+            async with native_operation(server_client, conversation_id, agent.key) as admission:
+                body["native_admission"] = admission.model_dump()
+                return await _post_session_events(conversation_id, request, stream)
+
+    async def _post_session_events(
+        conversation_id: str, request: Request, stream: bool
+    ) -> Response:
         if process_manager is None:
             return JSONResponse(
                 status_code=501,
@@ -6216,12 +6307,9 @@ def create_runner_app(
                     },
                 )
             if body_type in {"model_change", "effort_change", "compact"}:
-                from omnigent.harnesses.prime_native.bridge import runtime_paths
                 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
                 from omnigent.harnesses.prime_native.controls import (
                     Compact,
-                    Control,
-                    PrimeExtensionBinding,
                     SetEffort,
                     SetModel,
                 )
@@ -6257,9 +6345,7 @@ def create_runner_app(
                 if isinstance(control, (SetModel, SetEffort)):
                     outcome = await _execute_prime_setting(conversation_id, control)
                 else:
-                    outcome = await PrimeExtensionBinding(
-                        runtime_paths(conversation_id).root
-                    ).execute(control)
+                    outcome = await _execute_prime_control(conversation_id, control)
                 return JSONResponse(
                     status_code=outcome.http_status, content=outcome.response_body()
                 )
@@ -6357,6 +6443,26 @@ def create_runner_app(
                 )
             message_body = dict(body)
             message_body["conversation_id"] = conversation_id
+            from omnigent.native.admission import admit_native, validate_native
+            from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+            from omnigent.native.source_owner import NativeAdmission
+
+            agent = native_coding_agent_for_harness(
+                _session_harness_name(conversation_id) or body.get("harness")
+            )
+            if agent is not None:
+                if server_client is None:
+                    return JSONResponse(
+                        status_code=409, content={"error": "native_admission_unavailable"}
+                    )
+                raw_admission = body.get("native_admission")
+                admission = (
+                    NativeAdmission.model_validate(raw_admission)
+                    if raw_admission is not None
+                    else await admit_native(server_client, conversation_id, agent.key)
+                )
+                await validate_native(server_client, admission)
+                message_body["native_admission"] = admission.model_dump()
 
             if (
                 _is_native_harness(conversation_id)
@@ -6381,8 +6487,12 @@ def create_runner_app(
                         ControlStatus,
                         PrimeExtensionBinding,
                     )
+                    from omnigent.native.admission import bind_native_admission
 
-                    await _ensure_native_terminal_for_turn(conversation_id, "prime-native")
+                    with bind_native_admission(
+                        NativeAdmission.model_validate(message_body["native_admission"])
+                    ):
+                        await _ensure_native_terminal_for_turn(conversation_id, "prime-native")
                     binding = PrimeExtensionBinding(runtime_paths(conversation_id).root)
                     if not await binding.wait_until_ready():
                         unavailable = ControlOutcome(
@@ -6719,8 +6829,45 @@ def create_runner_app(
             resource_registry.note_terminal_control_request(conversation_id, "stop_session")
             _cancel_claude_prompt_waiter(conversation_id)
             _harness = _session_harness_name(conversation_id)
-            _stop_resp = await _native_interrupt_runner.stop(_harness, conversation_id)
+            from omnigent.native.source_owner import NativeStop
+
+            source_stop = (
+                NativeStop.model_validate(body["native_stop"])
+                if isinstance(body, dict) and body.get("native_stop") is not None
+                else None
+            )
+            if source_stop is not None and source_stop.admission.source_id != conversation_id:
+                return JSONResponse(
+                    status_code=409, content={"error": "native_stop_owner_mismatch"}
+                )
+            from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+
+            unsupported_native_stop = (
+                source_stop is not None and native_coding_agent_for_harness(_harness) is None
+            )
+            sdk_turn = (
+                conversation_id in _active_turns,
+                _active_turns.get(conversation_id),
+                _live_response_id.get(conversation_id),
+            )
+            if unsupported_native_stop:
+                response = await server_client.post(
+                    f"/v1/sessions/{conversation_id}/native-admission/validate",
+                    json=source_stop.model_dump(),
+                )
+                response.raise_for_status()
+                if response.json() != {"current": True}:
+                    raise RuntimeError("Native Stop does not name the current source owner.")
+            _stop_resp = await _native_interrupt_runner.stop(
+                _harness, conversation_id, source_stop=source_stop
+            )
             if _stop_resp is not None:
+                if unsupported_native_stop and sdk_turn == (
+                    conversation_id in _active_turns,
+                    _active_turns.get(conversation_id),
+                    _live_response_id.get(conversation_id),
+                ):
+                    await _cancel_inprocess_turn(conversation_id)
                 return _stop_resp
             await _cancel_inprocess_turn(conversation_id)
             return Response(status_code=204)
@@ -7165,6 +7312,7 @@ def create_runner_app(
         _native_pane_names=_native_pane_names,
         _opencode_terminal_ensure_locks=_opencode_terminal_ensure_locks,
         _pi_terminal_ensure_locks=_pi_terminal_ensure_locks,
+        _prime_terminal_ensure_locks=_prime_terminal_ensure_locks,
         _publish_event=_publish_event,
         _qwen_terminal_ensure_locks=_qwen_terminal_ensure_locks,
         _record_session_claude_launch_config=_record_session_claude_launch_config,

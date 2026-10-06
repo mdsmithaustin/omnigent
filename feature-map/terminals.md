@@ -13,6 +13,8 @@ reattach when the session moves to another host.
   and returns to chat with the terminal's content kept. States: starting up
   (no Resume action), stopped (Resume offered), connected.
 - `user-shell`: open a shell, type into it, and close it.
+- `native-owner-transfer`: native terminal transfer is rejected to retain the
+  source locator required by Stop. Ordinary shell transfer still succeeds.
 - `scrollback`: scroll back with the mouse wheel (including programs that track
   the mouse), by touch on phones, and by keyboard.
 - `reconnect`: after the terminal connection drops, the terminal shows that it

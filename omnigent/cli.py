@@ -10411,6 +10411,14 @@ def _stop_session_on_server(
             f"Failed to stop session {session_id!r} ({result.status_code}): "
             f"{_host_error_text(result.body)}"
         )
+    if isinstance(result.body, dict):
+        native_stop = result.body.get("native_stop")
+        if isinstance(native_stop, dict) and native_stop.get("outcome") != "verified":
+            detail = native_stop.get("detail") or "Native shutdown could not be verified."
+            raise click.ClickException(
+                f"Session {session_id!r} Stop is unqualified: {detail} "
+                "Different-agent fork remains blocked."
+            )
 
 
 def _stop_daemon_sessions(
