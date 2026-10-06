@@ -3,8 +3,8 @@
 The UI SDK keeps this intentionally small: TUI preferences are persisted
 under the ``tui:`` table of the shared Omnigent YAML config file
 (``$OMNIGENT_CONFIG_HOME/config.yaml`` when configured, otherwise
-``$HOME/.omnigent/config.yaml``). Today that means the persisted light/dark
-theme selection.
+``$HOME/.omnigent-mdsmithaustin/config.yaml``). Today that means the
+persisted light/dark theme selection.
 
 The same file is also written by the ``omnigent`` CLI (top-level keys
 such as ``default_agent`` and ``profile``). Reads and writes here are
@@ -23,10 +23,11 @@ from typing import Any
 
 import yaml
 
+from omnigent_ui_sdk.installation_defaults import default_user_dir
+
 from ._theme import TerminalThemeName, get_theme
 
 _CONFIG_FILENAME = "config.yaml"
-_STATE_DIRNAME = ".omnigent"
 _DATA_DIR_ENV_VAR = "OMNIGENT_DATA_DIR"
 _CONFIG_HOME_ENV_VAR = "OMNIGENT_CONFIG_HOME"
 _TUI_KEY = "tui"
@@ -58,11 +59,11 @@ def state_dir() -> pathlib.Path:
     no filesystem side effects; writers create the directory when saving.
 
     :returns: ``$OMNIGENT_DATA_DIR`` when set, else
-        ``Path.home() / ".omnigent"``.
+        ``Path.home() / ".omnigent-mdsmithaustin"``.
     """
 
     value = os.environ.get(_DATA_DIR_ENV_VAR)
-    return pathlib.Path(value).expanduser() if value else pathlib.Path.home() / _STATE_DIRNAME
+    return pathlib.Path(value).expanduser() if value else default_user_dir()
 
 
 def user_config_path(root: str | pathlib.Path | None = None) -> pathlib.Path:
@@ -73,7 +74,7 @@ def user_config_path(root: str | pathlib.Path | None = None) -> pathlib.Path:
 
     :param root: Optional explicit config directory.
     :returns: ``$OMNIGENT_CONFIG_HOME/config.yaml`` when set, else
-        ``Path.home() / ".omnigent" / "config.yaml"``.
+        ``Path.home() / ".omnigent-mdsmithaustin" / "config.yaml"``.
     """
 
     if root is not None:
@@ -81,7 +82,7 @@ def user_config_path(root: str | pathlib.Path | None = None) -> pathlib.Path:
     elif value := os.environ.get(_CONFIG_HOME_ENV_VAR):
         base = pathlib.Path(value).expanduser()
     else:
-        base = pathlib.Path.home() / _STATE_DIRNAME
+        base = default_user_dir()
     return base / _CONFIG_FILENAME
 
 
