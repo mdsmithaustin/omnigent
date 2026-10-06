@@ -451,7 +451,8 @@ function partitionTurn(items: RenderItem[]): TurnPartition {
       isPendingElicitation(item) ||
       isPersistentToolCard(item) ||
       isInProgressTool(item) ||
-      isSlashCommandCard(item)
+      isSlashCommandCard(item) ||
+      (item.kind === "slash_command" && item.slashKind === "skill" && item.delivery)
     ) {
       segments.push({ kind: "exempt", item, index: i });
       continue;
@@ -817,6 +818,7 @@ function renderItem(
       return (
         <SlashCommandCard
           key={key}
+          delivery={item.delivery}
           kind={item.slashKind}
           name={item.name}
           arguments={item.arguments}

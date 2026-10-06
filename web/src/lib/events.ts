@@ -8,6 +8,7 @@
 // uses camelCase fields + a `type` discriminator string equal to the
 // Python class name lowercased (e.g. ResponseCreated → "response_created").
 
+import type { SkillCommandDelivery } from "./skillCommandDelivery";
 import type { RoutingDecisionExtras } from "./routingDecision";
 import type {
   AgyPermission,
@@ -352,6 +353,7 @@ export interface ReasoningDone {
  * Lifted from `SlashCommandItem`; reducer produces a `SlashCommandBlock`.
  */
 export interface SlashCommand {
+  delivery?: SkillCommandDelivery;
   type: "slash_command";
   /**
    * `"skill"` for plugin/Skill invocations, `"command"` for surfaced

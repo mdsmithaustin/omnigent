@@ -34,6 +34,7 @@ lifecycle metadata.
 | `custom_agents_settings_ui` | Off | Web | 0.18.0 | Exposes Custom agents settings when the server also advertises `agent_install`. |
 | `sidebar_grouping_ui` | Off | Web | 0.19.0 | Adds Grouping, Ordering and Show options to the sidebar filter menu, moves that menu to the Projects header, splits Shared sessions into their own section, lets a Status or Updated grouping replace the Projects, Shared and Sessions sections, and expands the session tooltip with Repo, PR and Created by. |
 | `claude_osc_status` | On | Runner | 0.20.0 | Uses Claude OSC 7501 reports for working status, with legacy file/pane fallback. Set on the host/runner; applies to newly launched Claude-native terminals after restart. Not exposed in `/v1/info`. |
+| `native_skill_routing` | Off | Runtime | 0.17.0 | Routes eligible structured skill commands through Claude Code or Codex native loading. Server-only; see [Skill commands](../docs/SKILL_COMMANDS.md). |
 
 At the review release, each flag must be removed by making the feature
 unconditional, removing the feature, or moving a genuinely permanent operator
@@ -53,7 +54,9 @@ for Claude working-status acceptance and kill-switch verification.
    explicitly disable the feature, including one that defaults on.
 2. Remove that disable and add `feature_name` on one deployment, consistently
    across all replicas.
-3. Verify `GET /v1/info`, then reload and exercise the gated UI.
+3. Verify `GET /v1/info`, then reload and exercise the gated UI. For
+   server-only flags, verify their documented behavior.
+   `native_skill_routing` does not appear in the frontend feature map.
 4. Expand by deployment cohort.
 5. Roll back with `-feature_name` and redeploy the same image. For runner
    features, apply the override to the host/runner environment, restart those

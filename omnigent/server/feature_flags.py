@@ -28,6 +28,7 @@ class Feature(StrEnum):
     CUSTOM_AGENTS_SETTINGS_UI = "custom_agents_settings_ui"
     SIDEBAR_GROUPING_UI = "sidebar_grouping_ui"
     CLAUDE_OSC_STATUS = "claude_osc_status"
+    NATIVE_SKILL_ROUTING = "native_skill_routing"
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,13 @@ FEATURE_DEFINITIONS: tuple[FeatureDefinition, ...] = (
         review_by_release="0.20.0",
         frontend_visible=False,
         default_enabled=True,
+    ),
+    FeatureDefinition(
+        feature=Feature.NATIVE_SKILL_ROUTING,
+        description="Route eligible skill commands through native CLI skill loading",
+        owner="runtime",
+        review_by_release="0.17.0",
+        frontend_visible=False,
     ),
 )
 

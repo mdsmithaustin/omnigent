@@ -215,11 +215,19 @@ def build_session_history(
             ):
                 _skipped_types.append(str(item_type))
             if item_type == "message":
+                if item.get("is_meta") is True and not item.get("content"):
+                    continue
+                skill_context = item.get("skill_context")
+                if isinstance(skill_context, dict) and (
+                    skill_context.get("status") != "accepted" or skill_context.get("historical")
+                ):
+                    continue
                 result.append(
                     {
                         "type": "message",
                         "role": item.get("role", "user"),
                         "content": item.get("content", []),
+                        **({"skill_context": skill_context} if skill_context is not None else {}),
                     }
                 )
             elif item_type == "function_call":

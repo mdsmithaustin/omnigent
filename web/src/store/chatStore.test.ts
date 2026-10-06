@@ -15,6 +15,7 @@
 // Session metadata and item pages are shimmed through `seedSession`
 // helpers so tests can model capped snapshots and full transcripts.
 
+import { checkSkillAdmission, readSkillSubmissions } from "@/lib/skillCommandRecovery";
 import type * as IdentityModule from "@/lib/identity";
 
 import { type InfiniteData, QueryClient, QueryObserver } from "@tanstack/react-query";
@@ -4732,8 +4733,94 @@ describe("chatStore — sendSlashCommand", () => {
     // a plaintext message would set type="message" and fail here.
     expect(lastEventBody()).toEqual({
       type: "slash_command",
-      data: { kind: "skill", name: "grill-me", arguments: "review this plan" },
+      data: {
+        kind: "skill",
+        name: "grill-me",
+        arguments: "review this plan",
+        stable_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+      },
     });
+  });
+
+  it("checks the saved identity without another command post after a lost response", async () => {
+    localStorage.clear();
+    useChatStore.setState({
+      conversationId: "conv_existing",
+      abortController: new AbortController(),
+      status: "idle",
+    });
+    const submitted: string[] = [];
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).endsWith("/v1/sessions/conv_existing/events")) {
+        const body = JSON.parse((init as RequestInit).body as string);
+        submitted.push(body.data.stable_id);
+        return Promise.reject(new Error("Reply lost"));
+      }
+      if (String(input).includes("/v1/sessions/conv_existing/items?"))
+        return mockResponse({
+          data: [
+            {
+              id: "claim",
+              type: "slash_command",
+              name: "review",
+              arguments: "hello",
+              delivery: { status: "unknown", invocation_id: submitted[0], fingerprint: "original" },
+            },
+          ],
+          has_more: false,
+        });
+      return defaultFetchHandler(input, init);
+    });
+    await useChatStore.getState().sendSlashCommand("review", "hello", "agent_xyz");
+    const original = readSkillSubmissions("conv_existing")[0]!;
+    expect(original.event.data.arguments).toBe("hello");
+    useChatStore.setState({ pendingUserMessages: [], blocks: [] });
+    const checked = await checkSkillAdmission("conv_existing", original.event.data.stable_id);
+    expect(checked).toEqual({
+      status: "unknown",
+      invocation_id: original.event.data.stable_id,
+      fingerprint: "original",
+    });
+    expect(submitted).toEqual([original.event.data.stable_id]);
+    await useChatStore.getState().sendSlashCommand("review", "hello", "agent_xyz");
+    expect(submitted).toHaveLength(2);
+    expect(new Set(submitted).size).toBe(2);
+  });
+
+  it("retains the submitted identity outside the optimistic bubble after a lost reply and stream receipt", async () => {
+    localStorage.clear();
+    useChatStore.setState({
+      conversationId: "conv_existing",
+      abortController: new AbortController(),
+      status: "idle",
+    });
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).endsWith("/v1/sessions/conv_existing/events"))
+        return Promise.reject(new Error("Reply lost"));
+      return defaultFetchHandler(input, init);
+    });
+    await useChatStore.getState().sendSlashCommand("review", "hello", "agent_xyz");
+    const submission = lastEventBody();
+    const stableId = String(submission.data.stable_id);
+    handleSessionEvent(
+      {
+        type: "slash_command",
+        kind: "skill",
+        name: "review",
+        arguments: "hello",
+        output: null,
+        agentName: "agent_xyz",
+        itemId: "claim",
+        responseId: "turn",
+      },
+      "conv_existing",
+    );
+    const saved = Array.from({ length: localStorage.length }, (_, index) =>
+      localStorage.getItem(localStorage.key(index)!),
+    );
+    expect(
+      saved.some((value) => value?.includes(stableId) && value.includes('"arguments":"hello"')),
+    ).toBe(true);
   });
 
   it("sends empty arguments when the skill is invoked with no args", async () => {
@@ -4744,7 +4831,12 @@ describe("chatStore — sendSlashCommand", () => {
 
     await useChatStore.getState().sendSlashCommand("deslop", "", "agent_xyz");
 
-    expect(lastEventBody().data).toEqual({ kind: "skill", name: "deslop", arguments: "" });
+    expect(lastEventBody().data).toEqual({
+      kind: "skill",
+      name: "deslop",
+      arguments: "",
+      stable_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+    });
   });
 
   it("sets streaming status and pushes an optimistic echo of the typed command", async () => {
@@ -4890,10 +4982,7 @@ describe("chatStore — sendSlashCommand", () => {
     expect(useChatStore.getState().conversationId).toBe("conv_slash_other");
   });
 
-  it("rolls back a failed slash command on the conversation that sent it", async () => {
-    // Same for a thrown POST: the old code skipped the rollback entirely once
-    // the sender was backgrounded, stranding the echo and leaving `status`
-    // pinned at "streaming" for that conversation.
+  it("retains the identity of an uncertain slash command on the conversation that sent it", async () => {
     seedSession("conv_slash_fail", []);
     seedSession("conv_slash_elsewhere", []);
     let rejectPost: (() => void) | null = null;
@@ -4916,7 +5005,12 @@ describe("chatStore — sendSlashCommand", () => {
     await sending;
 
     const sender = conversationRegistry.peek("conv_slash_fail")!.getState();
-    expect(sender.pendingUserMessages).toEqual([]);
+    expect(sender.pendingUserMessages).toHaveLength(1);
+    expect(sender.pendingUserMessages[0]?.skillInvocation).toEqual({
+      stableId: lastEventBody().data.stable_id,
+      name: "deslop",
+      arguments: "",
+    });
     expect(sender.status).toBe("idle");
   });
 
@@ -4969,8 +5063,9 @@ describe("chatStore — sendSlashCommand", () => {
     // No server idle will fire for a failed POST, so the action resets its
     // own local streaming flag.
     expect(useChatStore.getState().status).toBe("idle");
-    // And rolls back the optimistic echo — no receipt will ever pop it.
-    expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+    expect(useChatStore.getState().pendingUserMessages[0]?.skillInvocation?.stableId).toBe(
+      lastEventBody().data.stable_id,
+    );
   });
 });
 

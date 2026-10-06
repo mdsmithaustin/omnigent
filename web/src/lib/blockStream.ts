@@ -657,6 +657,7 @@ function* processEvent(state: ReducerState, event: StreamEvent): Generator<AnyBl
       }
       yield {
         type: "slash_command",
+        delivery: event.delivery,
         ctx: ctx(state, event.itemId || null, event.responseId || null),
         kind: event.kind,
         name: event.name,
