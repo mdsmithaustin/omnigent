@@ -3097,7 +3097,7 @@ class _AutoCreateScenario:
     expect_auto_create: bool
 
 
-class _LabelsAndEmptyHistoryServerClient:
+class _LabelsAndEmptyHistoryServerClient(NullServerClient):
     """
     Server-client stub for the auto-create guard route test.
 
@@ -3114,6 +3114,7 @@ class _LabelsAndEmptyHistoryServerClient:
         :param bridge_id_label: Bridge id to report on the session's
             ``labels``, e.g. ``"bridge_shared"``.
         """
+        super().__init__()
         self._bridge_id_label = bridge_id_label
 
     async def get(self, url: str, **kwargs: Any) -> Any:
@@ -3363,7 +3364,7 @@ class _AntigravityAutoCreateScenario:
     expect_auto_create: bool
 
 
-class _AntigravitySnapshotServerClient:
+class _AntigravitySnapshotServerClient(NullServerClient):
     """
     Server-client stub for the antigravity auto-create guard route test.
 
@@ -3381,6 +3382,7 @@ class _AntigravitySnapshotServerClient:
         :param bridge_id_label: Bridge id to report on the session's
             ``labels``, e.g. ``"bridge_shared"``.
         """
+        super().__init__()
         self._bridge_id_label = bridge_id_label
 
     async def get(self, url: str, **kwargs: Any) -> Any:
@@ -3622,7 +3624,7 @@ class _CodexAutoCreateScenario:
     expect_auto_create: bool
 
 
-class _CodexSnapshotServerClient:
+class _CodexSnapshotServerClient(NullServerClient):
     """
     Server-client stub for the codex auto-create guard route test.
 
@@ -3639,6 +3641,7 @@ class _CodexSnapshotServerClient:
         :param bridge_id_label: Bridge id to report on the session's
             ``labels``, e.g. ``"bridge_shared"``.
         """
+        super().__init__()
         self._bridge_id_label = bridge_id_label
 
     async def get(self, url: str, **kwargs: Any) -> Any:
@@ -3670,10 +3673,11 @@ class _CodexSnapshotServerClient:
         return _Response({"id": "2d1b1a96e3e08f2cd43c0cc4b695ac5d", "labels": labels})
 
 
-class _BlockingCodexRecoveryServerClient:
+class _BlockingCodexRecoveryServerClient(NullServerClient):
     """Block durable inbox recovery while rejecting redundant init reads."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.recovery_started = asyncio.Event()
         self.release_recovery = asyncio.Event()
         self.recovery_completed = asyncio.Event()
@@ -3709,10 +3713,11 @@ class _BlockingCodexRecoveryServerClient:
         raise AssertionError(f"unexpected runner-init GET: {url}")
 
 
-class _DeletingCodexRecoveryServerClient:
+class _DeletingCodexRecoveryServerClient(NullServerClient):
     """Pause the first recovery after one child is delivered."""
 
     def __init__(self, parent_id: str, first_child_id: str, second_child_id: str) -> None:
+        super().__init__()
         self.parent_id = parent_id
         self.first_child_id = first_child_id
         self.second_child_id = second_child_id
@@ -3786,10 +3791,6 @@ class _DeletingCodexRecoveryServerClient:
         if url.endswith(f"/{self.parent_id}/items"):
             return self._response({"data": [], "has_more": False})
         raise AssertionError(f"unexpected runner-init GET: {url}")
-
-    async def post(self, url: str, **kwargs: Any) -> httpx.Response:
-        del kwargs
-        return httpx.Response(200, request=httpx.Request("POST", url))
 
 
 _CODEX_AUTO_CREATE_SCENARIOS = [
