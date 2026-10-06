@@ -20,6 +20,8 @@ establish the absence of arbitrary escaped child processes.
 For a source without recorded admission, Stop still attempts the existing
 runner shutdown and dedicated host-runner shutdown. It returns `unknown` even
 when those shutdown requests succeed, and different-agent fork stays blocked.
+If the legacy runner rejects Stop or its connection fails, the server returns
+HTTP 503 and removes the output fence so later turn output remains visible.
 
 A pending close continues to exclude new native input and startup. It does not
 expire. An unqualified close whose actor has finished permits ordinary resume,
