@@ -1181,6 +1181,8 @@ def test_repl_label_driven_ask_approves(
     write in the chain doesn't leak the write on refuse
     (that's a separate refuse test below).
     """
+    # Turn 1: LLM responds normally (no ASK). Turn 2: ASK fires,
+    # approved, then LLM responds.
     _configure_mock_text(
         mock_llm_server_url,
         [
@@ -1206,6 +1208,8 @@ def test_repl_label_driven_ask_approves(
             timeout=_LAUNCH_TIMEOUT,
             welcome_pattern="e2e.label.ask.gate",
         )
+        # Turn 1: trigger taint — no ASK fires this turn
+        # (condition checks the pre-evaluation snapshot).
         turn_start = output.tell()
         child.send("hello BANANA_TRIGGER label-approve" + "\r")
         turn_one = _wait_for_rendered_turn(
@@ -1215,6 +1219,8 @@ def test_repl_label_driven_ask_approves(
             "Turn 1 fired an ASK before the taint label was set.\n" + turn_one
         )
 
+        # Turn 2: label persists from the store → condition
+        # matches → ASK fires.
         child.send("please continue" + "\r")
         child.expect("approval required", timeout=45)
         banner_tail = _read_pending(child, seconds=1.0)
@@ -1251,6 +1257,8 @@ def test_repl_label_driven_ask_refuse_shows_sentinel(
     label-gated ASK's refuse branch goes through the same
     pre-persist sentinel path as INPUT DENY.
     """
+    # Turn 1: LLM responds normally. Turn 2: refused — DENY sentinel,
+    # no second LLM call. Extra dummy response as fail-safe.
     _configure_mock_text(
         mock_llm_server_url,
         [
@@ -1276,11 +1284,13 @@ def test_repl_label_driven_ask_refuse_shows_sentinel(
             timeout=_LAUNCH_TIMEOUT,
             welcome_pattern="e2e.label.ask.gate",
         )
+        # Turn 1: taint.
         turn_start = output.tell()
         child.send("hi BANANA_TRIGGER label-refuse" + "\r")
         turn_one = _wait_for_rendered_turn(child, output, turn_start, "Banana trigger received.")
         assert "approval required" not in turn_one
 
+        # Turn 2: ASK fires, user refuses.
         child.send("anything" + "\r")
         child.expect("approval required", timeout=45)
         banner_tail = _read_pending(child, seconds=1.0)

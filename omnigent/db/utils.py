@@ -622,6 +622,8 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
                     base.metadata.create_all(bind=connection, checkfirst=True)
                 connection.commit()
             else:
+                # If a future migration is added but a caller forgets to wire
+                # it into the chain, create_all still creates missing tables.
                 for base in (OmnigentBase, ConversationBase):
                     base.metadata.create_all(bind=engine, checkfirst=True)
 
