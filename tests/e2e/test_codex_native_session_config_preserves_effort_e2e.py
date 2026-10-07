@@ -13,14 +13,14 @@ The journey driven here is the reported user journey, end to end:
 1. configure ``model_reasoning_effort = "max"`` (or ``"ultra"``) in
    ``~/.codex/config.toml``;
 2. launch a native Codex session with ``omnigent codex --server <url>``;
-3. inspect ``~/.omnigent/codex-native/<session>/codex-home/config.toml``;
+3. inspect ``~/<installation>/codex-native/<session>/codex-home/config.toml``;
 4. the top-level ``model_reasoning_effort`` must still be the configured
    native-ladder value — not ``"xhigh"``.
 
 The test runs the real CLI under a PTY against a real ``omnigent server``
 (the ``resume_test_server`` fixture) with a **temporary HOME**, so the user's
-real ``~/.codex`` and ``~/.omnigent`` are never touched and the per-session
-codex-home lands in a test-owned directory. No model turn is needed — the
+real Codex config and installation state stay untouched. The per-session
+codex-home lands in a test-owned directory. No model turn is needed. The
 clamp happens during session preparation, before any LLM traffic — so this
 needs no Codex login and no LLM credentials (the fixture falls back to the
 mock key).
@@ -40,6 +40,7 @@ from pathlib import Path
 import pytest
 
 from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e._native_resume_helpers import cli_env, omnigent_console_script, spawn_cli_background
 from tests.e2e.helpers import POLL_INTERVAL_S
 
@@ -62,13 +63,13 @@ def _find_session_codex_config(home: Path) -> Path | None:
     Find the per-session ``config.toml`` under a (temp) HOME.
 
     Native Codex sessions materialize their private ``CODEX_HOME`` at
-    ``~/.omnigent/codex-native/<bridge>/codex-home/``; the test HOME is
+    ``~/<installation>/codex-native/<bridge>/codex-home/``; the test HOME is
     fresh, so the first match is this test's session.
 
     :param home: The temporary HOME directory the CLI ran under.
     :returns: The copied ``config.toml`` path, or ``None`` if not yet created.
     """
-    bridge_root = home / ".omnigent" / "codex-native"
+    bridge_root = home / USER_DIRNAME / "codex-native"
     if not bridge_root.is_dir():
         return None
     for candidate in sorted(bridge_root.glob("*/codex-home/config.toml")):
@@ -105,7 +106,7 @@ def test_codex_native_session_config_preserves_native_effort(
 
     env = cli_env()
     # Isolate the journey's filesystem state: the source ~/.codex the copy
-    # reads resolves from HOME, and the ~/.omnigent/codex-native bridge root the
+    # reads resolves from HOME, and the the configured codex-native directory bridge root the
     # session's private CODEX_HOME lands in from the data dir. No login is
     # required (session prep never reaches the model), so a fresh HOME is safe.
     env["HOME"] = str(home)
@@ -129,7 +130,7 @@ def test_codex_native_session_config_preserves_native_effort(
             time.sleep(POLL_INTERVAL_S)
         assert config_path is not None, (
             f"per-session codex-home config.toml never appeared under "
-            f"{home / '.omnigent' / 'codex-native'} within {_CONFIG_WAIT_S}s; "
+            f"{home / USER_DIRNAME / 'codex-native'} within {_CONFIG_WAIT_S}s; "
             f"CLI output tail:\n{handle.output()[-2000:]}"
         )
 
