@@ -109,7 +109,7 @@ def test_saved_native_skill_admission_survives_recovery_and_reload(
             and response.request.method == "GET"
         )
     ) as recovery_read:
-        panel.get_by_role("button", name="Check admission", exact=True).click()
+        panel.get_by_role("button", name="Check delivery", exact=True).click()
     assert recovery_read.value.status == 200
     expect(panel).to_have_count(0)
     submission = page.evaluate("key => JSON.parse(localStorage.getItem(key))", storage_key)
@@ -141,16 +141,8 @@ def test_saved_native_skill_admission_survives_recovery_and_reload(
         expect(transcript.get_by_text(re.compile("Base directory for this skill:"))).to_have_count(
             0
         )
-        with page.expect_response(
-            lambda response: (
-                urlparse(response.url).path == f"/v1/sessions/{session_id}/items"
-                and response.request.method == "GET"
-            )
-        ) as card_read:
-            transcript.get_by_role("button", name="Check admission", exact=True).click()
-        assert card_read.value.status == 200
-        expect(transcript.get_by_role("status")).to_have_text(
-            "Saved admission checked. Nothing was resent."
+        expect(transcript.get_by_role("button", name="Check delivery", exact=True)).to_have_count(
+            0
         )
         assert (
             page.evaluate("key => JSON.parse(localStorage.getItem(key))", storage_key)

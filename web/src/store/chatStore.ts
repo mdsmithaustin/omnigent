@@ -2728,7 +2728,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
           ...s.blocks,
           makeClientErrorBlock(
             submissionSaved
-              ? `${message}. Skill admission is unknown. Use Check admission before starting another invocation.`
+              ? `${message}. Skill delivery is unknown. Use Check delivery before starting another invocation.`
               : `${message}. Skill was not sent.`,
             "skill_admission_unknown",
           ),

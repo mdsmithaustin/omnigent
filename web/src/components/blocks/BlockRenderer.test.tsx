@@ -604,10 +604,10 @@ describe("BlockRenderer dispatch", () => {
         fireEvent.click(screen.getByText("Invocation details"));
         expect(details).toHaveAttribute("open");
         expect(screen.getByText(invocationId)).toBeVisible();
-        if (historical) {
-          expect(screen.queryByRole("button", { name: "Check admission" })).toBeNull();
+        if (historical || status !== "unknown") {
+          expect(screen.queryByRole("button", { name: /Check / })).toBeNull();
         } else {
-          expect(screen.getByRole("button", { name: "Check admission" })).toBeEnabled();
+          expect(screen.getByRole("button", { name: "Check delivery" })).toBeEnabled();
         }
         fireEvent.click(fold);
         fireEvent.click(fold);

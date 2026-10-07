@@ -96,55 +96,63 @@ it.each([
     </ConversationScopeContext.Provider>,
   );
   expect(container.textContent).toContain(label);
-  if (historical) expect(screen.queryByRole("button", { name: "Check admission" })).toBeNull();
+  if (historical || status !== "unknown") {
+    expect(screen.queryByRole("button", { name: /Check / })).toBeNull();
+  } else {
+    expect(screen.getByRole("button", { name: "Check delivery" })).toBeEnabled();
+  }
 });
 
-it("checks admission from a transcript card using only history reads", async () => {
-  const fetcher = vi.fn(
-    async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(
-        JSON.stringify({
-          data: [
-            {
-              id: "claim",
-              type: "slash_command",
-              delivery: {
-                invocation_id: "ab".repeat(16),
-                fingerprint: "cd".repeat(32),
-                status: "accepted",
+it.each([
+  ["accepted", "Admitted; completion not confirmed"],
+  ["rejected", "Rejected before admission"],
+] as const)(
+  "checks %s delivery from a transcript card using only history reads",
+  async (status, label) => {
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "claim",
+                type: "slash_command",
+                delivery: {
+                  invocation_id: "ab".repeat(16),
+                  fingerprint: "cd".repeat(32),
+                  status,
+                },
               },
-            },
-          ],
-          has_more: false,
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      ),
-  );
-  vi.stubGlobal("fetch", fetcher);
-  render(
-    <ConversationScopeContext.Provider value="conv_check">
-      <SlashCommandCard
-        kind="skill"
-        name="review"
-        arguments="hello"
-        output={null}
-        delivery={{
-          invocation_id: "ab".repeat(16),
-          fingerprint: "cd".repeat(32),
-          status: "unknown",
-        }}
-      />
-    </ConversationScopeContext.Provider>,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Check admission" }));
-  await waitFor(() =>
-    expect(screen.getByText("Admitted; completion not confirmed").textContent).toBe(
-      "Admitted; completion not confirmed",
-    ),
-  );
-  expect(fetcher.mock.calls).toHaveLength(1);
-  expect(String(fetcher.mock.calls[0]?.[0])).toContain("/v1/sessions/conv_check/items?");
-  expect(screen.getByRole("status").textContent).toBe(
-    "Saved admission checked. Nothing was resent.",
-  );
-});
+            ],
+            has_more: false,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(
+      <ConversationScopeContext.Provider value="conv_check">
+        <SlashCommandCard
+          kind="skill"
+          name="review"
+          arguments="hello"
+          output={null}
+          delivery={{
+            invocation_id: "ab".repeat(16),
+            fingerprint: "cd".repeat(32),
+            status: "unknown",
+          }}
+        />
+      </ConversationScopeContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check delivery" }));
+    await waitFor(() => expect(screen.getByText(label)).toBeVisible());
+    expect(screen.queryByRole("button", { name: /Check / })).toBeNull();
+    expect(fetcher.mock.calls).toHaveLength(1);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain("/v1/sessions/conv_check/items?");
+    expect(fetcher.mock.calls[0]?.[1]?.method ?? "GET").toBe("GET");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Saved delivery checked. Nothing was resent.",
+    );
+  },
+);
