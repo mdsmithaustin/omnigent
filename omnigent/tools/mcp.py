@@ -818,16 +818,14 @@ class McpServerConnection:
 
         Failure modes are routed through ``_ready_future``:
 
-        - If teardown fails *before* ready is set, the
+        - If startup or teardown fails *before* ready is set, the
           exception is propagated to the caller of
           :meth:`connect` (or :meth:`_reconnect`) so they see
           a real error rather than a silently-wedged
           connection.
         - If a steady-state failure occurs *after* ready, it
-          is logged here — :meth:`close` already has the
-          ``await lifecycle_task`` it needs to surface a
-          terminal exception, but a mid-flight teardown error
-          shouldn't crash the workflow.
+          is logged here and suppressed. :meth:`close` waits
+          for resource teardown without propagating that error.
         """
         try:
             async with AsyncExitStack() as stack:
@@ -898,8 +896,8 @@ class McpServerConnection:
         calling ``tools/list``. Otherwise performs a live
         ``tools/list`` call and updates the cache.
 
-        Must be called after ``_open_session()`` so that
-        ``self._session`` is live.
+        Called by :meth:`_run_lifecycle` after initializing
+        ``self._session``.
 
         :returns: List of MCP tool definitions.
         """

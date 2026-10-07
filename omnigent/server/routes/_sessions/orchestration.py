@@ -10884,7 +10884,11 @@ async def _fetch_model_options(
     """
     Resolve the Web UI model-picker options for a native session.
 
-    Three shapes:
+    Catalog sources:
+
+    * **pi-native / prime-native** use the extension-pushed cache described
+      by :func:`_persist_external_model_options`. Empty until the extension
+      posts its catalog on session start.
 
     * **codex-native / cursor-native / kiro-native** — a *live* catalog only
       the bound runner can read from the installed CLI. This stays
@@ -10920,12 +10924,7 @@ async def _fetch_model_options(
     if wrapper == _PI_NATIVE_WRAPPER_LABEL_VALUE or (
         native_agent is not None and native_agent.harness == "prime-native"
     ):
-        # pi-native's (and prime-native's) catalog is PUSHED by its extension (its live
-        # ``ctx.modelRegistry``), not fetched: that reflects the models pi
-        # actually loaded regardless of auth path (Omnigent provider OR pi's
-        # own ``/login``), so the picker populates even when no ``models.json``
-        # is written into the bridge dir. Empty until the extension posts
-        # ``external_model_options`` on session start.
+        # Extension pushes are validated by _persist_external_model_options.
         return _pushed_model_options_cache.get(session_id, [])
     endpoint = _MODEL_OPTIONS_ENDPOINT_BY_WRAPPER.get(wrapper or "")
     if endpoint is None:

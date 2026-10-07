@@ -13289,7 +13289,7 @@ def create_runner_app(
 
             if tool_name == "sys_read_inbox":
                 # A scan that failed at initialization must not leave the
-                # drain reporting an empty inbox; this is a no-op once done.
+                # drain reporting an empty inbox; successful scans are not repeated.
                 await _recover_undrained_subagent_results(session_id)
 
             if "__" in tool_name:

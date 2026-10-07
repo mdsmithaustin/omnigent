@@ -2494,9 +2494,9 @@ def _persist_external_model_options(
         ``"conv_abc123"``.
     :param conv: Conversation row whose labels identify the wrapper.
     :param body: External model-options event body. ``data.models`` must be a
-        list of ``{"id": str, ...}`` objects.
-    :raises OmnigentError: If the session is not pi-native or prime-native, or ``data.models``
-        is missing or malformed.
+        list; entries without a nonempty string id and duplicate ids are ignored.
+    :raises OmnigentError: If the session is not pi-native or prime-native, or
+        ``data.models`` is missing or is not a list.
     """
     native_agent = _native_coding_agent_for_session(conv)
     if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _PI_NATIVE_WRAPPER_LABEL_VALUE and (
@@ -7193,9 +7193,9 @@ async def _resolve_skill_invocation_via_runner(
     Resolve a skill's hidden ``<skill>`` meta text on the bound runner.
 
     Skill content is runner-owned: the runner reads the ``SKILL.md``
-    body and resource files from the skill's directory on its own
-    filesystem, so the embedded ``<path>`` and resource listing are
-    valid where the harness executes. Wraps
+    body on its own filesystem, so the embedded ``<path>`` is
+    valid where the harness executes. Auxiliary files remain available
+    through skill tools; see ``docs/SKILL_COMMANDS.md``. Wraps
     ``POST /v1/sessions/{id}/skills/resolve``.
 
     With ``allow_native``, a native ``/name`` or ``$name`` invocation from the
@@ -7287,22 +7287,16 @@ async def _dispatch_skill_slash_command_to_runner(
     """
     Persist a skill slash command and forward hidden skill context.
 
-    Skill content is runner-owned: this asks the bound runner to
-    resolve the skill (``POST /v1/sessions/{id}/skills/resolve``) into
-    its ``<skill>`` meta text, reading the ``SKILL.md`` body and
-    resource files from the skill's directory *on the runner* — so the
-    embedded ``<path>`` and resource listing are valid where the harness
-    executes. The server then persists the result (runner-resolves,
-    server-persists). Appends two conversation items with the same
-    response id:
+    Uses :func:`_resolve_skill_invocation_via_runner` to obtain runner-local
+    skill context. The server then persists the result. For pasted context,
+    appends two conversation items with the same response id:
 
     * a visible ``slash_command`` item for the UI transcript;
     * a hidden ``message`` item with ``is_meta=True`` containing the
-      full skill instructions for runner history replay.
+      resolved skill context for runner history replay.
 
-    Only the hidden message is sent to the runner as input. The visible
-    command is published as ``response.output_item.done`` after the
-    runner accepts the event.
+    The resolved text is sent to the runner as input. The visible command is
+    published as ``response.output_item.done`` after the runner responds.
 
     When ``allow_native`` yields a native invocation, only the visible item is
     appended and the invocation text is recorded as pending input instead.
