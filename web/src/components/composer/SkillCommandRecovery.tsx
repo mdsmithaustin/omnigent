@@ -38,8 +38,8 @@ export function SkillCommandRecovery({ conversationId }: { conversationId: strin
       {error && <p role="alert">Could not read saved skill submissions. {error}</p>}
       {persistenceErrors.map(({ invocationId, reason }) => (
         <p key={invocationId} role="alert">
-          Could not update saved skill admission for <code>{invocationId}</code> in this browser.{" "}
-          {reason} Check admission reads the server without resending the command.
+          Could not update saved skill delivery for <code>{invocationId}</code> in this browser.{" "}
+          {reason} Check delivery reads the server without resending the command.
         </p>
       ))}
       {unknown.map(({ event, delivery }) => (

@@ -62,10 +62,10 @@ it("recovers a lost submission from durable storage after stream reconciliation 
   expect(screen.getByText("/review original arguments").textContent).toBe(
     "/review original arguments",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Check admission" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check delivery" }));
   await waitFor(() =>
     expect(screen.getByRole("status").textContent).toContain(
-      "No saved admission found. Outcome remains unknown.",
+      "No saved delivery found. Outcome remains unknown.",
     ),
   );
   expect(readSkillSubmissions("conv_reload")[0]?.event.data).toEqual({
@@ -102,81 +102,91 @@ it("does not submit when the original request cannot be retained", async () => {
   }
 });
 
-it("shows a later storage failure while retaining the server admission and original request", async () => {
-  const conversationId = "conv_later_storage_failure";
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => {
-      throw new Error("Reply lost");
-    }),
-  );
-  useChatStore.setState({
-    conversationId,
-    abortController: new AbortController(),
-    pendingUserMessages: [],
-    blocks: [],
-    status: "idle",
-  });
-  render(<SkillCommandRecovery conversationId={conversationId} />);
-  await act(async () => {
-    await useChatStore.getState().sendSlashCommand("review", "original arguments", "agent");
-  });
-  const original = readSkillSubmissions(conversationId)[0]!;
-  const delivery = {
-    invocation_id: original.event.data.stable_id,
-    fingerprint: "cd".repeat(32),
-    status: "accepted" as const,
-  };
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-    throw new DOMException("Quota exhausted", "QuotaExceededError");
-  });
-  const item = {
-    id: "claim",
-    response_id: "turn",
-    type: "slash_command",
-    status: "completed",
-    kind: "skill",
-    name: "review",
-    arguments: "original arguments",
-    delivery,
-  };
-  const frame = new TextEncoder().encode(
-    `event: response.output_item.done\ndata: ${JSON.stringify({ item })}\n\ndata: [DONE]\n\n`,
-  );
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(frame);
-      controller.close();
-    },
-  });
-  let end: string | undefined;
-  await act(async () => {
-    end = await pumpStreamEvents(
-      conversationId,
-      body,
-      new AbortController(),
-      useChatStore.setState,
-      useChatStore.getState,
+it.each([
+  ["accepted", "Admitted; completion not confirmed"],
+  ["rejected", "Rejected before admission"],
+] as const)(
+  "retains %s delivery and the original request after a storage failure",
+  async (status, label) => {
+    const conversationId = `conv_${status}_storage_failure`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("Reply lost");
+      }),
     );
-  });
-  expect(end).toBe("server_closed");
-  expect(useChatStore.getState().blocks).toContainEqual(
-    expect.objectContaining({ type: "slash_command", delivery }),
-  );
-  expect(useChatStore.getState().pendingUserMessages).toEqual([]);
-  expect(readSkillSubmissions(conversationId)).toEqual([original]);
-  expect(screen.getByRole("alert").textContent).toContain("Could not update saved skill admission");
+    useChatStore.setState({
+      conversationId,
+      abortController: new AbortController(),
+      pendingUserMessages: [],
+      blocks: [],
+      status: "idle",
+    });
+    render(<SkillCommandRecovery conversationId={conversationId} />);
+    await act(async () => {
+      await useChatStore.getState().sendSlashCommand("review", "original arguments", "agent");
+    });
+    const original = readSkillSubmissions(conversationId)[0]!;
+    const delivery = {
+      invocation_id: original.event.data.stable_id,
+      fingerprint: "cd".repeat(32),
+      status,
+    };
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Quota exhausted", "QuotaExceededError");
+    });
+    const item = {
+      id: "claim",
+      response_id: "turn",
+      type: "slash_command",
+      status: "completed",
+      kind: "skill",
+      name: "review",
+      arguments: "original arguments",
+      delivery,
+    };
+    const frame = new TextEncoder().encode(
+      `event: response.output_item.done\ndata: ${JSON.stringify({ item })}\n\ndata: [DONE]\n\n`,
+    );
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(frame);
+        controller.close();
+      },
+    });
+    let end: string | undefined;
+    await act(async () => {
+      end = await pumpStreamEvents(
+        conversationId,
+        body,
+        new AbortController(),
+        useChatStore.setState,
+        useChatStore.getState,
+      );
+    });
+    expect(end).toBe("server_closed");
+    expect(useChatStore.getState().blocks).toContainEqual(
+      expect.objectContaining({ type: "slash_command", delivery }),
+    );
+    expect(useChatStore.getState().pendingUserMessages).toEqual([]);
+    expect(readSkillSubmissions(conversationId)).toEqual([original]);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not update saved skill delivery",
+    );
 
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(
-      async () =>
-        new Response(JSON.stringify({ data: [item], has_more: false }), {
-          headers: { "Content-Type": "application/json" },
-        }),
-    ),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Check admission" }));
-  await waitFor(() => expect(screen.getByText("Admitted; completion not confirmed")).toBeTruthy());
-  expect(readSkillSubmissions(conversationId)).toEqual([original]);
-});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ data: [item], has_more: false }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check delivery" }));
+    await waitFor(() => expect(screen.getByText(label)).toBeVisible());
+    expect(screen.queryByRole("button", { name: "Check delivery" })).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Quota exhausted");
+    expect(readSkillSubmissions(conversationId)).toEqual([original]);
+  },
+);

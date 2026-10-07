@@ -18,7 +18,10 @@ export function SkillAdmission({
   const [checked, setChecked] = useState<SkillCommandDelivery | null>(null);
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const current = delivery?.historical ? delivery : (checked ?? delivery);
+  const current =
+    delivery && (delivery.historical || delivery.status !== "unknown")
+      ? delivery
+      : (checked ?? delivery);
 
   async function check() {
     if (!target) return;
@@ -29,8 +32,8 @@ export function SkillAdmission({
       setChecked(result);
       setMessage(
         result
-          ? "Saved admission checked. Nothing was resent."
-          : "No saved admission found. Outcome remains unknown. Nothing was resent.",
+          ? "Saved delivery checked. Nothing was resent."
+          : "No saved delivery found. Outcome remains unknown. Nothing was resent.",
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -43,9 +46,9 @@ export function SkillAdmission({
     <div className="space-y-1 py-1 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-2">
         <span>{current ? skillAdmissionLabel(current) : "Admission unknown"}</span>
-        {!current?.historical && target && (
+        {target && !current?.historical && (!current || current.status === "unknown") && (
           <Button variant="outline" size="sm" disabled={checking} onClick={() => void check()}>
-            {checking ? "Checking admission…" : "Check admission"}
+            {checking ? "Checking delivery…" : "Check delivery"}
           </Button>
         )}
       </div>
