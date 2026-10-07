@@ -194,7 +194,7 @@ def import_host(
 
     host_id = uuid.uuid4().hex
     host_name = f"oversized-import-host-{uuid.uuid4().hex[:8]}"
-    omni_dir = home / ".omnigent"
+    omni_dir = home / "config-home"
     omni_dir.mkdir(parents=True, exist_ok=True)
     (omni_dir / "config.yaml").write_text(
         json.dumps({"host": {"host_id": host_id, "name": host_name}}),
@@ -206,6 +206,7 @@ def import_host(
         if key in _HOST_ENV_STRIP or key.startswith(_HOST_ENV_STRIP_PREFIXES):
             env.pop(key, None)
     env["HOME"] = str(home)
+    env["OMNIGENT_CONFIG_HOME"] = str(omni_dir)
     env["PYTHONPATH"] = f"{_REPO_ROOT}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"
 
     daemon_log = home / "host-daemon.log"
