@@ -1,13 +1,13 @@
 """E2E: cursor-native must validate the bridge-dir ancestor chain before writing the relay token.
 
 ``cursor-native`` keeps its per-session bridge tree under
-``$TMPDIR/omnigent-<uid>/cursor-native/<digest>/``. At terminal launch the
+``$TMPDIR/<native-prefix>-<uid>/cursor-native/<digest>/``. At terminal launch the
 runner calls :func:`omnigent.harnesses.cursor_native.bridge.write_mcp_config`, which
 routes through :func:`write_mcp_bridge_config` to write ``bridge.json`` — the
 bearer token for the Omnigent MCP relay's localhost control endpoint.
 
 On a multi-user POSIX host an attacker can pre-create an ancestor of that tree
-(``$TMPDIR/omnigent-<uid>``) as a symlink or a group/other-writable directory.
+(``$TMPDIR/<native-prefix>-<uid>``) as a symlink or a group/other-writable directory.
 The token write must then fail loudly (or repair an owned-but-permissive dir to
 owner-only) instead of landing the token in a directory chain the user does not
 exclusively control — exactly what ``qwen-native`` already does by routing the
@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix",
@@ -56,7 +58,8 @@ token_path = bridge_dir / "bridge.json"
 if token_path.is_file():
     result["token_written"] = True
     result["token_realpath"] = os.path.realpath(token_path)
-ancestor = cnb.bridge_root().parent  # $TMPDIR/omnigent-<uid>
+ancestor = cnb.bridge_root().parent
+result["ancestor_path"] = str(ancestor)
 if ancestor.exists() or ancestor.is_symlink():
     result["ancestor_mode"] = stat.S_IMODE(os.lstat(ancestor).st_mode)
 print(json.dumps(result))
@@ -86,11 +89,11 @@ def _uid_scoped_dirname() -> str:
     """Name of the uid-scoped temp dir cursor-native anchors under."""
     from omnigent._platform import stable_user_id
 
-    return f"omnigent-{stable_user_id()}"
+    return f"{NATIVE_TMP_PREFIX}-{stable_user_id()}"
 
 
 def test_symlinked_ancestor_refuses_token_write(tmp_path: Path) -> None:
-    """A symlinked ``$TMPDIR/omnigent-<uid>`` ancestor must refuse the token write.
+    """A symlinked uid-scoped ancestor must refuse the token write.
 
     An attacker pre-creates the uid-scoped ancestor as a symlink into a
     directory they control. Writing ``bridge.json`` through it silently hands
@@ -102,10 +105,14 @@ def test_symlinked_ancestor_refuses_token_write(tmp_path: Path) -> None:
     hostile_tmp.mkdir()
     attacker = tmp_path / "attacker"
     attacker.mkdir()
-    (hostile_tmp / _uid_scoped_dirname()).symlink_to(attacker, target_is_directory=True)
+    uid_dir = hostile_tmp / _uid_scoped_dirname()
+    uid_dir.symlink_to(attacker, target_is_directory=True)
 
     result = _run_token_write(hostile_tmp, "sess-symlink-ancestor")
 
+    assert result["ancestor_path"] == str(uid_dir), (
+        f"attacked {uid_dir}, but cursor-native used {result['ancestor_path']}"
+    )
     leaked = list(attacker.rglob("bridge.json"))
     assert result["raised"] is not None and not result["token_written"] and not leaked, (
         "cursor-native wrote the relay token through a symlinked bridge ancestor "
@@ -131,6 +138,9 @@ def test_world_writable_ancestor_is_not_trusted_for_token_write(tmp_path: Path) 
 
     result = _run_token_write(hostile_tmp, "sess-world-writable-ancestor")
 
+    assert result["ancestor_path"] == str(uid_dir), (
+        f"attacked {uid_dir}, but cursor-native used {result['ancestor_path']}"
+    )
     if result["token_written"]:
         # Token written is acceptable only once the ancestor was repaired to
         # owner-only, i.e. the chain was actually validated before the write.
