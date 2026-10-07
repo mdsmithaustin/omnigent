@@ -1409,6 +1409,9 @@ def test_unreadable_candidate_is_checked_for_liveness(
         pid = 999_999
         info = {"name": candidate_name}
 
+        def name(self) -> str:
+            return candidate_name
+
         def uids(self) -> SimpleNamespace:
             return SimpleNamespace(real=os.getuid())
 
@@ -1485,6 +1488,44 @@ def test_unrelated_candidate_does_not_require_environment_access(
     assert process._owned_process_identities(paths) == set()
 
 
+def test_stop_ignores_python_candidate_that_execs_an_unrelated_program(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _shutdown_paths(tmp_path)
+    _write_lifecycle_records(paths)
+
+    class Candidate:
+        pid = 999_999
+        info = {"name": "python3.12"}
+
+        def uids(self) -> SimpleNamespace:
+            return SimpleNamespace(real=os.getuid())
+
+        def cmdline(self) -> list[str]:
+            raise process.psutil.AccessDenied(self.pid)
+
+        def name(self) -> str:
+            return "tmux"
+
+        def is_running(self) -> bool:
+            return True
+
+        def status(self) -> str:
+            return process.psutil.STATUS_RUNNING
+
+    with _prime_daemon(paths, tmp_path) as daemon:
+        monkeypatch.setattr(process.psutil, "process_iter", lambda *_: iter([Candidate()]))
+        # The CLI execs tmux; a cached Python name must not block private shutdown.
+        stop_prime_runtime(paths)
+        daemon.process.wait(timeout=5)
+        assert json.loads(daemon.command_path.read_text())["command"] == {
+            "type": "shutdown",
+            "force": True,
+        }
+        assert not paths.terminal_file.exists()
+        assert not (paths.root / "owner.pid").exists()
+
+
 def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1497,6 +1538,9 @@ def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
 
         def __init__(self) -> None:
             self.probes = 0
+
+        def name(self) -> str:
+            return "python3.12"
 
         def uids(self) -> SimpleNamespace:
             return SimpleNamespace(real=os.getuid())

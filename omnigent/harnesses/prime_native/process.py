@@ -369,14 +369,18 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
     prime_process_names = _read_prime_process_names(paths)
     claim = owner_claim.read_owner_claim(paths.root)
     for process in psutil.process_iter(["name"]):
-        name = str(process.info.get("name") or "").casefold()
-        # Some processes report executable names through a 15/16-character field.
-        prime_name = name == "prime-agent" or _name_matches_alias(name, prime_process_names)
-        kernel_name = _name_matches_alias(name, kernel_process_names)
-        if not prime_name and not name.startswith("python") and not kernel_name:
-            continue
         for attempt in range(3):
             try:
+                # An exec handoff can change the executable while the PID stays live.
+                name = str(
+                    process.name() if attempt else process.info.get("name") or ""
+                ).casefold()
+                prime_name = name == "prime-agent" or _name_matches_alias(
+                    name, prime_process_names
+                )
+                kernel_name = _name_matches_alias(name, kernel_process_names)
+                if not prime_name and not name.startswith("python") and not kernel_name:
+                    break
                 if process.uids().real != os.getuid():
                     break
                 if not prime_name and tuple(process.cmdline()[1:3]) not in {
