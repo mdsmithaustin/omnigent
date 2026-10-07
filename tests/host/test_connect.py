@@ -1723,9 +1723,11 @@ async def test_watch_runner_silent_on_intentional_stop(
     monkeypatch.setattr("omnigent.host.connect._RUNNER_WATCH_INTERVAL_S", 0.01)
     host = _make_host_process()
     maintenance_reasons: list[str] = []
-    host._maintenance_janitor = SimpleNamespace(trigger=maintenance_reasons.append)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        host, "_maintenance_janitor", SimpleNamespace(trigger=maintenance_reasons.append)
+    )
     tunnel = _FakeTunnel()
-    host._ws = tunnel  # type: ignore[assignment] — duck-typed send
+    monkeypatch.setattr(host, "_ws", tunnel)
     workspace = tmp_path / "project"
     workspace.mkdir()
 
@@ -1776,7 +1778,6 @@ async def test_watch_runner_silent_while_stop_termination_is_pending(
     monkeypatch: pytest.MonkeyPatch,
     tunnel_connected: bool,
 ) -> None:
-    """An intentional exit stays quiet while the stop worker still owns the handle."""
     monkeypatch.setattr("omnigent.host.connect._RUNNER_WATCH_INTERVAL_S", 0.01)
     host = _make_host_process()
     maintenance_reasons: list[str] = []
@@ -1873,9 +1874,11 @@ async def test_watch_runner_silent_on_clean_exit(
     monkeypatch.setattr("omnigent.host.connect._RUNNER_WATCH_INTERVAL_S", 0.01)
     host = _make_host_process()
     maintenance_reasons: list[str] = []
-    host._maintenance_janitor = SimpleNamespace(trigger=maintenance_reasons.append)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        host, "_maintenance_janitor", SimpleNamespace(trigger=maintenance_reasons.append)
+    )
     tunnel = _FakeTunnel()
-    host._ws = tunnel  # type: ignore[assignment] — duck-typed send
+    monkeypatch.setattr(host, "_ws", tunnel)
     workspace = tmp_path / "project"
     workspace.mkdir()
 
