@@ -1445,7 +1445,7 @@ def test_unreadable_candidate_is_checked_for_liveness(
         ("renamed-prime-", None, "renamed-prime-agent-probe"),
     ],
 )
-def test_unrelated_candidate_does_not_require_environment_access(
+def test_unrelated_candidate_environment_does_not_match_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     candidate_name: str,
@@ -1476,7 +1476,7 @@ def test_unrelated_candidate_does_not_require_environment_access(
             return ["/usr/bin/python3", "-m", "unrelated.module"]
 
         def environ(self) -> dict[str, str]:
-            raise process.psutil.AccessDenied(self.pid)
+            return {}
 
         def is_running(self) -> bool:
             return True
@@ -1486,6 +1486,47 @@ def test_unrelated_candidate_does_not_require_environment_access(
 
     monkeypatch.setattr(process.psutil, "process_iter", lambda *_args: iter([Candidate()]))
     assert process._owned_process_identities(paths) == set()
+
+
+@pytest.mark.parametrize("owned", [False, True])
+def test_process_ownership_does_not_require_python_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owned: bool
+) -> None:
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    paths.prepare()
+
+    class Candidate:
+        pid = 999_999
+        info = {"name": "python3.12"}
+
+        def name(self) -> str:
+            return "python3.12"
+
+        def uids(self) -> SimpleNamespace:
+            return SimpleNamespace(real=os.getuid())
+
+        def cmdline(self) -> list[str]:
+            raise process.psutil.AccessDenied(self.pid)
+
+        def environ(self) -> dict[str, str]:
+            return {"PRIME_AGENT_CODING_AGENT_DIR": str(paths.agent_dir)} if owned else {}
+
+        def children(self, recursive: bool) -> list[object]:
+            return []
+
+        def create_time(self) -> float:
+            return 1.0
+
+        def is_running(self) -> bool:
+            return True
+
+        def status(self) -> str:
+            return process.psutil.STATUS_RUNNING
+
+    monkeypatch.setattr(process.psutil, "process_iter", lambda *_: iter([Candidate()]))
+    # The private environment owns the process; argv availability is not ownership.
+    expected = {process._ProcessIdentity(999_999, 1.0)} if owned else set()
+    assert process._owned_process_identities(paths) == expected
 
 
 def test_stop_ignores_python_candidate_that_execs_an_unrelated_program(
@@ -1501,7 +1542,7 @@ def test_stop_ignores_python_candidate_that_execs_an_unrelated_program(
         def uids(self) -> SimpleNamespace:
             return SimpleNamespace(real=os.getuid())
 
-        def cmdline(self) -> list[str]:
+        def environ(self) -> dict[str, str]:
             raise process.psutil.AccessDenied(self.pid)
 
         def name(self) -> str:
@@ -1545,7 +1586,7 @@ def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
         def uids(self) -> SimpleNamespace:
             return SimpleNamespace(real=os.getuid())
 
-        def cmdline(self) -> list[str]:
+        def environ(self) -> dict[str, str]:
             raise process.psutil.AccessDenied(self.pid)
 
         def is_running(self) -> bool:
