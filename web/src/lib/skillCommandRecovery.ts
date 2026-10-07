@@ -57,7 +57,7 @@ export function saveSkillSubmission(
     throw new Error("Skill recovery requires a resolved server and user identity.");
   const key = prefix + event.data.stable_id;
   if (localStorage.getItem(key) !== null)
-    throw new Error("This invocation already exists. Use Check admission.");
+    throw new Error("This invocation already exists. Use Check delivery.");
   localStorage.setItem(
     key,
     JSON.stringify({ event, delivery: null } satisfies SkillCommandSubmission),
@@ -117,7 +117,7 @@ export async function checkSkillAdmission(
     if (!page.hasMore) return null;
     const next = page.items[0]?.id;
     if (!next || next === olderThan)
-      throw new Error("Skill admission history could not be read completely.");
+      throw new Error("Skill delivery history could not be read completely.");
     olderThan = next;
   }
 }

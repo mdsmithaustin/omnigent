@@ -75,7 +75,7 @@ The browser does not choose native loading or paste fallback. The server's
 Both paths use the same admission and recovery records. The native permission
 hook still evaluates the actual REQUEST; browser admission does not replace it.
 
-## Check admission in the web app
+## Check delivery in the web app
 
 Open the conversation and find the skill card. The card shows one of these labels:
 
@@ -84,35 +84,40 @@ Open the conversation and find the skill card. The card shows one of these label
 - **Admission unknown** means the saved evidence does not establish either outcome.
 - **Historical copy** means the command belongs to a forked transcript and is display-only.
 
-Cards with a saved admission remain visible outside a collapsed **Worked**
+Cards with a saved delivery remain visible outside a collapsed **Worked**
 section. This applies to loaded transcript items; older commands without a
 delivery record keep the usual process folding.
 
-Click **Check admission** on the card to read the saved outcome. Expand
+**Check delivery** appears only when delivery is missing or unknown, the record
+is not historical, and a conversation target is available. Accepted, rejected, and
+historical records keep their status labels and invocation details without a
+check button.
+
+For an uncertain record, click **Check delivery** to read the saved outcome. Expand
 **Invocation details** to see the original identity. The check reads conversation
 history in pages and matches the original identity in the returned items. It
-uses GET requests and never sends a command. A historical copy has no
-recovery action.
+uses GET requests and never sends a command.
 
 If the response was lost, the **Skill recovery** panel above the composer also
-retains the original command and its **Check admission** button. This panel
+retains the original command and its **Check delivery** button. This panel
 survives navigation and browser reload. Once a check saves accepted or rejected
-admission, that invocation leaves the recovery panel. Its card remains in the
-loaded transcript, with its admission label, original identity, and
-**Check admission** action. If no saved claim is found, the panel keeps the
-outcome unknown. Check the native result before deliberately starting
+delivery, that invocation leaves the recovery panel. Its card remains in the
+loaded transcript, with its status label and original identity. If history
+still reports unknown delivery or has no saved claim, the panel keeps the
+command and check button. Check the native result before deliberately starting
 a new invocation. Typing and sending the skill again allocates a new identity.
-An admission check does not prove a native side effect or that **Stop** has
-halted all native work.
+Checking delivery does not establish completion or prove a native side effect.
+It also does not show that **Stop** has halted all native work.
 
 The browser writes the original request to local storage before sending it.
 Records are scoped to the server, signed-in user, and conversation. If that
-initial write fails, the browser does not send the command. If a later admission
+initial write fails, the browser does not send the command. If a later delivery
 update fails, the recovery panel reports the storage error while the skill card
-and **Check admission** use the server outcome. Keep the original browser record
-if you need to recover a request that has no server claim. Saved server claims
-remain visible to authorized clients even when browser storage is unavailable
-or cleared.
+uses the server outcome. A check that confirms accepted or rejected delivery
+hides its button even if browser storage fails. The storage warning remains.
+Keep the original browser record if you need to recover a request that has no
+server claim. Saved server claims remain visible to authorized clients even
+when browser storage is unavailable or cleared.
 
 ## Check admission in the REPL
 
