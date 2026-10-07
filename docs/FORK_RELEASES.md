@@ -2,24 +2,26 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-`0.17.0+mdsmithaustin.2` means upstream `0.17.0` plus fork addon revision `2`. The GitHub release tag is `fork/v0.17.0+mdsmithaustin.2`. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.2` uses [separate local fork defaults](FORK_DEFAULTS.md) and starts with fresh fork state. Revision `.1` remains available with its original shared defaults.
+`0.17.0+mdsmithaustin.3` means upstream `0.17.0` plus fork addon revision `3`. The GitHub release tag is `fork/v0.17.0+mdsmithaustin.3`. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.3` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
+
+Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
 ## Check the source
 
-Use a clean checkout of the authoritative permanent branch `release/v0.17.0-mdsmithaustin.2` with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
+Use a clean checkout of the authoritative permanent branch `release/v0.17.0-mdsmithaustin.3` with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
 
 Run these commands from the repository root. Any nonzero exit means the check failed.
 
 ```sh
 source_sha=$(git rev-parse HEAD)
 python scripts/fork_release.py check-source --source-sha "$source_sha"
-uv run --no-sync python scripts/update_versions.py check --expect '0.17.0+mdsmithaustin.2'
+uv run --no-sync python scripts/update_versions.py check --expect '0.17.0+mdsmithaustin.3'
 uv lock --check
 ```
 
-`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command prints `0.17.0+mdsmithaustin.2`. The lock check must exit zero without changing the lockfile.
+`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command prints `0.17.0+mdsmithaustin.3`. The lock check must exit zero without changing the lockfile.
 
 The verifier reads `.github/fork-release.json` from the exact source commit. It requires the published stable upstream release ID, publication timestamp, and current peeled tag SHA to match. A failed or unavailable lookup fails the check.
 
@@ -75,12 +77,12 @@ Failed Python and addon shards upload `fork-python-GROUP-RUN_ID-RUN_ATTEMPT` or 
 
 Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main`, `release/**`, and `codex/fork-release-*`. A development `main` history that violates the pin cannot certify.
 
-GitHub requires the workflow file on the repository default branch before it accepts [manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Push the reviewed source to permanent branch `release/v0.17.0-mdsmithaustin.2` and let its push workflow pass every required check. After independent review and those checks succeed, select that release branch as the fork default. This keeps the default pinned to released source while retaining development `main` and its history.
+GitHub requires the workflow file on the repository default branch before it accepts [manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Push the reviewed source to permanent branch `release/v0.17.0-mdsmithaustin.3` and let its push workflow pass every required check. After independent review and those checks succeed, select that release branch as the fork default. This keeps the default pinned to released source while retaining development `main` and its history.
 
 Then run a manual check with publication disabled. A nonzero dispatch exit means the request failed. The run must later show every required job and `certificate` as successful.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.2 -f publish=false
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.3 -f publish=false
 ```
 
 The `fork-certified-RUN_ID-RUN_ATTEMPT` artifact contains `dist/` with eight distributions and `evidence/` with `certificate.json`, `ui-inventory.json`, and `SHA256SUMS`. The certificate binds the final source SHA, tree, payload anchor, upstream release identity, addon inventory, manifest digest, workflow, run, checks, UI inventory, and artifact hashes.
@@ -105,7 +107,7 @@ uv pip install --python /tmp/omnigent-fork-install/bin/python dist/*.whl
 /tmp/omnigent-fork-install/bin/omnigent --version
 ```
 
-The CLI must print `0.17.0+mdsmithaustin.2`. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
+The CLI must print `0.17.0+mdsmithaustin.3`. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
 
 Install future fork updates from their verified fork assets. `omni upgrade` for a wheel installation uses package-index releases or prints an index installation command. `omni upgrade --nightly` selects upstream GitHub tags. Those channels can replace the fork addons. This release process does not change the runtime updater.
 
@@ -129,7 +131,7 @@ The check creates its own HOME and workspace and cleans up its recorded test pro
 Publication requires an explicit manual dispatch with `publish=true` on the reviewed release branch. It is disabled by default. This command authorizes a new run and its final publication job. A nonzero dispatch exit or any failed required job prevents publication.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.2 -f publish=true
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.3 -f publish=true
 ```
 
 Only the final publisher has release-write permission. It validates repository, dispatch intent, workflow, run, source, tag, certificate, checksums, UI evidence, and downloaded artifact bytes. It promotes those bytes to `mdsmithaustin/omnigent` GitHub Releases without rebuilding. A tag pointing elsewhere or existing different assets fail without overwrite. An existing identical release succeeds without changing it.
