@@ -86,8 +86,6 @@ _STRIPPED_ENV_PREFIXES = (
 def _subprocess_env(home: Path | None = None) -> dict[str, str]:
     """Build a clean environment for a spawned server / daemon / CLI.
 
-    :param home: Per-role ``HOME`` (isolates ``~/.omnigent`` host identity
-        and daemon records), or ``None`` to keep the test process home.
     :returns: Environment dict for ``subprocess``.
     """
     env = {
@@ -108,6 +106,7 @@ def _subprocess_env(home: Path | None = None) -> dict[str, str]:
     )
     if home is not None:
         env["HOME"] = str(home)
+        env["OMNIGENT_CONFIG_HOME"] = str(home / "config")
         # The host daemon's lifecycle lock is keyed by data_dir()/daemons,
         # and data_dir() prefers OMNIGENT_DATA_DIR over $HOME. The test
         # session sets one shared OMNIGENT_DATA_DIR (see tests/conftest.py),
@@ -240,9 +239,10 @@ def _boot_server(root: Path) -> tuple[subprocess.Popen, str]:
 def _spawn_host(root: Path, name: str, server_url: str) -> tuple[subprocess.Popen, str, Path]:
     """Register a real host daemon under an isolated ``HOME``."""
     home = root / f"home-{name}"
-    (home / ".omnigent").mkdir(parents=True, exist_ok=True)
+    config_home = home / "config"
+    config_home.mkdir(parents=True, exist_ok=True)
     host_id = uuid.uuid4().hex
-    (home / ".omnigent" / "config.yaml").write_text(
+    (config_home / "config.yaml").write_text(
         yaml.safe_dump({"host": {"host_id": host_id, "name": f"picker-e2e-{name}"}})
     )
     log = open(root / f"host-{name}.log", "w")  # noqa: SIM115 — Popen lifetime

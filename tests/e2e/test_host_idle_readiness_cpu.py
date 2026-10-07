@@ -121,7 +121,7 @@ def test_host_daemon_idle_cpu_with_expensive_path(
     """
     inflated_path, path_root = _make_expensive_path()
 
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True)
     host_id = uuid.uuid4().hex
     (omni_dir / "config.yaml").write_text(
@@ -136,6 +136,7 @@ def test_host_daemon_idle_cpu_with_expensive_path(
         {
             **os.environ,
             "HOME": str(tmp_path),
+            "OMNIGENT_CONFIG_HOME": str(omni_dir),
             "PATH": inflated_path,
             PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),
         }

@@ -147,7 +147,7 @@ def _spawn_daemon_from_worktree(
     :returns: The spawned daemon handle plus the two worktrees.
     """
     w1, w2 = _make_worktrees(tmp_path)
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True, exist_ok=True)
     host_id = uuid.uuid4().hex
     host_name = f"e2e-zygote-cwd-{uuid.uuid4().hex[:12]}"
@@ -162,6 +162,7 @@ def _spawn_daemon_from_worktree(
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         "OPENAI_BASE_URL": f"{mock_llm_server_url}/v1",
         "OPENAI_API_KEY": "mock-key",
         PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),

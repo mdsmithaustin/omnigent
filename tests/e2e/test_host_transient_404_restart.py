@@ -179,7 +179,7 @@ def _spawn_host_daemon_via(
     :param mock_llm_server_url: Mock LLM server base URL.
     :returns: ``(proc, host_id, daemon_log)``.
     """
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True, exist_ok=True)
     host_id = uuid.uuid4().hex
     host_name = f"e2e-host-{uuid.uuid4().hex[:12]}"
@@ -194,6 +194,7 @@ def _spawn_host_daemon_via(
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         "OPENAI_BASE_URL": f"{mock_llm_server_url}/v1",
         "OPENAI_API_KEY": "mock-key",
         PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),
