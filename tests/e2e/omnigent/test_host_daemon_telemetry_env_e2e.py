@@ -41,6 +41,7 @@ import httpx
 import pytest
 
 from omnigent.host.daemon_lifecycle import HostDaemonRecord
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN, RUNNER_PARENT_PID_ENV_VAR
 from tests._helpers.session import bundle_files, post_session_bundle
 from tests.e2e.omnigent.test_host_ctrl_c_stop_server import (
@@ -107,12 +108,11 @@ def _spawn_background_daemon(
 def _wait_for_daemon_record(home: Path, *, timeout: float) -> HostDaemonRecord:
     """Read the daemon's process and host identity from its own registry.
 
-    :param home: Isolated HOME holding ``.omnigent/daemons``.
     :param timeout: Max seconds to poll for the record.
     :returns: The detached daemon's registry record.
     :raises AssertionError: If no record appears within *timeout*.
     """
-    daemons = home / ".omnigent" / "daemons"
+    daemons = home / USER_DIRNAME / "daemons"
     elapsed = 0.0
     while elapsed < timeout:
         records = sorted(daemons.glob("*.json")) if daemons.is_dir() else []

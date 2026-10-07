@@ -10,7 +10,7 @@ error with no actionable guidance about the missing driver.
 
 Each test spawns the REAL CLI (``python -m omnigent.cli start``) in an
 isolated ``$HOME`` so the daemon, pidfiles, and logs never touch the
-developer's ``~/.omnigent``. No Postgres server is needed: the failure
+developer's installation directory. No Postgres server is needed: the failure
 fires at DBAPI import time, before any connection attempt.
 
 These tests require the Postgres driver to be ABSENT from the
@@ -49,6 +49,8 @@ from pathlib import Path
 
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The whole journey is "daemon spawns, server crashes at import, daemon
@@ -83,7 +85,7 @@ _missing = importlib.util.find_spec
 def _run_start(home: Path, database_uri: str) -> subprocess.CompletedProcess[str]:
     """Run ``omnigent start`` against a Postgres URI in an isolated HOME.
 
-    :param home: Isolated home dir; ``<home>/.omnigent`` receives the
+    :param home: Isolated home dir whose installation directory receives the
         daemon pidfiles and the host/server logs.
     :param database_uri: The ``OMNIGENT_DATABASE_URI`` value under test,
         e.g. ``"postgresql+psycopg://u:pw@127.0.0.1:5432/omnigent"``.
@@ -112,7 +114,7 @@ def _server_log_text(home: Path) -> str:
     :param home: The isolated home dir used by :func:`_run_start`.
     :returns: The combined server log text ("" when no log was written).
     """
-    log_dir = home / ".omnigent" / "logs" / "server"
+    log_dir = home / USER_DIRNAME / "logs" / "server"
     if not log_dir.is_dir():
         return ""
     return "\n".join(p.read_text(errors="replace") for p in sorted(log_dir.glob("server-*.log")))
