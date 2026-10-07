@@ -28,7 +28,7 @@ from playwright.sync_api import Page, expect
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Codex thread ids are hyphenated hex (see CODEX_THREAD_ID_RE).
+# Codex thread ids are hyphenated hex (see _CODEX_THREAD_ID_RE).
 _SOURCE_SESSION_ID = "019e96aa-0be2-7343-8d3b-6f914d65753a"
 
 # 1x1 PNG — the inline image payload shape reported in the bug.

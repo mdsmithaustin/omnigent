@@ -11,7 +11,6 @@ from typing import BinaryIO
 import tomllib
 
 from omnigent.errors import OmnigentError
-from omnigent.harnesses.codex_native.bridge import find_codex_rollout
 from omnigent.inner.codex_executor import codex_skill_sources, select_codex_skill_dirs
 from omnigent.spec.codex_plugin_skills import discover_codex_plugin_skills
 from omnigent.spec.parser import _discover_skills, _parse_skill
@@ -142,7 +141,18 @@ _SKILL_BLOCK_RE = re.compile(
 _SKILL_INSTRUCTIONS_KINDS = ["skills.selected_skill_instructions"]
 
 
-def user_message_text(item: JsonObject) -> str:
+def _find_codex_rollout(codex_home: Path, thread_id: str) -> Path | None:
+    if not re.fullmatch(r"[0-9a-fA-F-]+", thread_id):
+        return None
+    matches = [
+        path
+        for path in (codex_home / "sessions").glob(f"**/rollout-*-{thread_id}.jsonl")
+        if path.is_file()
+    ]
+    return max(matches, key=lambda path: path.stat().st_mtime, default=None)
+
+
+def _user_message_text(item: JsonObject) -> str:
     """
     Convert a Codex ``userMessage`` item into plain text.
 
@@ -209,7 +219,7 @@ class _RolloutScan:
 
     def pending_skills(self) -> list[JsonObject]:
         """Return collected skill rows that were not typed by the user."""
-        return [skill for skill in self.skills if user_message_text(skill) not in self.user_texts]
+        return [skill for skill in self.skills if _user_message_text(skill) not in self.user_texts]
 
     def apply(
         self, row: object, position: tuple[int, int], turn_id: str, before_id: object
@@ -249,7 +259,7 @@ class _RolloutScan:
                     self.user_seen = True
             elif kind == "item_completed" and isinstance(event_item, dict):
                 if event_item.get("type") in {"UserMessage", "userMessage"}:
-                    self.user_texts.add(user_message_text(event_item))
+                    self.user_texts.add(_user_message_text(event_item))
                     self.user_seen = True
                 if before_id is not None and event_item.get("id") == before_id:
                     return True
@@ -340,7 +350,7 @@ class RolloutSkillReader:
                 return self._path.open("rb")
             except FileNotFoundError:
                 self._path = None
-        self._path = find_codex_rollout(self._codex_home, self._thread_id)
+        self._path = _find_codex_rollout(self._codex_home, self._thread_id)
         return None if self._path is None else self._path.open("rb")
 
     def _reset_if_replaced(self, stream: BinaryIO) -> None:

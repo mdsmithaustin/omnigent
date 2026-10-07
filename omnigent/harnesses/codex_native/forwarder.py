@@ -36,7 +36,6 @@ from omnigent.harnesses.codex_native.bridge import (
     DeveloperInstructionsReadState,
     clear_active_turn_id_if_matches,
     codex_home_for_bridge_dir,
-    find_codex_rollout,
     pending_mcp_servers,
     read_bridge_state,
     read_codex_config_developer_instructions_state,
@@ -55,7 +54,7 @@ from omnigent.harnesses.codex_native.elicitation import (
 from omnigent.harnesses.codex_native.elicitation import (
     is_codex_request_id as _is_codex_request_id,
 )
-from omnigent.harnesses.codex_native.skills import RolloutSkillReader, user_message_text
+from omnigent.harnesses.codex_native.skills import RolloutSkillReader
 from omnigent.native._native_forwarder_health import (
     note_post_success as note_native_post_success,
 )
@@ -403,9 +402,6 @@ class _CodexForwarderState:
     :param synced_item_keys: Stable item keys already posted to Omnigent this
         connection, e.g. ``{"thread_c:turn_c:item-1"}``. In-memory only;
         guards replay-vs-live overlap within one forwarder lifetime.
-    :param rollout_skill_readers: Incremental rollout skill readers keyed by
-        Codex thread id, so each completed item parses only newly appended
-        rollout bytes.
     :param surfaced_terminal_error_turns: Turn ids whose standalone terminal
         ``error`` notification was already surfaced. Used to suppress a later
         terminal boundary for the same turn.
@@ -6141,7 +6137,7 @@ async def _post_user_message(
     :param source_id: Stable native item id used for server-side deduplication.
     :returns: Whether the item was accepted by the server.
     """
-    text = user_message_text(item)
+    text = _user_message_text(item)
     # An image/file-only message has no text but must still be posted: the
     # server drains its optimistic pending-input entry (FIFO) and folds the
     # image in by file_id (``_merge_pending_file_blocks``). Bailing here would
@@ -7039,9 +7035,15 @@ async def _persist_codex_compaction_item(
         try:
             state = read_bridge_state(bridge_dir)
             if state is not None:
-                rollout = find_codex_rollout(Path(state.codex_home), state.thread_id)
-                if rollout is not None:
-                    compacted = _read_compacted_history(rollout)
+                codex_home = Path(state.codex_home)
+                thread_id = state.thread_id
+                rollout_files = sorted(
+                    codex_home.glob(f"sessions/**/*rollout-*{thread_id}.jsonl"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if rollout_files:
+                    compacted = _read_compacted_history(rollout_files[0])
         except Exception:  # noqa: BLE001
             _logger.debug(
                 "Failed to read codex rollout for compaction persist",
@@ -8141,6 +8143,26 @@ def _delta_recovery_status_edge(
         turn_id=turn_id,
         source="delta:recovered",
     )
+
+
+def _user_message_text(item: _JsonObject) -> str:
+    """
+    Convert a Codex ``userMessage`` item into plain text.
+
+    :param item: Codex ``userMessage`` item.
+    :returns: Joined text content.
+    """
+    content = item.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            parts.append(text)
+    return "\n\n".join(parts)
 
 
 def _user_message_has_file_content(item: _JsonObject) -> bool:

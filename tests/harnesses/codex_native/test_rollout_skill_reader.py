@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from omnigent.harnesses.codex_native.skills import RolloutSkillReader
@@ -96,6 +97,22 @@ def test_truncated_rollout_is_reparsed_from_the_start(tmp_path: Path) -> None:
     path.write_text("")
     _append(path, [*_turn_rows("t1"), _skill_row("skill-z", "Z")])
     assert _ids(reader.read_turn_skills("t1", None)) == ["skill-z"]
+
+
+def test_atomically_replaced_larger_rollout_is_reparsed_from_the_start(tmp_path: Path) -> None:
+    path, reader = _rollout(tmp_path)
+    _append(path, [*_turn_rows("t1"), _skill_row("skill-a", "A")])
+    assert _ids(reader.read_turn_skills("t1", None)) == ["skill-a"]
+
+    replacement = path.with_suffix(".replacement")
+    _append(
+        replacement,
+        [*_turn_rows("t1"), _skill_row("skill-z", "Z"), _skill_row("skill-y", "Y")],
+    )
+    assert replacement.stat().st_size > path.stat().st_size
+    os.replace(replacement, path)
+
+    assert _ids(reader.read_turn_skills("t1", None)) == ["skill-z", "skill-y"]
 
 
 def test_missing_rollout_or_unsafe_thread_id_yields_no_skills(tmp_path: Path) -> None:

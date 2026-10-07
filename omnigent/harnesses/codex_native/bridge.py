@@ -7,7 +7,6 @@ import hashlib
 import json
 import math
 import os
-import re
 import secrets
 import stat
 import sys
@@ -465,42 +464,6 @@ def socket_path_for_bridge_dir(bridge_dir: Path) -> Path:
     :returns: Absolute Unix socket path for the app-server.
     """
     return bridge_dir / "app-server.sock"
-
-
-# Codex thread ids are UUIDv7 (time-ordered), e.g.
-# ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``. Restricting the cloned id to
-# hex + hyphens keeps it safe to interpolate into a rollout filename, a glob
-# and a ``codex resume`` argument (no path separators / traversal).
-CODEX_THREAD_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
-
-
-def find_codex_rollout(codex_home: Path, thread_id: str) -> Path | None:
-    """
-    Find a Codex rollout file by thread id within a ``CODEX_HOME``.
-
-    Codex persists each thread's history as a single append-only JSONL
-    rollout at
-    ``$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ISO-ts>-<thread_id>.jsonl``,
-    where the trailing ``<thread_id>`` matches the thread's
-    ``session_meta.id``. We locate it by that filename suffix.
-
-    :param codex_home: A per-session private ``CODEX_HOME``, e.g.
-        ``Path("~/.omnigent/codex-native/<hash>/codex-home")``.
-    :param thread_id: Codex thread id / rollout stem, e.g.
-        ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``.
-    :returns: Path to the most recent matching rollout, or ``None`` when
-        none exists on this host or *thread_id* is not a safe id.
-    """
-    if not CODEX_THREAD_ID_RE.fullmatch(thread_id):
-        return None
-    sessions = codex_home / "sessions"
-    if not sessions.is_dir():
-        return None
-    matches = [p for p in sessions.glob(f"**/rollout-*-{thread_id}.jsonl") if p.is_file()]
-    if not matches:
-        return None
-    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return matches[0]
 
 
 def codex_home_for_bridge_dir(bridge_dir: Path) -> Path:

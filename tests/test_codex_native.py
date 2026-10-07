@@ -27,7 +27,6 @@ from omnigent.harnesses.codex_native import app_server as codex_native_app_serve
 from omnigent.harnesses.codex_native import forwarder as codex_native_forwarder
 from omnigent.harnesses.codex_native import main as codex_native
 from omnigent.harnesses.codex_native.bridge import (
-    CODEX_THREAD_ID_RE,
     CodexNativeBridgeState,
     clear_bridge_state,
     read_bridge_state,
@@ -12104,7 +12103,7 @@ def test_mint_codex_thread_id_is_uuidv7() -> None:
     minted = codex_native._mint_codex_thread_id()
     parsed = _uuid.UUID(minted)
     assert parsed.version == 7
-    assert CODEX_THREAD_ID_RE.fullmatch(minted)
+    assert codex_native._CODEX_THREAD_ID_RE.fullmatch(minted)
 
 
 def test_command_execution_appends_sandbox_bypass_guidance_on_namespace_error() -> None:
