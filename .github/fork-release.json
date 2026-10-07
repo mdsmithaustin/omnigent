@@ -269,9 +269,21 @@
       "name": "fork-isolation-7f2e76ed50c7",
       "reason": "Align regression fixtures with isolated fork defaults.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "01e90a8dcb4904cc952b6defb27a39e774b0c2a3",
+      "name": "codex-admission-01e90a8dcb49",
+      "reason": "Retain the immutable revision .2 final release pin in the ordered revision .3 history.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7be1cedd4d91f9b9fe276707fb4c0346676b8023",
+      "name": "codex-admission-7be1cedd4d91",
+      "reason": "Repair Codex source admission with the authenticated runner client, preserve security and client lifetime, add HTTP regressions, and prepare revision .3 metadata.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "7f2e76ed50c7880b3947bd4c0848dbdbb75c0bbd",
+  "payload_commit": "7be1cedd4d91f9b9fe276707fb4c0346676b8023",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
@@ -280,5 +292,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.17.0"
   },
-  "version": "0.17.0+mdsmithaustin.2"
+  "version": "0.17.0+mdsmithaustin.3"
 }
