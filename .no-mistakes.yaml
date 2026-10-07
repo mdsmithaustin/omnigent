@@ -1,6 +1,7 @@
 # no-mistakes push gate for this fork. Gate-control fields are read from main.
 commands:
-  # Mirrors the CI lint job in .github/workflows/lint.yml; corepack runs the pinned pnpm.
+  # CI lint's dependency setup and pre-commit pass; corepack runs the pinned pnpm.
+  # CI alone also checks pnpm-lock.yaml regeneration and pnpm overrides, and installs ktlint.
   prepare: >-
     OMNIGENT_SKIP_WEB_UI=true uv sync --locked --group lint --extra hindsight --extra nimble --extra s3 --extra tracing
     && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter web --filter omnigent-vscode
@@ -14,6 +15,7 @@ ignore_patterns:
 
 protected_paths:
   - ".github/workflows/**"
+  - ".github/actions/**"
   - "omnigent/db/migrations/**"
 
 pr:
@@ -24,7 +26,7 @@ ci:
 
 test:
   instructions: |
-    Start a local pod with `just dev`, then follow the matching verification skill in .claude/skills
+    Follow the matching verification skill in .claude/skills
     (verify-prime-native, <harness>-e2e-dev, or cli-setup-verify). Docs-only changes need no live run.
 
 review:
