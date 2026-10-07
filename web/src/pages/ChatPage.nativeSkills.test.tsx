@@ -229,7 +229,7 @@ describe("native ChatPage skill submission", () => {
       mounted.unmount();
       useChatStore.setState({ blocks: [], pendingUserMessages: [] });
       mountChat(harness);
-      fireEvent.click(await screen.findByRole("button", { name: "Check admission" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Check delivery" }));
       await waitFor(() =>
         expect(readSkillSubmissions(conversationId)[0]?.delivery?.invocation_id).toBe(
           event.data.stable_id,
@@ -260,10 +260,10 @@ describe("native ChatPage skill submission", () => {
     const original = posts[0]!.event;
     mounted.unmount();
     mountChat("codex-native");
-    fireEvent.click(await screen.findByRole("button", { name: "Check admission" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Check delivery" }));
     expect(
       await screen.findByText(
-        "No saved admission found. Outcome remains unknown. Nothing was resent.",
+        "No saved delivery found. Outcome remains unknown. Nothing was resent.",
       ),
     ).toBeVisible();
     expect(historyRequests).toHaveLength(2);
