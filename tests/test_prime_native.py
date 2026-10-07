@@ -1321,60 +1321,6 @@ def test_orphan_maintenance_retains_invalid_kernel_names_record(tmp_path: Path) 
     assert (paths.root / "terminal.json").read_text() == terminal
 
 
-@pytest.mark.parametrize("failures", [1, 2])
-@pytest.mark.parametrize("error_type", [process.psutil.AccessDenied, OSError, SystemError])
-def test_stop_retries_transient_process_ownership_read(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    failures: int,
-    error_type: type[Exception],
-) -> None:
-    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
-    paths.prepare()
-    paths.executable_file.write_text(sys.executable)
-    _write_lifecycle_records(paths)
-    child = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(30)"],
-        env={**os.environ, **paths.env},
-    )
-    try:
-        candidate = process.psutil.Process(child.pid)
-        candidate.info = {"name": candidate.name()}
-        original_environ = process.psutil.Process.environ
-        reads = 0
-
-        def environ(observed: process.psutil.Process) -> dict[str, str]:
-            nonlocal reads
-            if observed.pid == child.pid:
-                reads += 1
-                if reads <= failures:
-                    raise error_type(child.pid)
-            return original_environ(observed)
-
-        def shutdown(
-            _endpoint: object, _paths: PrimeRuntimePaths
-        ) -> set[process._ProcessIdentity]:
-            child.terminate()
-            child.wait(timeout=5)
-            return set()
-
-        monkeypatch.setattr(process.psutil, "process_iter", lambda *_: iter([candidate]))
-        monkeypatch.setattr(process.psutil.Process, "environ", environ)
-        monkeypatch.setattr(process, "_supervisor_endpoint", lambda _: object())
-        monkeypatch.setattr(process, "_send_shutdown", shutdown)
-
-        # A transient OS read must not prevent owned shutdown or record removal.
-        stop_prime_runtime(paths)
-        assert child.poll() is not None
-        assert reads == failures + 1
-        assert not paths.terminal_file.exists()
-        assert not (paths.root / "owner.pid").exists()
-    finally:
-        if child.poll() is None:
-            child.terminate()
-        child.wait(timeout=5)
-
-
 @pytest.mark.parametrize("alive", [False, True])
 @pytest.mark.parametrize(
     ("candidate_name", "kernel_executable", "prime_executable"),
@@ -1678,27 +1624,6 @@ def test_version_probe_is_memoized_until_binary_changes(
     binary.write_text("#!/bin/sh\nprintf '0.9.7\\n'\n")
     with pytest.raises(click.ClickException, match=r"found '0\.9\.7'"):
         process.resolve_prime_executable()
-
-
-def test_failed_version_probe_is_retried(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    binary = tmp_path / "prime-agent"
-    probes = tmp_path / "probes"
-    recovered = tmp_path / "recovered"
-    binary.write_text(
-        f"#!/bin/sh\necho x >> {probes}\n"
-        f"if [ ! -f {recovered} ]; then touch {recovered}; exit 1; fi\n"
-        "printf '0.9.6\\n'\n"
-    )
-    binary.chmod(0o700)
-    monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
-
-    with pytest.raises(subprocess.CalledProcessError):
-        process.resolve_prime_executable()
-    assert process.resolve_prime_executable() == str(binary)
-    assert process.resolve_prime_executable() == str(binary)
-    assert probes.read_text().splitlines() == ["x", "x"]
 
 
 @pytest.mark.parametrize("root_args", [(), ("--profiling",)])

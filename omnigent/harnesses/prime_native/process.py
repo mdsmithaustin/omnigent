@@ -375,31 +375,31 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
         kernel_name = _name_matches_alias(name, kernel_process_names)
         if not prime_name and not name.startswith("python") and not kernel_name:
             continue
-        for attempt in range(3):
-            try:
-                if process.uids().real != os.getuid():
-                    break
-                if not prime_name and tuple(process.cmdline()[1:3]) not in {
-                    ("-m", "rlm.repl"),
-                    ("-m", "omnigent.harnesses.prime_native.process"),
-                }:
-                    break
-                if process.environ().get("PRIME_AGENT_CODING_AGENT_DIR") == str(paths.agent_dir):
-                    if claim is not None and process.pid == claim.pid:
-                        break
-                    for owned in (process, *process.children(recursive=True)):
-                        processes[owned.pid] = owned
-                break
-            except (psutil.NoSuchProcess, psutil.ZombieProcess):
-                break
-            except (psutil.AccessDenied, OSError, SystemError) as exc:
+        try:
+            if process.uids().real != os.getuid():
+                continue
+            if not prime_name and tuple(process.cmdline()[1:3]) not in {
+                ("-m", "rlm.repl"),
+                ("-m", "omnigent.harnesses.prime_native.process"),
+            }:
+                continue
+            if process.environ().get("PRIME_AGENT_CODING_AGENT_DIR") == str(paths.agent_dir):
+                if claim is not None and process.pid == claim.pid:
+                    continue
+                for owned in (process, *process.children(recursive=True)):
+                    processes[owned.pid] = owned
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except (psutil.AccessDenied, OSError, SystemError) as exc:
+            for attempt in range(3):
                 if not _process_alive(process):
                     break
-                if attempt == 2:
-                    raise RuntimeError(
-                        "Prime process ownership could not be observed; runtime retained."
-                    ) from exc
-                time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
+                if attempt < 2:
+                    time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
+            else:
+                raise RuntimeError(
+                    "Prime process ownership could not be observed; runtime retained."
+                ) from exc
     return list(processes.values())
 
 
