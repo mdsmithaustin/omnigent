@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 import psutil
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e.helpers import POLL_INTERVAL_S
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,7 +94,7 @@ def _run_background_server(
 
 def _pidfile_path(home: Path) -> Path:
     """Return the server pidfile path under the isolated home."""
-    return home / ".omnigent" / "local_server.pid"
+    return home / USER_DIRNAME / "local_server.pid"
 
 
 def _read_pidfile(path: Path) -> tuple[int, int] | None:
