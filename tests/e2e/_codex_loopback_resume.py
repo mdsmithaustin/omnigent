@@ -186,6 +186,7 @@ async def run_cold_resume_turn(
     thread_id: str,
     session_id: str,
     prompt: str,
+    ap_server_url: str | None = None,
 ) -> ColdResumeTurn:
     """Preload ``thread_id`` from ``codex_home`` with real Codex and submit one turn."""
     provider = LoopbackResponsesProvider()
@@ -215,6 +216,7 @@ async def run_cold_resume_turn(
         pinned_model="mock-model",
         reconcile_process_registry=False,
         session_id=session_id,
+        ap_server_url=ap_server_url,
     )
     client: CodexAppServerClient | None = None
     try:
