@@ -226,7 +226,13 @@ def test_system_browser_session_is_bridged_to_isolated_webview(
         expect(webview_page.get_by_role("heading", name="Authentication required")).to_be_visible()
 
         webview_context.add_cookies(
-            [{"name": "ap_session", "value": session_token, "url": base_url}]
+            [
+                {
+                    "name": _oidc_config(base_url).session_cookie_name,
+                    "value": session_token,
+                    "url": base_url,
+                }
+            ]
         )
         webview_page.reload()
         expect(webview_page.get_by_role("heading", name="Authenticated WebView")).to_be_visible()
