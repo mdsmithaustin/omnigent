@@ -30,6 +30,7 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e_ui.conftest import _create_native_codex_session
 from tests.e2e_ui.messages.test_message_render_parity import _ensure_chat_view, _send
 
@@ -150,7 +151,7 @@ def ambient_bedrock_codex_session(
     and no ``auth.json``, plus an empty ``OMNIGENT_CONFIG_HOME``.
 
     :returns: ``(base_url, session_id, home_dir)``; *home_dir* holds the
-        ``.omnigent/codex-native`` bridge state that records thread start.
+        ``<installation>/codex-native`` bridge state that records thread start.
     """
     # Shared conftest helpers use env-trusting httpx calls; keep loopback off any proxy.
     for var in ("NO_PROXY", "no_proxy"):
@@ -294,7 +295,7 @@ def test_ambient_bedrock_codex_config_routes_the_native_launch(
 
     # A terminal turn outcome settles the wait; so does the thread starting, since a
     # rig without live AWS credentials may keep the routed Bedrock turn in flight.
-    bridge_root = home_dir / ".omnigent" / "codex-native"
+    bridge_root = home_dir / USER_DIRNAME / "codex-native"
     deadline = time.monotonic() + _TURN_OUTCOME_TIMEOUT_S
     settled = False
     thread_started = False

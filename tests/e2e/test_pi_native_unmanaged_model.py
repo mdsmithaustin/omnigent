@@ -63,6 +63,7 @@ import psutil
 import pytest
 import yaml
 
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.process_logging import PROCESS_LOG_FILE_ENV_VAR
 from tests._helpers.compat import apply_runner_env, compat_runner_cwd, runner_executable
 from tests.e2e._harness_probes import cli_unavailable_reason
@@ -134,7 +135,7 @@ def _bridge_digest(session_id: str) -> str:
     """Return the hashed bridge-dir segment for *session_id*.
 
     The harness writes a session's Pi bridge under
-    ``~/.omnigent/pi-native/<sha256(session_id)[:32]>``.
+    ``~/<installation>/pi-native/<sha256(session_id)[:32]>``.
 
     :param session_id: The session/conversation id.
     :returns: The 32-hex digest segment.
@@ -147,9 +148,9 @@ def _bridge_dir(home: Path, session_id: str) -> Path:
 
     :param home: The spawned daemon's HOME.
     :param session_id: The session/conversation id.
-    :returns: ``<home>/.omnigent/pi-native/<digest>``.
+    :returns: ``<home>/<installation>/pi-native/<digest>``.
     """
-    return home / ".omnigent" / "pi-native" / _bridge_digest(session_id)
+    return home / USER_DIRNAME / "pi-native" / _bridge_digest(session_id)
 
 
 def _bridge_marker(session_id: str) -> str:
@@ -255,7 +256,7 @@ class _UnmanagedPiHost:
 
     :param proc: The daemon subprocess handle.
     :param host_id: The registered host id.
-    :param home: The daemon's HOME (holds ``.pi/agent`` + ``.omnigent``).
+    :param home: The daemon's HOME (holds ``.pi/agent`` + the installation directory).
     :param daemon_log: Captured daemon log path.
     """
 
@@ -277,7 +278,7 @@ def _seed_unmanaged_pi_home(home: Path) -> str:
 
     Writes ``.pi/agent/auth.json`` (an api-key login) and
     ``.pi/agent/models-store.json`` (one usable model) so Pi itself has
-    models, while ``.omnigent/config.yaml`` carries only a host block and
+    models, while the installation's ``config.yaml`` carries only a host block and
     NO provider setup -- exactly the state where
     ``resolve_pi_native_provider()`` returns ``None``. Also seeds
     ``.pi/agent/extensions/`` with the test-owned argv observer (see the
@@ -287,7 +288,7 @@ def _seed_unmanaged_pi_home(home: Path) -> str:
     :param home: The daemon HOME to populate.
     :returns: The host id written into ``config.yaml``.
     """
-    omni_dir = home / ".omnigent"
+    omni_dir = home / USER_DIRNAME
     omni_dir.mkdir(parents=True, exist_ok=True)
     host_id = uuid.uuid4().hex
     host_name = f"e2e-unmanaged-pi-{uuid.uuid4().hex[:12]}"
@@ -378,8 +379,8 @@ def unmanaged_pi_host(
     env = {
         **os.environ,
         "HOME": str(home),
-        "OMNIGENT_CONFIG_HOME": str(home / ".omnigent"),
-        "OMNIGENT_DATA_DIR": str(home / ".omnigent"),
+        "OMNIGENT_CONFIG_HOME": str(home / USER_DIRNAME),
+        "OMNIGENT_DATA_DIR": str(home / USER_DIRNAME),
         PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),
     }
     # Prepend ABSOLUTE worktree roots to PYTHONPATH. The runner the daemon
