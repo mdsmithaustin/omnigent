@@ -44,6 +44,7 @@ from omnigent._wrapper_labels import (
 )
 from omnigent.harnesses.antigravity_native.bridge import bridge_dir_for_bridge_id, read_tmux_info
 from omnigent.harnesses.antigravity_native.main import _materialize_antigravity_agent_spec
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.onboarding.gemini_auth import gemini_auth_has_credential
 from omnigent.runner.identity import token_bound_runner_id
 from tests.e2e_ui.conftest import _find_free_port
@@ -118,7 +119,7 @@ def antigravity_model(
     monkeypatch.setenv("OMNIGENT_DATA_DIR", str(home / ".omnigent"))
     monkeypatch.setattr(
         "omnigent.harnesses.antigravity_native.bridge._BRIDGE_ROOT",
-        home / ".omnigent" / "antigravity-native",
+        home / USER_DIRNAME / "antigravity-native",
     )
     monkeypatch.setenv("GEMINI_API_KEY", "mock-gemini-key")
     with ThreadingHTTPServer(("127.0.0.1", 0), GeminiHandler) as server:
