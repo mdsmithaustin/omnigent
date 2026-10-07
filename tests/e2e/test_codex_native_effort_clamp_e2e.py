@@ -9,7 +9,7 @@ API ladder, capped at ``xhigh``) instead of ``CODEX_NATIVE_EFFORTS`` (which
 carries ``max`` and ``ultra``). A user with ``model_reasoning_effort = "max"``
 (or ``"ultra"``) therefore had their reasoning effort silently clamped to
 ``"xhigh"`` in the session copy at
-``~/.omnigent/codex-native/<session>/codex-home/config.toml``.
+``~/<installation>/codex-native/<session>/codex-home/config.toml``.
 
 Unlike the sibling
 ``test_codex_native_session_config_preserves_effort_e2e.py`` (which covers the
@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 import tomllib
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e._native_resume_helpers import (
     cli_env,
     omnigent_console_script,
@@ -75,12 +76,12 @@ def _wait_for_session_config(home_dir: Path, timeout: float) -> Path:
     Poll for the per-session ``codex-home/config.toml`` under *home_dir*.
 
     :param home_dir: The (isolated) ``$HOME`` the CLI and its runner use; the
-        bridge root is ``<home>/.omnigent/codex-native/``.
+        bridge root is ``<home>/<installation>/codex-native/``.
     :param timeout: Max seconds to wait for the copy to materialize.
     :returns: Path to the session's private ``config.toml``.
     :raises AssertionError: If no session config appears within *timeout*.
     """
-    root = home_dir / ".omnigent" / "codex-native"
+    root = home_dir / USER_DIRNAME / "codex-native"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         matches = sorted(root.glob("*/codex-home/config.toml"))
@@ -123,9 +124,6 @@ def test_codex_native_session_config_preserves_native_effort(
     pwd_dir.mkdir()
 
     env = cli_env()
-    # Isolate the journey from the invoking machine: the bridge root
-    # (~/.omnigent/codex-native) derives from HOME, and the copy *source* from
-    # CODEX_HOME (defaulted to ~/.codex — pinned explicitly for determinism).
     env["HOME"] = str(home_dir)
     env["CODEX_HOME"] = str(codex_src)
 
