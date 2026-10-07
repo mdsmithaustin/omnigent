@@ -1714,7 +1714,7 @@ async def test_watch_runner_silent_on_intentional_stop(
 ) -> None:
     """A host.stop_runner termination is NOT reported as a crash.
 
-    ``_handle_stop`` pops the handle before terminating; the watcher
+    ``_handle_stop`` marks the retained handle as stopping; the watcher
     must read that as intentional and send nothing. A false report
     here would attach a scary "runner process exited" error to every
     cleanly stopped session.
@@ -1768,6 +1768,88 @@ async def test_watch_runner_silent_on_intentional_stop(
     assert tunnel.sent == []
     assert host._unreported_exits == {}
     assert maintenance_reasons == ["runner_stopped"]
+
+
+@pytest.mark.parametrize("tunnel_connected", [True, False])
+async def test_watch_runner_silent_while_stop_termination_is_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tunnel_connected: bool,
+) -> None:
+    """An intentional exit stays quiet while the stop worker still owns the handle."""
+    monkeypatch.setattr("omnigent.host.connect._RUNNER_WATCH_INTERVAL_S", 0.01)
+    host = _make_host_process()
+    maintenance_reasons: list[str] = []
+    host._maintenance_janitor = SimpleNamespace(trigger=maintenance_reasons.append)  # type: ignore[assignment]
+    tunnel = _FakeTunnel()
+    if tunnel_connected:
+        host._ws = tunnel  # type: ignore[assignment]
+    loop = asyncio.get_running_loop()
+    polled = asyncio.Event()
+    terminated = asyncio.Event()
+    release_stop = threading.Event()
+    stop_runner = host._stop_runner_proc
+
+    def _blocking_stop(proc: subprocess.Popen[bytes]) -> None:
+        stop_runner(proc)
+        loop.call_soon_threadsafe(terminated.set)
+        if not release_stop.wait(5.0):
+            raise TimeoutError("test did not release the stop worker")
+
+    monkeypatch.setattr(host, "_stop_runner_proc", _blocking_stop)
+    with subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as proc:
+        handle = _RunnerHandle(proc=proc, log_path=tmp_path / "runner-stop.log")
+        host._runners["runner_stop"] = handle
+        poll = proc.poll
+
+        def _observed_poll() -> int | None:
+            returncode = poll()
+            loop.call_soon_threadsafe(polled.set)
+            return returncode
+
+        monkeypatch.setattr(proc, "poll", _observed_poll)
+        watcher = asyncio.create_task(host._watch_runner("runner_stop"))
+        stop_task: asyncio.Task[HostStopRunnerResultFrame] | None = None
+        try:
+            await asyncio.wait_for(polled.wait(), timeout=5.0)
+            assert proc.returncode is None
+            stop_task = asyncio.create_task(
+                host._handle_stop(
+                    HostStopRunnerFrame(request_id="req_stop_pending", runner_id="runner_stop")
+                )
+            )
+            await asyncio.wait_for(terminated.wait(), timeout=5.0)
+            assert proc.returncode is not None
+            assert handle.stop_requested
+            assert host._runners["runner_stop"] is handle
+            assert not stop_task.done()
+
+            await asyncio.wait_for(watcher, timeout=5.0)
+
+            assert tunnel.sent == []
+            assert host._unreported_exits == {}
+            assert host._runners["runner_stop"] is handle
+            assert maintenance_reasons == []
+
+            release_stop.set()
+            result = await asyncio.wait_for(stop_task, timeout=5.0)
+            assert result.status == "stopped"
+            assert "runner_stop" not in host._runners
+            assert maintenance_reasons == ["runner_stopped"]
+        finally:
+            release_stop.set()
+            if stop_task is not None:
+                await asyncio.gather(stop_task, return_exceptions=True)
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5.0)
 
 
 async def test_watch_runner_silent_on_clean_exit(
