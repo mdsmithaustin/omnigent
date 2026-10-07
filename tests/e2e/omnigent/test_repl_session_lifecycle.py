@@ -26,6 +26,8 @@ import pexpect
 import pytest
 from omnigent_client import OmnigentClient, SessionsChat
 
+from omnigent.installation_defaults import USER_DIRNAME
+from tests.e2e.conftest import poll_session_until_terminal
 from tests.e2e.omnigent._pexpect_harness import (
     PROMPT_READY,
     STATE_SLEEPING,
@@ -94,7 +96,7 @@ def _stop_host_daemon(home: Path) -> None:
 
     :param home: HOME directory used by a REPL subprocess.
     """
-    pid_path = home / ".omnigent" / "host.pid"
+    pid_path = home / USER_DIRNAME / "host.pid"
     if not pid_path.exists():
         return
     try:
@@ -446,7 +448,7 @@ def _runner_pid_from_daemon_log(home: Path, runner_id: str) -> int:
     :returns: The runner subprocess pid.
     :raises AssertionError: When the pid is not found in the daemon log.
     """
-    log_root = home / ".omnigent" / "logs"
+    log_root = home / USER_DIRNAME / "logs"
     logs = sorted((log_root / "host").glob("host-*.log"))
     logs += sorted((log_root / "host-daemon").glob("daemon-*.log"))
     if not logs:
@@ -832,16 +834,32 @@ def test_repl_recover_after_runner_death(
                     base_url=server.base_url,
                     agent_name="repl_session_recover",
                 )
+                with httpx.Client(base_url=server.base_url) as client:
+                    snapshot = client.get(f"/v1/sessions/{first_result.session_id}")
+                    snapshot.raise_for_status()
+                    first_response_id = next(
+                        item["response_id"]
+                        for item in reversed(snapshot.json()["items"])
+                        if item["type"] == "message" and item["data"]["role"] == "user"
+                    )
+                    first_turn = poll_session_until_terminal(
+                        client,
+                        session_id=first_result.session_id,
+                        response_id=first_response_id,
+                        timeout=_TURN_TIMEOUT,
+                    )
+                    assert first_turn["status"] == "completed", first_turn
                 runner_pid = _runner_pid_from_daemon_log(home, first_result.runner_id)
                 os.kill(runner_pid, signal.SIGKILL)
 
+                recovery_marker = "SESSION_RECOVERY_RELAUNCHED_OK"
                 configure_mock_llm(
                     mock_llm_server_url,
-                    [{"text": "SESSION_RECOVER_OK"}],
+                    [{"text": recovery_marker}],
                     key=_MODEL,
                 )
                 submit_prompt(child, "respond with the configured marker again")
-                child.expect(re.escape("SESSION_RECOVER_OK"), timeout=_TURN_TIMEOUT)
+                child.expect(re.escape(recovery_marker), timeout=_TURN_TIMEOUT)
                 child.expect([STATE_SLEEPING, PROMPT_READY], timeout=60)
                 recovered_runner_id = _wait_session_runner_online(
                     server.base_url,
