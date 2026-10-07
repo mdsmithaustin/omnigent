@@ -11,7 +11,8 @@ Use this skill for the Omnigent adapter only. Read [the feature map](features/RE
 
 Run from the repository root. Install the documented development dependencies with `uv sync --group dev`. A nonzero exit means setup failed.
 
-Run the executable helper with a real Prime binary.
+Run the executable helper with a real Prime binary only when its
+[global process-environment discovery](#doctor) is permitted.
 
 ```sh
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
@@ -25,7 +26,17 @@ The default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. Th
 
 ## Doctor
 
-Run this read-only inspection before driving an existing instance or after an unexpected result.
+Doctor checks prerequisites and skips the scenario drive. It is not read-only.
+`main()` always enters its finalizer, including after doctor or a failed prerequisite.
+The finalizer calls `reap_leaked_omnigent_processes` and `owned_prime_processes`.
+Both enumerate global process candidates and read process environments before
+attributing ownership. Matched processes can receive terminate and kill signals,
+and the helper removes its scratch directory.
+
+This existing cleanup limitation prevents verification under a restriction on
+global process-environment inspection. Under that restriction, do not run
+`verify.py`, including `--doctor`. Doctor success proves prerequisites only,
+not a read-only operation or a native turn.
 
 ```sh
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent --doctor
@@ -61,7 +72,7 @@ The helper deletes its owned scratch session through the public API while the se
 
 ## Helpers
 
-`scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` performs prerequisites only. `--expected WRONG` supplies a negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
+`scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` skips the drive but still runs the [unconditional finalizer](#doctor). `--expected WRONG` supplies a negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
 
 `--inspect-seconds 120` retains the live session for two minutes after the assertions, then runs cleanup. The helper prints the exact conversation URL. The API server skips the bundled web UI. To inspect the conversation in a browser, run the repository's Vite development server with `OMNIGENT_URL` set to that API server's origin. Evidence and assertions remain the same.
 
@@ -316,9 +327,9 @@ The configured private basic-response attempt at
 `4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
 Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
-zero. Settlement failed and the daemon remained retained. Basic Prime response
-is still unverified. The durable public Prime 0.9.6 installation has version and
-hash checks, but no successful model-response baseline. Neither this result nor
+zero. Settlement failed and the daemon remained retained. That attempt did not
+establish a successful basic response. The installation's version and hash
+checks did not establish a model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
 
@@ -326,7 +337,15 @@ A later sanitized basic-receipt review records the actual basic response as
 FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
 known PID/socket absence do not prove normal/full settlement, a successful
 response, exhaustive descendants, credential-source comparison, removal, or
-future custody. A successful model-response baseline remains unverified.
+future custody. That failed attempt did not establish a model-response baseline.
+
+After the operator reported normal xAI login, a later direct Prime 0.9.6 print
+request returned exactly `OK` followed by a newline and exited zero. It requested `xai/grok-4.7`
+and thinking `off`. Active provider, model, thinking, and effort were not
+independently observed. The requested settings do not establish a credential class.
+This direct CLI baseline does not qualify Omnigent terminal and HTTP responses,
+installed-source equivalence, authentic resource Source and budgets, or full
+descendant settlement. Earlier failed receipts remain failed.
 
 For a failed native reply, inspect `<operation>-native-failure.json` separately
 from `<operation>-native-predicates.json`. The latter records

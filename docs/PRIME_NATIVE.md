@@ -14,8 +14,12 @@ Complete the selected flow as described in the
 [pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
 Saved authentication is separate from the current provider and model labels.
 A listed or selected model does not prove that a request will succeed.
-Omnigent copies `auth.json`, `settings.json`, and `models.json` into
-private conversation state without changing the source files.
+Omnigent seeds `auth.json`, `settings.json`, and `models.json` from the host's
+normal Prime configuration only when each source file exists and its private
+conversation copy is absent. It does not change the source files. Resuming a
+conversation preserves existing private copies, so later host login or settings
+changes are not automatically recopied. Configure the host's source directory
+before creating a new conversation. Prime resolves authentication from that configuration.
 Launch is rejected on native Windows because the published default supervisor
 named pipe does not identify a private conversation for scoped shutdown.
 
@@ -191,6 +195,15 @@ retains the runtime for a later cleanup attempt. The public
 the private socket for session cleanup. Native Windows launch is rejected
 because Prime's default named pipe is shared.
 
+The current launch path reserves and prepares the private runtime, then calls
+`stop_prime_runtime` before dispatching even a fresh terminal. Ownership discovery
+enumerates same-user Prime and matching Python candidates and reads
+`process.environ()` before deciding whether they belong to this conversation.
+The shutdown wait repeats that scan. This is an existing lifecycle limitation,
+not a guarantee of inspection limited to recorded owned identities. Native
+terminal and HTTP verification remains blocked when global process-environment
+inspection is prohibited. A separate external observer does not bypass this caller.
+
 Prime is a fork of Pi that now develops independently, as described in
 [Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/README.md).
 The adapters share
@@ -251,7 +264,9 @@ bounded passing cases and retain failures as separate evidence.
 
 The project skill drives a real Prime binary, Omnigent server, host, runner,
 and terminal. A local model endpoint returns a fixed reply to prove message
-transport without provider credentials.
+transport without provider credentials. Its [unconditional finalizer](../.agents/skills/verify-prime-native/SKILL.md#doctor)
+enumerates global process candidates and reads process environments, including
+with `--doctor`. Do not run this helper when that inspection is prohibited.
 
 ```sh
 uv sync --group dev
@@ -350,9 +365,9 @@ The configured private basic-response attempt at
 `4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
 Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
-zero. Settlement failed and the daemon remained retained. Basic Prime response
-is still unverified. The durable public Prime 0.9.6 installation has version and
-hash checks, but no successful model-response baseline. Neither this result nor
+zero. Settlement failed and the daemon remained retained. That attempt did not
+establish a successful basic response. The installation's version and hash
+checks did not establish a model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
 
@@ -360,7 +375,15 @@ A later sanitized basic-receipt review records the actual basic response as
 FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
 known PID/socket absence do not prove normal/full settlement, a successful
 response, exhaustive descendants, credential-source comparison, removal, or
-future custody. A successful model-response baseline remains unverified.
+future custody. That failed attempt did not establish a model-response baseline.
+
+After the operator reported normal xAI login, a later direct Prime 0.9.6 print
+request returned exactly `OK` followed by a newline and exited zero. It requested `xai/grok-4.7`
+and thinking `off`. Active provider, model, thinking, and effort were not
+independently observed. The requested settings do not establish a credential class.
+This direct CLI baseline does not qualify Omnigent terminal and HTTP responses,
+installed-source equivalence, authentic resource Source and budgets, or full
+descendant settlement. Earlier failed receipts remain failed.
 
 For a failed reply, inspect the current `<operation>-native-failure.json`.
 The separate predicates receipt marks stale state as `previous_poll`. Missing,
