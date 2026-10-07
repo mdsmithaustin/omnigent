@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests._helpers.server_runner import server_runner
 
 # Every HTTP call targets 127.0.0.1; bypass any CI egress proxy autodetection.
@@ -134,10 +135,10 @@ def _seed_history_with_duplicate_output(database_uri: str, session_id: str) -> N
 
 def _written_pi_session_file(runner_home: Path, session_id: str) -> Path | None:
     """Locate the synthesized Pi session JSONL under the runner's bridge dir,
-    ``$HOME/.omnigent/pi-native/<sha256(id)[:32]>/sessions/<stamp>_<sid>.jsonl``.
+    ``$HOME/<installation>/pi-native/<sha256(id)[:32]>/sessions/<stamp>_<sid>.jsonl``.
     """
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
-    sessions_dir = runner_home / ".omnigent" / "pi-native" / digest / "sessions"
+    sessions_dir = runner_home / USER_DIRNAME / "pi-native" / digest / "sessions"
     if not sessions_dir.is_dir():
         return None
     for entry in sessions_dir.iterdir():
