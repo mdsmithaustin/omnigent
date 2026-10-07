@@ -371,9 +371,21 @@
       "name": "skill-delivery-ci-250bb7f59bdf",
       "reason": "test: remove fixture suppressions and close host logs.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "ac1f65b9f5d10919889385f4b1f3c81b0fa0f2fb",
+      "name": "skill-delivery-ci-ac1f65b9f5d1",
+      "reason": "Retain the reviewed CI repair source pin in the ordered addon history.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "33e59cd14a7afb5c40a709ad5b5060f63dadef6e",
+      "name": "skill-delivery-ci-33e59cd14a7a",
+      "reason": "Wait for the actual asynchronous selector bridge call before checking request identity, progress and cancellation.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "250bb7f59bdf8681f232d65fcf4d186190e5dab2",
+  "payload_commit": "33e59cd14a7afb5c40a709ad5b5060f63dadef6e",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
