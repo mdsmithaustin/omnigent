@@ -149,6 +149,10 @@ def test_run_harness_live_matrix_covers_registered_coding_harnesses() -> None:
     Their e2e coverage is via native launcher smoke tests (tracked
     separately as native-launcher PTY/REPL smoke tests).
 
+    ``prime-native`` likewise needs the bridge and terminal created by
+    ``omnigent prime-native``. Its coverage is the dedicated project
+    ``verify-prime-native`` helper and existing Prime unit/native tests.
+
     ``cursor`` is excluded because this matrix authenticates through
     the Databricks gateway/profile, while cursor-agent talks only to
     Cursor's own backend and rejects gateway model ids.
@@ -247,6 +251,7 @@ def test_run_harness_live_matrix_covers_registered_coding_harnesses() -> None:
         "claude-native",
         "codex-native",
         "pi-native",
+        "prime-native",
         "opencode-native",
         "cursor",
         "cursor-native",
