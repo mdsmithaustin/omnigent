@@ -2486,7 +2486,8 @@ def _persist_external_model_options(
     keep the contract explicit.
 
     Stores into :data:`_pushed_model_options_cache` (which a browser reload
-    does NOT clear — the extension only pushes on session start) and publishes
+    does NOT clear — the extension pushes on session start, and prime-native
+    also re-pushes on each model change) and publishes
     ``session.model_options`` so open clients re-read the snapshot. An empty
     list evicts the entry rather than caching nothing.
 
