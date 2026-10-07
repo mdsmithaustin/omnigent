@@ -281,9 +281,21 @@
       "name": "codex-admission-7be1cedd4d91",
       "reason": "Repair Codex source admission with the authenticated runner client, preserve security and client lifetime, add HTTP regressions, and prepare revision .3 metadata.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "43464645ee408b17ec23aaead20a25da2358136c",
+      "name": "release-policy-pin-v3",
+      "reason": "Preserve the published revision 3 source pin in the linear addon history.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "515c9d846416fc0b4ce8664343a8d9f211622af2",
+      "name": "skill-delivery-ux",
+      "reason": "Offer Check delivery only for uncertain invocations and retain confirmed outcomes across browser recovery.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "7be1cedd4d91f9b9fe276707fb4c0346676b8023",
+  "payload_commit": "515c9d846416fc0b4ce8664343a8d9f211622af2",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
