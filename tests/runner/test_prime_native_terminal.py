@@ -43,6 +43,7 @@ async def test_cancel_during_prime_reservation_allows_later_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
     entered = asyncio.Event()
     release = threading.Event()
