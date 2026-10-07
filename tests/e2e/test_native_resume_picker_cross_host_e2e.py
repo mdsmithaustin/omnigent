@@ -245,14 +245,14 @@ def _spawn_host(root: Path, name: str, server_url: str) -> tuple[subprocess.Pope
     (config_home / "config.yaml").write_text(
         yaml.safe_dump({"host": {"host_id": host_id, "name": f"picker-e2e-{name}"}})
     )
-    log = open(root / f"host-{name}.log", "w")  # noqa: SIM115 — Popen lifetime
-    proc = subprocess.Popen(
-        [_python(), "-m", "omnigent.host._daemon_entry", "--server", server_url],
-        env=_subprocess_env(home),
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        cwd=str(home),
-    )
+    with open(root / f"host-{name}.log", "w") as log:
+        proc = subprocess.Popen(
+            [_python(), "-m", "omnigent.host._daemon_entry", "--server", server_url],
+            env=_subprocess_env(home),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            cwd=str(home),
+        )
     with _client() as c:
         deadline = time.monotonic() + _HOST_ONLINE_TIMEOUT_S
         while time.monotonic() < deadline:
