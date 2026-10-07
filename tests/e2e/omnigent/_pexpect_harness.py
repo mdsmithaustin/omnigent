@@ -36,6 +36,8 @@ from tempfile import mkdtemp
 import pexpect
 from omnigent_ui_sdk import UserConfig, save_user_config
 
+from omnigent.installation_defaults import USER_DIRNAME
+
 # Default PTY geometry. Large enough that the REPL's layout fits
 # without wrapping assistant text onto many rows (which would
 # scatter response content across ANSI control sequences).
@@ -130,7 +132,7 @@ def ensure_repl_test_theme_env(env: Mapping[str, str]) -> dict[str, str]:
 
     config_home = prepared.get("OMNIGENT_CONFIG_HOME")
     config_path = (
-        Path(config_home).expanduser() if config_home else home / ".omnigent"
+        Path(config_home).expanduser() if config_home else home / USER_DIRNAME
     ) / "config.yaml"
     save_user_config(UserConfig(theme="light"), config_path)
     return prepared
