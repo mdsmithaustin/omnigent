@@ -75,7 +75,7 @@ class _RunnerWedger:
 
 def _spawn_host_daemon(tmp_path: Path, base_url: str) -> tuple[subprocess.Popen[bytes], str, Path]:
     """Start an isolated host; direct spawn gives SIGSTOP time to land."""
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config-home"
     omni_dir.mkdir(parents=True, exist_ok=True)
     host_id = uuid.uuid4().hex
     (omni_dir / "config.yaml").write_text(
@@ -89,6 +89,7 @@ def _spawn_host_daemon(tmp_path: Path, base_url: str) -> tuple[subprocess.Popen[
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         "OMNIGENT_RUNNER_ZYGOTE": "0",
         "PYTHONPATH": os.pathsep.join([str(_REPO_ROOT), os.environ.get("PYTHONPATH", "")]).rstrip(
             os.pathsep
