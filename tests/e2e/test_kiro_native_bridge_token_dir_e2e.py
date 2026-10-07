@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from omnigent._platform import stable_user_id
+from omnigent.installation_defaults import NATIVE_TMP_PREFIX
 
 pytestmark = pytest.mark.skipif(
     os.name != "posix",
@@ -41,7 +42,8 @@ token_path = bridge_dir / "bridge.json"
 if token_path.is_file():
     result["token_written"] = True
     result["token_realpath"] = os.path.realpath(token_path)
-ancestor = knb.bridge_root().parent  # $TMPDIR/omnigent-<uid>
+ancestor = knb.bridge_root().parent
+result["ancestor_path"] = str(ancestor)
 if ancestor.exists() or ancestor.is_symlink():
     result["ancestor_mode"] = stat.S_IMODE(os.lstat(ancestor).st_mode)
 print(json.dumps(result))
@@ -69,7 +71,7 @@ def _run_token_write(tmpdir: Path, session_id: str) -> dict:
 
 def _uid_scoped_dirname() -> str:
     """Name of the uid-scoped temp dir kiro-native anchors under."""
-    return f"omnigent-{stable_user_id()}"
+    return f"{NATIVE_TMP_PREFIX}-{stable_user_id()}"
 
 
 def test_symlinked_ancestor_refuses_token_write(tmp_path: Path) -> None:
@@ -78,10 +80,14 @@ def test_symlinked_ancestor_refuses_token_write(tmp_path: Path) -> None:
     hostile_tmp.mkdir()
     attacker = tmp_path / "attacker"
     attacker.mkdir()
-    (hostile_tmp / _uid_scoped_dirname()).symlink_to(attacker, target_is_directory=True)
+    uid_dir = hostile_tmp / _uid_scoped_dirname()
+    uid_dir.symlink_to(attacker, target_is_directory=True)
 
     result = _run_token_write(hostile_tmp, "sess-symlink-ancestor")
 
+    assert result["ancestor_path"] == str(uid_dir), (
+        f"attacked {uid_dir}, but kiro-native used {result['ancestor_path']}"
+    )
     leaked = list(attacker.rglob("bridge.json"))
     assert result["raised"] is not None and not result["token_written"] and not leaked, (
         "kiro-native wrote the relay token through a symlinked bridge ancestor "
@@ -101,6 +107,9 @@ def test_world_writable_ancestor_is_not_trusted_for_token_write(tmp_path: Path) 
 
     result = _run_token_write(hostile_tmp, "sess-world-writable-ancestor")
 
+    assert result["ancestor_path"] == str(uid_dir), (
+        f"attacked {uid_dir}, but kiro-native used {result['ancestor_path']}"
+    )
     if result["token_written"]:
         # Writing is safe only after the ancestor becomes owner-only.
         assert result["ancestor_mode"] is not None and (result["ancestor_mode"] & 0o077) == 0, (
