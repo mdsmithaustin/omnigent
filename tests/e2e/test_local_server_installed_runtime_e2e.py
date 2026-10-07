@@ -93,7 +93,6 @@ def _run_background_server(
 
 
 def _pidfile_path(home: Path) -> Path:
-    """Return the server pidfile path under the isolated home."""
     return home / USER_DIRNAME / "local_server.pid"
 
 
