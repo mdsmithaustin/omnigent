@@ -18,8 +18,12 @@ from typing import Any
 
 import pytest
 
+from omnigent.harnesses.codex_native import bridge as codex_bridge
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e._codex_loopback_resume import run_cold_resume_turn, write_cold_resume_rollout
 from tests.e2e._harness_probes import cli_unavailable_reason
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 _THREAD_ID = "019e96aa-0be2-7343-8d3b-6f914d60936c"
 _SESSION_ID = "conv_cold_resume_namespaced_tool"
@@ -68,6 +72,7 @@ def _stored_session_items() -> list[dict[str, Any]]:
 async def test_native_cold_resume_replays_namespaced_tool_call_with_namespace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    native_source_server: NativeSourceServer,
 ) -> None:
     """The model receives the replayed call with the namespace it was issued under."""
     reason = cli_unavailable_reason("codex")
@@ -84,6 +89,7 @@ async def test_native_cold_resume_replays_namespaced_tool_call_with_namespace(
     # Keep the real harness from importing the developer's Codex config,
     # login, hooks, or plugins into this isolated native process.
     monkeypatch.setenv("CODEX_HOME", str(source_home))
+    monkeypatch.setattr(codex_bridge, "_BRIDGE_ROOT", tmp_path / USER_DIRNAME / "codex-native")
     codex = shutil.which("codex")
     assert codex is not None
 
@@ -105,6 +111,7 @@ async def test_native_cold_resume_replays_namespaced_tool_call_with_namespace(
         child_home=child_home,
         thread_id=_THREAD_ID,
         session_id=_SESSION_ID,
+        ap_server_url=native_source_server.url,
         prompt="Continue after the cold resume.",
     )
 
