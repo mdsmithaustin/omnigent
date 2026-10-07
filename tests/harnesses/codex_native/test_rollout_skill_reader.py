@@ -117,4 +117,8 @@ def test_atomically_replaced_larger_rollout_is_reparsed_from_the_start(tmp_path:
 
 def test_missing_rollout_or_unsafe_thread_id_yields_no_skills(tmp_path: Path) -> None:
     assert RolloutSkillReader(tmp_path, _THREAD).read_turn_skills("t1", None) == []
-    assert RolloutSkillReader(tmp_path, "../*").read_turn_skills("t1", None) == []
+
+    path, reader = _rollout(tmp_path)
+    _append(path, [*_turn_rows("t1"), _skill_row("skill-a", "A")])
+    assert _ids(reader.read_turn_skills("t1", None)) == ["skill-a"]
+    assert RolloutSkillReader(tmp_path, "*").read_turn_skills("t1", None) == []
