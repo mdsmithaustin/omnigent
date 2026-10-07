@@ -10,7 +10,7 @@ CLI under a pseudo-TTY (pexpect):
    Anthropic surface (here a local mock gateway that 404s its OpenAI surface
    with an empty body, exactly like the reported gateway).
 2. Launch a pi-native session (``omnigent pi``).
-3. Send a turn.
+3. Send a turn if launch has not already warned or refused the model.
 
 On the buggy build the turn is silently POSTed to the gateway's OpenAI
 ``/chat/completions`` surface and the Pi TUI shows ``Error: 404 status code
@@ -144,8 +144,6 @@ def _routing_warning_present(items: list[dict[str, Any]]) -> bool:
         # The raw misroute failure is NOT the routing warning under test.
         if "404 status code" in message and code != "pi_credentials_unresolved":
             continue
-        if code == "pi_credentials_unresolved":
-            return True
         low = message.lower()
         if _CLAUDE_MODEL in low and any(
             token in low
@@ -153,8 +151,6 @@ def _routing_warning_present(items: list[dict[str, Any]]) -> bool:
                 "rout",
                 "family",
                 "anthropic",
-                "openai",
-                "gateway",
                 "can't be served",
                 "won't reply",
             )
@@ -167,6 +163,40 @@ def _fetch_items(server: str, conv: str) -> list[dict[str, Any]]:
     resp = httpx.get(f"{server}/v1/sessions/{conv}/items", timeout=30)
     resp.raise_for_status()
     return list(resp.json().get("data", []))
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "expected"),
+    [
+        ("", "", False),
+        ("RuntimeError", "Pi model error: 404 status code (no body)", False),
+        ("pi_credentials_unresolved", "Gateway credentials missing.", False),
+        (
+            "pi_credentials_unresolved",
+            "Model 'gpt-other' requires another routing family.",
+            False,
+        ),
+        (
+            "pi_credentials_unresolved",
+            "Model 'claude-fable-5-1' needs gateway credentials.",
+            False,
+        ),
+        (
+            "pi_credentials_unresolved",
+            "Model 'claude-fable-5-1' requires the Anthropic family instead of OpenAI routing.",
+            True,
+        ),
+        (
+            "RuntimeError",
+            "Model 'claude-fable-5-1' can't be served by this provider.",
+            True,
+        ),
+    ],
+)
+def test_routing_warning_requires_model_family_explanation(
+    code: str, message: str, expected: bool
+) -> None:
+    assert _routing_warning_present([{"code": code, "message": message}]) is expected
 
 
 def test_pi_native_openai_only_gateway_claude_model_fails_loud(
@@ -222,29 +252,23 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
         assert match, f"could not parse Web UI url: {web_url!r}"
         server, conv = match.group(1), match.group(2)
 
-        # The Pi TUI boots with the resolved Claude-family model selected.
-        child.expect(_CLAUDE_MODEL, timeout=_LAUNCH_TIMEOUT)
-        time.sleep(8)  # let prompt_toolkit's input loop go live before typing
-
-        child.send("Reply with exactly the single word: PONG")
-        time.sleep(1)
-        child.send("\r")
-
-        # Give the turn time to run: on the buggy build it POSTs to the
-        # gateway's OpenAI surface and 404s. Wait for that, best-effort - the
-        # fix may instead refuse/reroute, so don't hard-require the 404.
-        with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
-            child.expect(r"404 status code", timeout=90)
-
-        # Poll the session for the routing warning the fix must surface.
         deadline = time.monotonic() + 60
         items: list[dict[str, Any]] = []
         warned = False
+        turn_sent = False
         while time.monotonic() < deadline:
             items = _fetch_items(server, conv)
             if _routing_warning_present(items):
                 warned = True
                 break
+            if not turn_sent:
+                with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
+                    child.expect(_CLAUDE_MODEL, timeout=3)
+                    time.sleep(8)
+                    child.send("Reply with exactly the single word: PONG")
+                    time.sleep(1)
+                    child.send("\r")
+                    turn_sent = True
             time.sleep(3)
 
         # Diagnostic context for a failure: what the gateway actually saw and
@@ -263,6 +287,9 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
             "Expected a fail-loud routing warning (e.g. a "
             "'pi_credentials_unresolved' notice) instead of a silent "
             "'404 status code (no body)'."
+        )
+        assert all(model == _CLAUDE_MODEL for model in posted_models), (
+            f"gateway POST models={posted_models!r}; expected {_CLAUDE_MODEL!r}"
         )
     finally:
         _teardown(child, env)
