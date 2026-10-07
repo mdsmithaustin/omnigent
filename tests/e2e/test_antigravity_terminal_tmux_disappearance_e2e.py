@@ -22,11 +22,15 @@ import httpx
 import pytest
 
 import omnigent.inner.terminal as terminal_mod
+from omnigent.harnesses.antigravity_native import bridge as antigravity_bridge
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec, TerminalEnvSpec
 from omnigent.inner.terminal import TerminalInstance
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner import create_runner_app
 from omnigent.runner.resource_registry import SessionResourceRegistry
 from omnigent.terminals import TerminalRegistry
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="requires tmux on PATH")
 
@@ -201,17 +205,20 @@ async def test_partial_send_reports_error_without_replaying_input(
 
 @pytest.mark.asyncio
 async def test_runner_keeps_required_terminal_resource_during_probe_outage(
-    tmp_path: Path, probe_outage: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    probe_outage: tuple[Path, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    native_source_server: NativeSourceServer,
 ) -> None:
     outage_flag, probes, _ = probe_outage
     monkeypatch.setattr(terminal_mod, "_IDLE_POLL_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(
+        antigravity_bridge, "_BRIDGE_ROOT", tmp_path / USER_DIRNAME / "antigravity-native"
+    )
     terminals = TerminalRegistry()
     resources = SessionResourceRegistry(terminal_registry=terminals)
     session_id = "tmux-outage-session"
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
-        base_url="http://server",
-    ) as server_client:
+    async with httpx.AsyncClient(base_url=native_source_server.url) as server_client:
         app = create_runner_app(
             server_client=server_client, terminal_registry=terminals, resource_registry=resources
         )
