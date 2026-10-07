@@ -15,7 +15,7 @@ import pytest
 
 from omnigent.harnesses.claude_native import bridge as claude_bridge
 from omnigent.harnesses.codex_native import bridge as codex_bridge
-from omnigent.harnesses.codex_native.main import _find_codex_rollout
+from omnigent.harnesses.codex_native.bridge import find_codex_rollout
 from tests.e2e.test_host_claude_native_e2e import _workspace_trusted_in_claude_config
 from tests.e2e.test_host_codex_native_e2e import (
     _assistant_text,
@@ -203,7 +203,7 @@ def test_native_skill_invocation(live_server, http_client, tmp_path, monkeypatch
             if state:
                 result["native_session_id"] = state.thread_id
                 result["codex_home"] = state.codex_home
-                transcript = _find_codex_rollout(Path(state.codex_home), state.thread_id)
+                transcript = find_codex_rollout(Path(state.codex_home), state.thread_id)
         if transcript and transcript.exists():
             result["native_transcript_path"] = str(transcript)
             shutil.copyfile(transcript, output / f"{label}-native.jsonl")

@@ -1881,7 +1881,9 @@ async def test_persist_codex_compaction_item_posts_uuid_window_id(tmp_path: Path
     import json as _json
 
     codex_home = codex_home_for_bridge_dir(tmp_path)
-    rollout = codex_home / "sessions" / "2026" / "09" / "05" / "rollout-thread_1.jsonl"
+    rollout = (
+        codex_home / "sessions" / "2026" / "09" / "05" / "rollout-2026-09-05T00-00-00-0a1b2c.jsonl"
+    )
     rollout.parent.mkdir(parents=True)
     rollout.write_text(
         _json.dumps(
@@ -1907,7 +1909,7 @@ async def test_persist_codex_compaction_item_posts_uuid_window_id(tmp_path: Path
         CodexNativeBridgeState(
             session_id="conv_codex",
             socket_path="ws://127.0.0.1:9999",
-            thread_id="thread_1",
+            thread_id="0a1b2c",
             codex_home=str(codex_home),
             cwd="/tmp/workspace",
         ),

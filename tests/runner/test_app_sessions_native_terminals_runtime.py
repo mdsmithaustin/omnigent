@@ -842,7 +842,6 @@ async def test_auto_create_codex_terminal_fork_clones_rollout_and_resumes(
     :returns: None.
     """
     import omnigent.harnesses.codex_native.app_server as codex_app_mod
-    from omnigent.harnesses.codex_native import main as codex_native
     from omnigent.harnesses.codex_native.bridge import (
         bridge_dir_for_bridge_id,
         codex_home_for_bridge_dir,
@@ -1104,7 +1103,7 @@ async def test_auto_create_codex_terminal_fork_clones_rollout_and_resumes(
     assert len(patched_external_ids) == 1
     minted = patched_external_ids[0]
     assert minted != source_thread
-    assert codex_native._CODEX_THREAD_ID_RE.fullmatch(minted)
+    assert codex_native_bridge.CODEX_THREAD_ID_RE.fullmatch(minted)
     assert preload_calls == [(app_server.listen_url, minted)]
     assert forward_calls and forward_calls[0]["thread_id"] == minted
 
@@ -1146,7 +1145,6 @@ async def test_auto_create_codex_terminal_fork_builds_rollout_from_items_and_res
     :returns: None.
     """
     import omnigent.harnesses.codex_native.app_server as codex_app_mod
-    from omnigent.harnesses.codex_native import main as codex_native
     from omnigent.harnesses.codex_native.bridge import (
         bridge_dir_for_bridge_id,
         codex_home_for_bridge_dir,
@@ -1379,7 +1377,7 @@ async def test_auto_create_codex_terminal_fork_builds_rollout_from_items_and_res
     # A thread id was minted, pre-set on AP, and used for resume.
     assert len(patched_external_ids) == 1
     minted = patched_external_ids[0]
-    assert codex_native._CODEX_THREAD_ID_RE.fullmatch(minted)
+    assert codex_native_bridge.CODEX_THREAD_ID_RE.fullmatch(minted)
     assert preload_calls == [(app_server.listen_url, minted)]
     assert forward_calls and forward_calls[0]["thread_id"] == minted
 

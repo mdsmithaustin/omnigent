@@ -7,7 +7,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 import secrets
 import shutil
 import socket
@@ -60,10 +59,12 @@ from omnigent.harnesses.codex_native.app_server import (
 )
 from omnigent.harnesses.codex_native.bridge import (
     CODEX_NATIVE_BRIDGE_ID_LABEL_KEY,
+    CODEX_THREAD_ID_RE,
     CodexNativeBridgeState,
     bridge_dir_for_bridge_id,
     clear_bridge_state,
     codex_home_for_bridge_dir,
+    find_codex_rollout,
     prepare_bridge_dir,
     read_bridge_state,
     socket_path_for_bridge_dir,
@@ -123,11 +124,6 @@ _RUNNER_UNAVAILABLE_ERROR_CODE = "runner_unavailable"
 _CONFLICT_ERROR_CODE = "conflict"
 _RUNNER_OFFLINE_MESSAGE_FRAGMENT = " is offline for conversation "
 _UNBOUND_RUNNER_MESSAGE_FRAGMENT = "not bound to a runner"
-# Codex thread ids are UUIDv7 (time-ordered), e.g.
-# ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``. Restricting the cloned id to
-# hex + hyphens keeps it safe to interpolate into a rollout filename and a
-# ``codex resume`` argument (no path separators / traversal).
-_CODEX_THREAD_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
 
 
 @dataclass(frozen=True)
@@ -1740,35 +1736,6 @@ def _mint_codex_thread_id() -> str:
     return str(uuid.UUID(bytes=bytes(value)))
 
 
-def _find_codex_rollout(codex_home: Path, thread_id: str) -> Path | None:
-    """
-    Find a Codex rollout file by thread id within a ``CODEX_HOME``.
-
-    Codex persists each thread's history as a single append-only JSONL
-    rollout at
-    ``$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<ISO-ts>-<thread_id>.jsonl``,
-    where the trailing ``<thread_id>`` matches the thread's
-    ``session_meta.id``. We locate it by that filename suffix.
-
-    :param codex_home: A per-session private ``CODEX_HOME``, e.g.
-        ``Path("~/.omnigent/codex-native/<hash>/codex-home")``.
-    :param thread_id: Codex thread id / rollout stem, e.g.
-        ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``.
-    :returns: Path to the most recent matching rollout, or ``None`` when
-        none exists on this host.
-    """
-    if not _CODEX_THREAD_ID_RE.fullmatch(thread_id):
-        return None
-    sessions = codex_home / "sessions"
-    if not sessions.is_dir():
-        return None
-    matches = [p for p in sessions.glob(f"**/rollout-*-{thread_id}.jsonl") if p.is_file()]
-    if not matches:
-        return None
-    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return matches[0]
-
-
 def _copy_rollout_with_cwd(
     *, source: Path, target: Path, clone_workspace: Path, new_thread_id: str
 ) -> None:
@@ -1873,12 +1840,12 @@ def _clone_codex_rollout(
         (caller launches fresh in that case).
     :raises click.ClickException: If the source rollout is malformed.
     """
-    if not _CODEX_THREAD_ID_RE.fullmatch(source_thread_id):
+    if not CODEX_THREAD_ID_RE.fullmatch(source_thread_id):
         return None
-    if not _CODEX_THREAD_ID_RE.fullmatch(target_thread_id):
+    if not CODEX_THREAD_ID_RE.fullmatch(target_thread_id):
         return None
     source_home = codex_home_for_bridge_dir(bridge_dir_for_bridge_id(source_session_id))
-    source = _find_codex_rollout(source_home, source_thread_id)
+    source = find_codex_rollout(source_home, source_thread_id)
     if source is None:
         return None
     # Preserve the source's ``sessions/<YYYY>/<MM>/<DD>/`` layout; only swap
@@ -1957,7 +1924,7 @@ async def _ensure_local_codex_resume_rollout(
         valid local fallback exists, if the rollout cannot be written, or if
         the persisted Codex thread id is unsafe for use in a rollout filename.
     """
-    if not _CODEX_THREAD_ID_RE.fullmatch(external_session_id):
+    if not CODEX_THREAD_ID_RE.fullmatch(external_session_id):
         raise click.ClickException(
             f"Cannot resume Codex session {session_id!r}: persisted thread id "
             f"{external_session_id!r} is not a safe Codex rollout id."
@@ -1966,7 +1933,7 @@ async def _ensure_local_codex_resume_rollout(
     try:
         items = await _fetch_all_session_items_for_codex_resume(client, session_id)
     except _CodexResumeHistoryUnavailableError:
-        existing = _find_codex_rollout(codex_home, external_session_id)
+        existing = find_codex_rollout(codex_home, external_session_id)
         if existing is not None and _is_resumable_codex_rollout(
             existing, external_session_id=external_session_id
         ):
@@ -2050,7 +2017,7 @@ def _codex_resume_rollout_path(codex_home: Path, external_session_id: str) -> Pa
         ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``.
     :returns: Rollout JSONL path to overwrite or create.
     """
-    existing = _find_codex_rollout(codex_home, external_session_id)
+    existing = find_codex_rollout(codex_home, external_session_id)
     if existing is not None:
         return existing
     now = datetime.now(timezone.utc)

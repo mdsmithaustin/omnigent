@@ -37,6 +37,7 @@ from omnigent.harnesses.codex_native.bridge import (
     DeveloperInstructionsReadState,
     clear_active_turn_id_if_matches,
     codex_home_for_bridge_dir,
+    find_codex_rollout,
     pending_mcp_servers,
     read_bridge_state,
     read_codex_config_developer_instructions_state,
@@ -7108,15 +7109,9 @@ async def _persist_codex_compaction_item(
         try:
             state = read_bridge_state(bridge_dir)
             if state is not None:
-                codex_home = Path(state.codex_home)
-                thread_id = state.thread_id
-                rollout_files = sorted(
-                    codex_home.glob(f"sessions/**/*rollout-*{thread_id}.jsonl"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if rollout_files:
-                    compacted = _read_compacted_history(rollout_files[0])
+                rollout = find_codex_rollout(Path(state.codex_home), state.thread_id)
+                if rollout is not None:
+                    compacted = _read_compacted_history(rollout)
         except Exception:  # noqa: BLE001
             _logger.debug(
                 "Failed to read codex rollout for compaction persist",

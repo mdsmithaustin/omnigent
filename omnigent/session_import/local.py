@@ -17,7 +17,7 @@ from omnigent.harnesses.claude_native.bridge import (
     ClaudeTranscriptItem,
     read_transcript_items_from_offset,
 )
-from omnigent.harnesses.codex_native.main import _CODEX_THREAD_ID_RE, _find_codex_rollout
+from omnigent.harnesses.codex_native.bridge import CODEX_THREAD_ID_RE, find_codex_rollout
 from omnigent.harnesses.kimi_native.credentials import resolve_user_kimi_home
 from omnigent.harnesses.kimi_native.forwarder import (
     read_kimi_wire_items,
@@ -347,7 +347,7 @@ def _recent_local_sessions_with_recency(
         candidates = []
         for path in rollouts:
             session_id = path.stem[-36:]
-            if not _CODEX_THREAD_ID_RE.fullmatch(session_id):
+            if not CODEX_THREAD_ID_RE.fullmatch(session_id):
                 continue
             # Read the rollout's source (one line) and skip non-interactive
             # runs (exec / mcp / sub-agent / internal) that Codex itself hides.
@@ -739,7 +739,7 @@ def load_codex_session(
     configured_home = os.environ.get("CODEX_HOME")
     home = codex_home or (Path(configured_home).expanduser() if configured_home else None)
     home = home or Path.home() / ".codex"
-    rollout_path = _find_codex_rollout(home, session_id) or _find_archived_codex_rollout(
+    rollout_path = find_codex_rollout(home, session_id) or _find_archived_codex_rollout(
         home, session_id
     )
     if rollout_path is None:
