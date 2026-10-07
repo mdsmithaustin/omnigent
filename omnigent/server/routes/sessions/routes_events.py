@@ -2842,7 +2842,8 @@ def register_events_routes(
         # whose MCP startup never settled clean would leak its entry.
         _session_mcp_startup_cache.pop(session_id, None)
         # Same for the extension-pushed model catalog: kept across reloads
-        # while the session exists (the extension only pushes on start), so a
+        # while the session exists (the extension pushes on start and prime-native
+        # also re-pushes on model change), so a
         # deleted session would otherwise leak its entry for the process life.
         _pushed_model_options_cache.pop(session_id, None)
         # Drop the deleted session's per-user read-state from every user's
