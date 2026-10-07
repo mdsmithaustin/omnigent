@@ -383,6 +383,11 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
                     break
                 if process.uids().real != os.getuid():
                     break
+                if not prime_name and tuple(process.cmdline()[1:3]) not in {
+                    ("-m", "rlm.repl"),
+                    ("-m", "omnigent.harnesses.prime_native.process"),
+                }:
+                    break
                 if process.environ().get("PRIME_AGENT_CODING_AGENT_DIR") == str(paths.agent_dir):
                     if claim is not None and process.pid == claim.pid:
                         break
