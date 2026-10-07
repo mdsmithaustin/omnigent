@@ -99,7 +99,7 @@ def _spawn_host_daemon(
     :param closed_console: Standard stream backed by an OS pipe with no reader.
     :returns: The spawned daemon handle and its host_id.
     """
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True, exist_ok=True)
     # Bare 32-char hex — host_id is a Uuid16 column, and the API returns the
     # bare form, so _wait_for_host_online's comparison must see the same.
@@ -118,6 +118,7 @@ def _spawn_host_daemon(
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         "OPENAI_BASE_URL": f"{mock_llm_server_url}/v1",
         "OPENAI_API_KEY": "mock-key",
         PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),
@@ -418,7 +419,7 @@ def test_host_name_only_config_generates_host_id(
     host showed up under the wrong name. It should now keep the name and
     generate + persist only the missing host_id.
     """
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True, exist_ok=True)
     config_path = omni_dir / "config.yaml"
     # Unique name so the (owner, name) host row doesn't collide with the
@@ -432,6 +433,7 @@ def test_host_name_only_config_generates_host_id(
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         "OPENAI_BASE_URL": f"{mock_llm_server_url}/v1",
         "OPENAI_API_KEY": "mock-key",
         PROCESS_LOG_FILE_ENV_VAR: str(daemon_log),
@@ -999,7 +1001,7 @@ def _spawn_host_daemon_for_mock_claude(
         ``"http://127.0.0.1:12345"``.
     :returns: The spawned daemon handle and its host_id.
     """
-    omni_dir = tmp_path / ".omnigent"
+    omni_dir = tmp_path / "config"
     omni_dir.mkdir(parents=True, exist_ok=True)
     # Bare 32-char hex — host_id is a Uuid16 column, and the API returns the
     # bare form, so _wait_for_host_online's comparison must see the same.
@@ -1016,6 +1018,7 @@ def _spawn_host_daemon_for_mock_claude(
     env = {
         **os.environ,
         "HOME": str(tmp_path),
+        "OMNIGENT_CONFIG_HOME": str(omni_dir),
         # ANTHROPIC_BASE_URL is in HARNESS_CREDENTIAL_ENV_VARS so it flows
         # daemon→runner. The Anthropic SDK appends /v1/messages; omit /v1.
         "ANTHROPIC_BASE_URL": mock_llm_server_url,
