@@ -225,7 +225,13 @@ async def _attach_session(
 
 async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView:
     paths = runtime_paths(ctx.session_id)
-    reservation = await asyncio.to_thread(reserve_prime_launch, paths)
+    reservation_task = asyncio.create_task(asyncio.to_thread(reserve_prime_launch, paths))
+    try:
+        reservation = await asyncio.shield(reservation_task)
+    except asyncio.CancelledError:
+        reservation = await reservation_task
+        await asyncio.to_thread(abandon_prime_launch, paths, reservation, dispatched=False)
+        raise
     dispatched = False
     reservation_active = True
     try:
