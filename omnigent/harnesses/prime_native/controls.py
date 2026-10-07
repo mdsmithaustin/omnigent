@@ -11,6 +11,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from omnigent.harnesses.pi_native.bridge import _atomic_text
+from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths, runtime_paths
 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
 from omnigent.util.reasoning_effort import PI_EFFORTS, to_pi_thinking_level
 
@@ -76,7 +77,7 @@ class ControlOutcome:
 
 class PrimeExtensionBinding:
     def __init__(self, bridge_dir: Path) -> None:
-        self._root = bridge_dir / "controls"
+        self._root = PrimeRuntimePaths(bridge_dir).controls_dir
 
     def _incarnation(self) -> str:
         record = json.loads((self._root / "binding.json").read_text())
@@ -179,3 +180,13 @@ class PrimeExtensionBinding:
             for path in (request, result):
                 with contextlib.suppress(OSError):
                     path.unlink()
+
+
+def prime_binding(session_id: str) -> PrimeExtensionBinding:
+    return PrimeExtensionBinding(runtime_paths(session_id).root)
+
+
+async def interrupt_session(session_id: str) -> tuple[int, dict[str, object]]:
+    """Interrupt hook: return the ``(http_status, body)`` the runner should respond with."""
+    outcome = await prime_binding(session_id).execute(Interrupt(), timeout_s=3.0)
+    return outcome.http_status, outcome.response_body()

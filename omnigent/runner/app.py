@@ -3084,11 +3084,10 @@ def create_runner_app(
     async def _execute_prime_setting(
         session_id: str, control: SetModel | SetEffort
     ) -> ControlOutcome:
-        from omnigent.harnesses.prime_native.bridge import runtime_paths
         from omnigent.harnesses.prime_native.controls import (
             ControlOutcome,
             ControlStatus,
-            PrimeExtensionBinding,
+            prime_binding,
         )
 
         deadline = time.monotonic() + _PRIME_SETTINGS_TIMEOUT_S
@@ -3103,7 +3102,7 @@ def create_runner_app(
                     ControlStatus.UNAVAILABLE, "Prime settings admission expired"
                 )
             acquired = True
-            return await PrimeExtensionBinding(runtime_paths(session_id).root).execute(
+            return await prime_binding(session_id).execute(
                 control, timeout_s=max(0, deadline - time.monotonic())
             )
         finally:
@@ -10157,14 +10156,13 @@ def create_runner_app(
                     },
                 )
             if body_type in {"model_change", "effort_change", "compact"}:
-                from omnigent.harnesses.prime_native.bridge import runtime_paths
                 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
                 from omnigent.harnesses.prime_native.controls import (
                     Compact,
                     Control,
-                    PrimeExtensionBinding,
                     SetEffort,
                     SetModel,
+                    prime_binding,
                 )
 
                 control: Control
@@ -10198,9 +10196,7 @@ def create_runner_app(
                 if isinstance(control, (SetModel, SetEffort)):
                     outcome = await _execute_prime_setting(conversation_id, control)
                 else:
-                    outcome = await PrimeExtensionBinding(
-                        runtime_paths(conversation_id).root
-                    ).execute(control)
+                    outcome = await prime_binding(conversation_id).execute(control)
                 return JSONResponse(
                     status_code=outcome.http_status, content=outcome.response_body()
                 )
@@ -10300,15 +10296,14 @@ def create_runner_app(
                     await _cond.wait()
             try:
                 if _session_harness_name(conversation_id) == "prime-native":
-                    from omnigent.harnesses.prime_native.bridge import runtime_paths
                     from omnigent.harnesses.prime_native.controls import (
                         ControlOutcome,
                         ControlStatus,
-                        PrimeExtensionBinding,
+                        prime_binding,
                     )
 
                     await _ensure_native_terminal_for_turn(conversation_id, "prime-native")
-                    binding = PrimeExtensionBinding(runtime_paths(conversation_id).root)
+                    binding = prime_binding(conversation_id)
                     if not await binding.wait_until_ready():
                         unavailable = ControlOutcome(
                             ControlStatus.UNAVAILABLE, "No live Prime extension binding"

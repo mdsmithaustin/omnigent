@@ -14,6 +14,12 @@ import click
 import httpx
 import yaml
 
+from omnigent._wrapper_labels import (
+    PRIME_NATIVE_WRAPPER_VALUE,
+    UI_MODE_LABEL_KEY,
+    UI_MODE_TERMINAL_VALUE,
+    WRAPPER_LABEL_KEY,
+)
 from omnigent.conversation_browser import conversation_url, open_conversation_link_if_enabled
 from omnigent.entities.session_resources import (
     SessionResourceView,
@@ -48,11 +54,11 @@ _logger = logging.getLogger(__name__)
 
 
 def _materialize_prime_agent_spec(tmpdir: Path) -> Path:
-    path = tmpdir / "prime-native-ui.yaml"
+    path = tmpdir / f"{PRIME_NATIVE_WRAPPER_VALUE}.yaml"
     path.write_text(
         yaml.safe_dump(
             {
-                "name": "prime-native-ui",
+                "name": PRIME_NATIVE_WRAPPER_VALUE,
                 "prompt": (
                     "Prime Native runs in the session terminal. "
                     "Web messages use its extension inbox."
@@ -97,8 +103,8 @@ def run_prime_native(
             async with OmnigentClient(base_url=server, headers=headers or None) as client:
                 return await pick_conversation_by_wrapper_label_from_sdk(
                     client,
-                    wrapper_value="prime-native-ui",
-                    agent_name="prime-native-ui",
+                    wrapper_value=PRIME_NATIVE_WRAPPER_VALUE,
+                    agent_name=PRIME_NATIVE_WRAPPER_VALUE,
                     host_id=load_or_create_host_identity().host_id,
                 )
 
@@ -136,21 +142,27 @@ async def _attach_session(
             if bundle is None:
                 raise click.ClickException("Prime Native session bundle is missing.")
             metadata: JsonObject = {
-                "labels": {"omnigent.ui": "terminal", "omnigent.wrapper": "prime-native-ui"}
+                "labels": {
+                    UI_MODE_LABEL_KEY: UI_MODE_TERMINAL_VALUE,
+                    WRAPPER_LABEL_KEY: PRIME_NATIVE_WRAPPER_VALUE,
+                }
             }
             if extra_args:
                 metadata["terminal_launch_args"] = list(extra_args)
             response = await client.post(
                 "/v1/sessions",
                 data={"metadata": json.dumps(metadata)},
-                files={"bundle": ("prime-native-ui.tar.gz", bundle, "application/gzip")},
+                files={
+                    "bundle": (f"{PRIME_NATIVE_WRAPPER_VALUE}.tar.gz", bundle, "application/gzip")
+                },
             )
             response.raise_for_status()
             session_id = response.json()["session_id"]
         else:
             response = await client.get(f"/v1/sessions/{url_component(session_id)}")
             response.raise_for_status()
-            if response.json().get("labels", {}).get("omnigent.wrapper") != "prime-native-ui":
+            labels = response.json().get("labels", {})
+            if labels.get(WRAPPER_LABEL_KEY) != PRIME_NATIVE_WRAPPER_VALUE:
                 raise click.ClickException(
                     f"Conversation {session_id!r} is not a Prime Native session."
                 )
@@ -213,7 +225,7 @@ async def _attach_session(
 
 async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView:
     paths = runtime_paths(ctx.session_id)
-    reservation = reserve_prime_launch(paths)
+    reservation = await asyncio.to_thread(reserve_prime_launch, paths)
     dispatched = False
     reservation_active = True
     try:
@@ -276,17 +288,14 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
             auth_headers=headers,
             tools=tools,
             agent_label="Prime Native",
+            extra_config={"primeControlsDir": str(paths.controls_dir)},
         )
-        from omnigent.harnesses.pi_native.bridge import _atomic_text
-
-        extension_settings = json.loads(extension_config.read_text())
-        extension_settings["primeControlsDir"] = str(paths.root / "controls")
-        _atomic_text(extension_config, json.dumps(extension_settings))
         from omnigent.runtime.prompt import build_instructions_nullable
 
         instructions = build_instructions_nullable(spec, None, tools) if spec else None
         model = config.model_override or (spec.executor.model if spec else None)
-        launch = build_prime_launch(
+        launch = await asyncio.to_thread(
+            build_prime_launch,
             paths,
             executable=executable,
             extension=extension,

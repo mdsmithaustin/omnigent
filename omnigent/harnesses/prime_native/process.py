@@ -43,6 +43,7 @@ _SHUTDOWN_POLL_INTERVAL_S = 0.1
 _LAUNCH_IDENTITY_TIMEOUT_S = 5.0
 _LAUNCH_RESERVATION_FILE = "launch.pending.json"
 _ACTIVE_RUNTIMES: set[PrimeRuntimePaths] = set()
+_VERSION_PROBES: dict[tuple[str, int, int], str] = {}
 _logger = logging.getLogger(__name__)
 
 
@@ -55,12 +56,6 @@ class PrimeLaunch:
 
 @dataclass(frozen=True)
 class _ProcessIdentity:
-    pid: int
-    created_at: float
-
-
-@dataclass(frozen=True)
-class _TerminalIdentity:
     pid: int
     created_at: float
 
@@ -118,6 +113,25 @@ class _JsonlReader:
         return value
 
 
+def _probe_version(executable: str) -> str:
+    """Run ``--version``, memoized per (path, mtime, size) so a replaced binary re-probes."""
+    try:
+        metadata = os.stat(executable)
+    except OSError:
+        key = None
+    else:
+        key = (executable, metadata.st_mtime_ns, metadata.st_size)
+    if key is not None and key in _VERSION_PROBES:
+        return _VERSION_PROBES[key]
+    result = subprocess.run(
+        [executable, "--version"], capture_output=True, text=True, timeout=10, check=True
+    )
+    version = result.stdout.strip()
+    if key is not None:
+        _VERSION_PROBES[key] = version
+    return version
+
+
 def resolve_prime_executable() -> str:
     command = os.environ.get("OMNIGENT_PRIME_PATH", "").strip() or "prime-agent"
     executable = resolve_cli_binary(command, which=shutil.which)
@@ -126,13 +140,10 @@ def resolve_prime_executable() -> str:
             "Prime Native requires prime-agent 0.9.6. "
             "Set OMNIGENT_PRIME_PATH or install it on PATH."
         )
-    result = subprocess.run(
-        [executable, "--version"], capture_output=True, text=True, timeout=10, check=True
-    )
-    if result.stdout.strip() != QUALIFIED_VERSION:
+    version = _probe_version(executable)
+    if version != QUALIFIED_VERSION:
         raise click.ClickException(
-            f"Prime Native requires prime-agent {QUALIFIED_VERSION}; "
-            f"found {result.stdout.strip()!r}."
+            f"Prime Native requires prime-agent {QUALIFIED_VERSION}; found {version!r}."
         )
     return executable
 
@@ -215,7 +226,7 @@ def build_prime_launch(
             source, target = source_dir / name, paths.agent_dir / name
             if source.is_file() and not target.exists():
                 _atomic_text(target, source.read_text(encoding="utf-8"))
-        _atomic_text(paths.root / "executable", executable)
+        _atomic_text(paths.executable_file, executable)
         _atomic_text(paths.root / KERNEL_PROCESS_NAMES_FILE, json.dumps(kernel_process_names))
         owner_claim.write_owner_claim(paths.root)
         _ACTIVE_RUNTIMES.add(paths)
@@ -330,7 +341,7 @@ def _read_kernel_process_names(paths: PrimeRuntimePaths) -> set[str]:
 
 def _read_prime_process_names(paths: PrimeRuntimePaths) -> set[str]:
     try:
-        executable = (paths.root / "executable").read_text(encoding="utf-8")
+        executable = paths.executable_file.read_text(encoding="utf-8")
     except FileNotFoundError:
         return set()
     except (OSError, UnicodeError) as exc:
@@ -422,9 +433,9 @@ def _identity_alive(identity: _ProcessIdentity) -> bool:
         ) from exc
 
 
-def _read_terminal_identity(paths: PrimeRuntimePaths) -> _TerminalIdentity | None:
+def _read_terminal_identity(paths: PrimeRuntimePaths) -> _ProcessIdentity | None:
     try:
-        record = json.loads((paths.root / "terminal.json").read_text(encoding="utf-8"))
+        record = json.loads(paths.terminal_file.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, UnicodeError, ValueError) as exc:
@@ -442,7 +453,7 @@ def _read_terminal_identity(paths: PrimeRuntimePaths) -> _TerminalIdentity | Non
         or not math.isfinite(created_at)
     ):
         raise RuntimeError("Prime terminal ownership record is invalid.")
-    return _TerminalIdentity(pid, float(created_at))
+    return _ProcessIdentity(pid, float(created_at))
 
 
 def _launch_reservation_path(paths: PrimeRuntimePaths) -> Path:
@@ -533,9 +544,7 @@ def complete_prime_launch(paths: PrimeRuntimePaths, reservation: PrimeLaunchRese
             paths.validate_existing()
             if _read_launch_reservation(paths) != reservation:
                 raise RuntimeError("Prime launch reservation changed; runtime retained.")
-            identity = _read_terminal_identity(paths)
-            terminal = _terminal_process(identity) if identity is not None else None
-            if terminal is not None and _process_alive(terminal):
+            if _terminal_alive(paths):
                 _launch_reservation_path(paths).unlink()
                 return
         if time.monotonic() >= deadline:
@@ -562,7 +571,7 @@ def abandon_prime_launch(
         _launch_reservation_path(paths).unlink()
 
 
-def _terminal_process(identity: _TerminalIdentity) -> psutil.Process | None:
+def _terminal_process(identity: _ProcessIdentity) -> psutil.Process | None:
     try:
         terminal = psutil.Process(identity.pid)
         if terminal.create_time() != identity.created_at:
@@ -574,6 +583,12 @@ def _terminal_process(identity: _TerminalIdentity) -> psutil.Process | None:
         raise RuntimeError(
             "Prime terminal process could not be observed; runtime retained."
         ) from exc
+
+
+def _terminal_alive(paths: PrimeRuntimePaths) -> bool:
+    identity = _read_terminal_identity(paths)
+    terminal = _terminal_process(identity) if identity is not None else None
+    return terminal is not None and _process_alive(terminal)
 
 
 def _stop_terminal(paths: PrimeRuntimePaths) -> None:
@@ -719,7 +734,7 @@ def _wait_for_runtime_absence(paths: PrimeRuntimePaths, captured: set[_ProcessId
 
 def _remove_runtime_records(paths: PrimeRuntimePaths) -> None:
     (paths.root / owner_claim.OWNER_PID_FILENAME).unlink(missing_ok=True)
-    (paths.root / "terminal.json").unlink(missing_ok=True)
+    paths.terminal_file.unlink(missing_ok=True)
 
 
 def stop_prime_runtime(
@@ -763,9 +778,7 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     if shutdown_sent:
         _stop_terminal(paths)
     else:
-        terminal_identity = _read_terminal_identity(paths)
-        terminal = _terminal_process(terminal_identity) if terminal_identity else None
-        if terminal is not None and _process_alive(terminal):
+        if _terminal_alive(paths):
             raise RuntimeError(
                 "Prime private supervisor is unreachable with a live terminal; runtime retained."
             )
@@ -803,13 +816,7 @@ def stop_orphaned_runtimes() -> int:
                             claim, process_alive=owner_process_alive
                         ):
                             continue
-                    terminal_identity = _read_terminal_identity(paths)
-                    terminal = (
-                        _terminal_process(terminal_identity)
-                        if terminal_identity is not None
-                        else None
-                    )
-                    if terminal is not None and _process_alive(terminal):
+                    if _terminal_alive(paths):
                         continue
                     _stop_prime_runtime(paths)
                     if reservation is not None:
@@ -843,7 +850,7 @@ def _wrapper_still_owns_runtime(paths: PrimeRuntimePaths) -> bool:
 
 
 def _finalize_wrapper_runtime(
-    paths: PrimeRuntimePaths, expected_terminal: _TerminalIdentity
+    paths: PrimeRuntimePaths, expected_terminal: _ProcessIdentity
 ) -> None:
     with native_bridge_common.bridge_dir_preparation_lock(paths.root):
         if not paths.validate_existing():
@@ -881,12 +888,12 @@ def main() -> int:
         owner_claim.write_owner_claim(paths.root)
         child = subprocess.Popen(sys.argv[2:])
         terminal = psutil.Process(child.pid)
-        terminal_identity = _TerminalIdentity(child.pid, terminal.create_time())
+        terminal_identity = _ProcessIdentity(child.pid, terminal.create_time())
         record: dict[str, object] = {
             "pid": terminal_identity.pid,
             "created_at": terminal_identity.created_at,
         }
-        _atomic_json(paths.root / "terminal.json", record)
+        _atomic_json(paths.terminal_file, record)
 
     def forward_signal(signum: int, _frame: object) -> None:
         with contextlib.suppress(ProcessLookupError):
