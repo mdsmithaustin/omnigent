@@ -39,6 +39,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 from tests.e2e.omnigent.test_host_ctrl_c_stop_server import (
     _connect_env,
@@ -95,12 +96,11 @@ def _spawn_background_daemon(
 def _wait_for_daemon_pid(home: Path, *, timeout: float) -> int:
     """Wait for the daemon registry record and return the daemon pid.
 
-    :param home: Isolated HOME holding ``.omnigent/daemons``.
     :param timeout: Max seconds to poll for the record.
     :returns: The detached daemon's pid.
     :raises AssertionError: If no record appears within *timeout*.
     """
-    daemons = home / ".omnigent" / "daemons"
+    daemons = home / USER_DIRNAME / "daemons"
     elapsed = 0.0
     while elapsed < timeout:
         records = sorted(daemons.glob("*.json")) if daemons.is_dir() else []

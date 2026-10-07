@@ -18,10 +18,9 @@ without ``--llm-api-key``::
     .venv/bin/python -m pytest tests/e2e/test_local_server_lifecycle_e2e.py -v
 
 Each test isolates ``$HOME`` to a tmp dir so the pidfile / sig / DB land
-under ``<home>/.omnigent`` and never touch the developer's real
-``~/.omnigent`` or a server on the real :8000 (a busy :8000 just makes
-the canonical server fall back to a free port, recorded in the isolated
-pidfile — discovery is via the pidfile, never the port).
+under the installation directory and never touch the developer's state
+or an existing server. If the preferred port is busy, the canonical server
+selects a free port and records it in the isolated pidfile.
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e.helpers import HEALTH_TIMEOUT_S, POLL_INTERVAL_S
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -117,7 +117,7 @@ def _isolated_env(home: Path) -> dict[str, str]:
     Databricks profile. PYTHONPATH pins the worktree checkout so the
     subprocess imports the branch under test, not a stale installed wheel.
 
-    :param home: The tmp home dir; ``<home>/.omnigent`` holds the pidfile,
+    :param home: The tmp home dir whose installation directory holds the pidfile,
         sig, DB, and artifacts for this test.
     :returns: The environment dict for ``subprocess.Popen``.
     """
@@ -133,9 +133,8 @@ def _pidfile_path(home: Path) -> Path:
     """Return the canonical local-server pidfile path under an isolated home.
 
     :param home: The isolated home dir.
-    :returns: ``<home>/.omnigent/local_server.pid``.
     """
-    return home / ".omnigent" / "local_server.pid"
+    return home / USER_DIRNAME / "local_server.pid"
 
 
 def _read_pidfile(path: Path) -> tuple[int, int] | None:
@@ -268,8 +267,8 @@ def _respawned_server_pids(home: Path) -> set[int]:
     The single-server invariant for scenario 1: ``connect`` must REUSE the
     foreground server, not spawn a competitor. Any respawn goes through
     :func:`ensure_local_omnigent_server`, which spawns a detached
-    ``omnigent server --database-uri sqlite:///<home>/.omnigent/chat.db
-    --artifact-location <home>/.omnigent/artifacts`` — so its argv carries
+    ``omnigent server --database-uri sqlite:///<home>/<installation>/chat.db
+    --artifact-location <home>/<installation>/artifacts`` — so its argv carries
     this isolated HOME path. The reused foreground server (spawned here as a
     bare ``["server"]``) does NOT, so every match is a respawned competitor,
     never the original. This is independent of the pidfile, so it catches a
@@ -289,7 +288,7 @@ def _respawned_server_pids(home: Path) -> set[int]:
         text=True,
         check=False,
     ).stdout
-    # Match the home as a directory PREFIX (``<home>/.omnigent/...`` always
+    # Match the home as a directory PREFIX (``<home>/<installation>/...`` always
     # appears in a respawn's argv), not a bare substring — so a sibling home
     # sharing a prefix (``/tmp/x/home`` vs ``/tmp/x/home2``) can't false-match.
     home_prefix = f"{home}{os.sep}"
