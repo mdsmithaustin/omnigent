@@ -1831,6 +1831,7 @@ class CodexNativeAppServer:
     reconcile_process_registry: bool = True
     config_profile: str | None = None
     session_id: str | None = None
+    server_client: httpx.AsyncClient | None = None
     stderr_capture_error_type: str | None = field(default=None, init=False)
     _stderr_diagnostics: CodexStderrDiagnostics | None = field(default=None, init=False)
 
@@ -1840,13 +1841,18 @@ class CodexNativeAppServer:
 
         :returns: None.
         """
+        from omnigent.cli_auth import open_server_client
         from omnigent.native.admission import admit_native, bind_native_admission
 
-        if self.session_id is None or self.ap_server_url is None:
+        if self.session_id is None:
             raise RuntimeError("Codex native launch requires its source admission server.")
-        async with httpx.AsyncClient(
-            base_url=self.ap_server_url, headers=self.ap_auth_headers
-        ) as client:
+        if self.server_client is not None:
+            client_context = contextlib.nullcontext(self.server_client)
+        elif self.ap_server_url is not None:
+            client_context = open_server_client(self.ap_server_url, headers=self.ap_auth_headers)
+        else:
+            raise RuntimeError("Codex native launch requires its source admission server.")
+        async with client_context as client:
             admission = await admit_native(client, self.session_id, "codex")
             with bind_native_admission(admission):
                 await self._start_admitted(client, admission)
@@ -3064,6 +3070,7 @@ def build_codex_native_server(
     session_id: str | None = None,
     ap_server_url: str | None = None,
     ap_auth_headers: dict[str, str] | None = None,
+    server_client: httpx.AsyncClient | None = None,
     python_executable: str | None = None,
     codex_path: str | None = None,
     extra_config_overrides: list[str] | None = None,
@@ -3195,6 +3202,7 @@ def build_codex_native_server(
         developer_instructions=developer_instructions,
         ap_server_url=ap_server_url,
         ap_auth_headers=ap_auth_headers,
+        server_client=server_client,
         python_executable=python_executable,
         pinned_model=pinned_model,
         pinned_effort=reasoning_effort,

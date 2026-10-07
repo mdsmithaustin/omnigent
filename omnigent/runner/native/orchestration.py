@@ -5264,6 +5264,7 @@ async def _auto_create_codex_terminal(
         bridge_dir=bridge_dir,
         ap_server_url=launch_config.policy_server_url,
         ap_auth_headers=policy_headers,
+        server_client=server_client,
         bypass_sandbox=launch_config.bypass_sandbox,
         developer_instructions=_codex_developer_instructions,
         terminal_launch_args=launch_config.terminal_launch_args or (),

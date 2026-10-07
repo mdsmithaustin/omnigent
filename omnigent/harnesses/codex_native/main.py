@@ -1274,6 +1274,7 @@ async def _prepare_codex_terminal(
             bridge_dir=bridge_dir,
             ap_server_url=base_url,
             ap_auth_headers=headers,
+            server_client=client,
             developer_instructions=developer_instructions,
             terminal_launch_args=codex_args,
         )
