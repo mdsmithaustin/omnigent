@@ -34,13 +34,17 @@ from typing import Any
 import httpx
 import pytest
 
+from omnigent.harnesses.codex_native import bridge as codex_bridge
 from omnigent.harnesses.codex_native.app_server import (
     CodexAppServerClient,
     CodexNativeAppServer,
     preload_codex_thread_for_resume,
 )
 from omnigent.harnesses.codex_native.main import _ensure_local_codex_resume_rollout
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e._harness_probes import cli_unavailable_reason
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 _THREAD_ID = "019e96aa-0be2-7343-8d3b-6f914d60936b"
 _SESSION_ID = "conv_cold_resume_inflight_tool"
@@ -228,6 +232,7 @@ async def _wait_for_turn_end(client: CodexAppServerClient) -> dict[str, Any]:
 async def test_native_cold_resume_keeps_tool_output_that_finishes_after_compaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    native_source_server: NativeSourceServer,
 ) -> None:
     """The model receives both halves of a tool interaction after cold resume."""
     reason = cli_unavailable_reason("codex")
@@ -244,6 +249,7 @@ async def test_native_cold_resume_keeps_tool_output_that_finishes_after_compacti
     # Keep the real harness from importing the developer's Codex config,
     # login, hooks, or plugins into this isolated native process.
     monkeypatch.setenv("CODEX_HOME", str(source_home))
+    monkeypatch.setattr(codex_bridge, "_BRIDGE_ROOT", tmp_path / USER_DIRNAME / "codex-native")
 
     rollout = await _write_cold_resume_rollout(codex_home, workspace)
     assert rollout.exists()
@@ -277,6 +283,7 @@ async def test_native_cold_resume_keeps_tool_output_that_finishes_after_compacti
         pinned_model="mock-model",
         reconcile_process_registry=False,
         session_id=_SESSION_ID,
+        ap_server_url=native_source_server.url,
     )
     client: CodexAppServerClient | None = None
     try:
