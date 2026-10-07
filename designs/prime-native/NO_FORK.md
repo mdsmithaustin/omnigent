@@ -288,9 +288,9 @@ The configured private basic-response attempt at
 `4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
 Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
-zero. Settlement failed and the daemon remained retained. Basic Prime response
-is still unverified. The durable public Prime 0.9.6 installation has version and
-hash checks, but no successful model-response baseline. Neither this result nor
+zero. Settlement failed and the daemon remained retained. That attempt did not
+establish a successful basic response. The installation's version and hash
+checks did not establish a model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
 
@@ -298,7 +298,15 @@ A later sanitized basic-receipt review records the actual basic response as
 FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
 known PID/socket absence do not prove normal/full settlement, a successful
 response, exhaustive descendants, credential-source comparison, removal, or
-future custody. A successful model-response baseline remains unverified.
+future custody. That failed attempt did not establish a model-response baseline.
+
+After the operator reported normal xAI login, a later direct Prime 0.9.6 print
+request returned exactly `OK` followed by a newline and exited zero. It requested `xai/grok-4.7`
+and thinking `off`. Active provider, model, thinking, and effort were not
+independently observed. The requested settings do not establish a credential class.
+This direct CLI baseline does not qualify Omnigent terminal and HTTP responses,
+installed-source equivalence, authentic resource Source and budgets, or full
+descendant settlement. Earlier failed receipts remain failed.
 
 For the current rejected entry, inspect `<operation>-native-failure.json`.
 `<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.
@@ -434,6 +442,21 @@ child directory. Raw result or fixture `passed` values are not success authority
 The MCP scenario preserves its first failure if later owner finalization fails.
 Never rewrite historical receipts to meet this new contract.
 
+## Full bridge and lifecycle qualification
+
+All three whole bridge designs failed full-N02 selection. The independent judge
+returned `NO_FULL_N02_BASE`. Root selected no base or graft. Executable admission
+and individual control outcomes do not
+replace the original bridge requirement. Missing or incompatible bridge-version
+refusal before a turn and no alternate-harness fallback remain open.
+
+Whole cleanup design selection also ended `NOFULLBASE`. A complete supported
+native lifetime backend on macOS 26.6.2 remains `UNKNOWN`. This does not establish
+global absence of a macOS API. Ordinary detached, late, replacement, and reparented
+descendant settlement remains required. This gap adds no hostile-user requirement
+and selects no Linux or VM migration. All original 31 requirements and nine drafts
+remain unchanged.
+
 ## Original acceptance criteria
 
 Every original ID remains visible. The [literal acceptance requirements](CONTRACT.md#acceptance-matrix) remain unchanged. A narrower passing observation does not qualify a stronger original guarantee.
@@ -441,8 +464,8 @@ Every original ID remains visible. The [literal acceptance requirements](CONTRAC
 | ID | Current disposition |
 | --- | --- |
 | N01 | Implemented native registration, `prime-native` harness, and `prime-native-ui` CLI agent. |
-| N02 | Reframed and implemented without a vendor bridge. Exact Prime version admission and Omnigent control outcomes replace the fork dependency. |
-| N03 | Model and effort controls verified through HTTP and the native terminal, including a custom agent without a wrapper label. Separate authenticated xAI qualification on `5001626a` passed model and effort control changes between Grok 4.3 and 4.7. Other providers remain unqualified. |
+| N02 | Partial. Current terminal evidence qualifies missing-executable and controlled 0.9.5 refusal before tmux, session, and Prime worker setup. The fixture proves version refusal only. Missing or incompatible Prime and bridge versions must fail before a turn, with no alternate-harness fallback. Full bridge agreement remains open. |
+| N03 | Partial. Historical fixture controls and authenticated xAI settings observations on `5001626a` remain source-bound evidence. Current authenticated discovery and a selected choice round-tripping through the worker and both attached interfaces remain unqualified. The later direct CLI `OK` response does not supply that proof. |
 | N04 | Prime base instructions, a custom agent nonce, and canonical Omnigent framework instructions observed in actual model requests. Kit delivery is external. |
 | N05 | Bundled skill instructions and the exact declared Python resource delivered through `load_skill` and `read_skill_file`. The living kernel executed that resource and produced its literal result and nonce file. |
 | N06 | Native attachment and live terminal reattachment implemented and verified by the baseline helper. |
