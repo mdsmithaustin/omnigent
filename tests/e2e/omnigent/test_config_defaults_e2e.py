@@ -16,6 +16,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e.conftest import configure_mock_llm, reset_mock_llm
 
 _RUN_TIMEOUT_SEC = 60
@@ -93,7 +94,7 @@ def test_global_config_write_then_list_roundtrips(
         f"config set --global write failed: stdout={write.stdout!r} stderr={write.stderr!r}"
     )
 
-    config_path = home / ".omnigent" / "config.yaml"
+    config_path = home / USER_DIRNAME / "config.yaml"
     assert config_path.is_file(), f"Expected config at {config_path} after write; not found."
 
     listed = _run_omnigent(
@@ -171,7 +172,7 @@ def test_global_config_unknown_key_rejected_at_subprocess_boundary(
         f"Expected the unknown key name in the error message; "
         f"got stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-    config_path = home / ".omnigent" / "config.yaml"
+    config_path = home / USER_DIRNAME / "config.yaml"
     assert not config_path.exists() or "bogus_key" not in config_path.read_text(), (
         f"Invalid key was persisted to {config_path}; write should "
         f"have been rejected before touching the file."
