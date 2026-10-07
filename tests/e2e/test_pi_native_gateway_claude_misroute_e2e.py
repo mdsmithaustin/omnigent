@@ -1,34 +1,3 @@
-"""CLI e2e: a Claude model on an openai-only gateway must not silently 404.
-
-Drives the reported user journey end-to-end through the *real* ``omnigent pi``
-CLI under a pseudo-TTY (pexpect):
-
-1. Configure ``~/.omnigent/config.yaml`` with a ``kind: gateway`` provider
-   (default for pi) exposing ONLY an ``openai`` family (``wire_api: chat``, the
-   gateway's OpenAI base URL) whose default model is the Claude-family id
-   ``claude-fable-5-1`` - a Claude model the gateway serves only on its
-   Anthropic surface (here a local mock gateway that 404s its OpenAI surface
-   with an empty body, exactly like the reported gateway).
-2. Launch a pi-native session (``omnigent pi``).
-3. Send a turn if launch has not already warned or refused the model.
-
-On the buggy build the turn is silently POSTed to the gateway's OpenAI
-``/chat/completions`` surface and the Pi TUI shows ``Error: 404 status code
-(no body)`` - with **no routing warning surfaced anywhere**. That silent
-misroute is the bug.
-
-The fix (per the ticket) must *fail loud*: surface a routing warning through
-the existing ``credential_warning`` path (the runner posts it as a
-``pi_credentials_unresolved`` session item) rather than silently 404-ing a
-Claude id on ``/chat/completions``. This test asserts that routing warning is
-surfaced, so it **fails on the buggy build** (only the raw 404 appears, no
-warning) and **passes once the fix lands**.
-
-Modelled on ``tests/e2e/test_repl_approval_e2e.py`` (a proven pexpect + fake
-``HOME`` CLI e2e). The resolution-boundary defects are additionally pinned in
-``tests/harnesses/pi_native/test_pi_native_gateway_claude_routing.py``.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -131,17 +100,9 @@ def _strip_ansi(text: str) -> str:
 
 
 def _routing_warning_present(items: list[dict[str, Any]]) -> bool:
-    """Whether a routing/credential warning (not the raw 404) was surfaced.
-
-    The buggy build surfaces only the raw ``Pi model error: 404 status code
-    (no body)`` execution error. The fix instead surfaces a routing warning
-    (the runner posts it as a ``pi_credentials_unresolved`` item), or refuses
-    the model - either way an explanatory notice keyed to the model appears.
-    """
     for item in items:
         code = str(item.get("code") or "")
         message = str(item.get("message") or "")
-        # The raw misroute failure is NOT the routing warning under test.
         if "404 status code" in message and code != "pi_credentials_unresolved":
             continue
         low = message.lower()
@@ -203,12 +164,6 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
     pi_home: Path,
     openai_only_gateway: tuple[str, list[dict[str, Any]]],
 ) -> None:
-    """A Claude model on an openai-only gateway must not silently 404.
-
-    Reproduces the journey through the real ``omnigent pi`` CLI and asserts a
-    routing warning is surfaced (fail-loud), rather than a silent
-    ``404 status code (no body)`` with no explanation.
-    """
     _, gateway_requests = openai_only_gateway
 
     omnigent_bin = Path(sys.executable).parent / "omnigent"
@@ -219,7 +174,6 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
         "HOME": str(pi_home),
         "OMNIGENT_CONFIG_HOME": str(pi_home / ".omnigent"),
         "OMNIGENT_SKIP_ONBOARD": "1",
-        # Resolve omnigent + its in-repo SDK packages to this worktree.
         "PYTHONPATH": os.pathsep.join(
             str(p)
             for p in (
@@ -236,7 +190,7 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
 
     child = pexpect.spawn(
         str(omnigent_bin),
-        ["pi", "--server", ""],  # auto-spawn a local server + runner
+        ["pi", "--server", ""],
         cwd=str(_REPO_ROOT),
         env=env,
         encoding="utf-8",
@@ -271,8 +225,6 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
                     turn_sent = True
             time.sleep(3)
 
-        # Diagnostic context for a failure: what the gateway actually saw and
-        # what items the session recorded.
         posted_models = [r.get("model") for r in gateway_requests if r.get("method") == "POST"]
         item_summ = [
             {"type": it.get("type"), "code": it.get("code"), "message": it.get("message")}
