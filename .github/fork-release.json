@@ -383,9 +383,33 @@
       "name": "skill-delivery-ci-33e59cd14a7a",
       "reason": "Wait for the actual asynchronous selector bridge call before checking request identity, progress and cancellation.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "024bd997fd45cc89facc5d0960a53e14c70b7321",
+      "name": "skill-delivery-ci-024bd997fd45",
+      "reason": "Retain the selector repair source pin in the ordered addon history.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "318623b5030b1a068c81702e9788ed6cd30e7b52",
+      "name": "skill-delivery-ci-318623b5030b",
+      "reason": "fix(tests): use installation namespace for local server pidfile.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "af14844d156e51a54753ab7c7b75627ce68a0ca7",
+      "name": "skill-delivery-ci-af14844d156e",
+      "reason": "test(pi-native): check routing warnings before terminal errors.",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ad3127f5a28f3abbe0fc8748e0c7c5a92888548a",
+      "name": "skill-delivery-ci-ad3127f5a28f",
+      "reason": "test: trim routing and pidfile fixture narration.",
+      "source_commit": null
     }
   ],
-  "payload_commit": "33e59cd14a7afb5c40a709ad5b5060f63dadef6e",
+  "payload_commit": "ad3127f5a28f3abbe0fc8748e0c7c5a92888548a",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
