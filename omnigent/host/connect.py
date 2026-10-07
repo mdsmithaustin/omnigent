@@ -2350,12 +2350,11 @@ class HostProcess:
     async def _watch_runner(self, runner_id: str) -> None:
         """Watch a spawned runner and report an unexpected exit.
 
-        Polls the runner subprocess until it exits. An exit while the
-        runner is still tracked in ``self._runners`` is unexpected (a
-        ``host.stop_runner`` pops the entry *before* terminating), so
-        the watcher composes the exit error — code plus log tail — and
-        reports it to the server via ``host.runner_exited``. Without
-        this, a runner that crashes before connecting its tunnel
+        Polls the runner subprocess until it exits. Unless a stop was requested,
+        a tracked runner's nonzero exit or clean pre-connect exit is reported
+        to the server via ``host.runner_exited`` with its exit code and log tail.
+        Clean post-connect exits stay quiet. Without exit reporting,
+        a runner that crashes before connecting its tunnel
         (auth rejection, bad env, import error) leaves the client
         polling to a timeout with the cause stranded in a log file on
         this host.
@@ -2363,7 +2362,7 @@ class HostProcess:
         :param runner_id: The runner to watch, e.g.
             ``"runner_abc123..."``.
         :returns: None. Returns silently for intentional stops and clean
-            (exit-code-0) shutdowns.
+            post-connect (exit-code-0) shutdowns.
         """
         handle = self._runners.get(runner_id)
         if handle is None:  # pragma: no cover — spawned just before us
@@ -2374,9 +2373,7 @@ class HostProcess:
         # loop to avoid freezing the daemon on the enabled path.
         while await asyncio.to_thread(handle.proc.poll) is None:
             await asyncio.sleep(_RUNNER_WATCH_INTERVAL_S)
-        if self._runners.get(runner_id) is not handle:
-            # _handle_stop (or _cleanup_runners) removed it first —
-            # an intentional termination, not a crash to report.
+        if self._runners.get(runner_id) is not handle or handle.stop_requested:
             return
         self._runners.pop(runner_id)
         self._trigger_maintenance("runner_exited")

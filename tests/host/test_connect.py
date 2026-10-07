@@ -1780,10 +1780,12 @@ async def test_watch_runner_silent_while_stop_termination_is_pending(
     monkeypatch.setattr("omnigent.host.connect._RUNNER_WATCH_INTERVAL_S", 0.01)
     host = _make_host_process()
     maintenance_reasons: list[str] = []
-    host._maintenance_janitor = SimpleNamespace(trigger=maintenance_reasons.append)  # type: ignore[assignment]
+    monkeypatch.setattr(
+        host, "_maintenance_janitor", SimpleNamespace(trigger=maintenance_reasons.append)
+    )
     tunnel = _FakeTunnel()
     if tunnel_connected:
-        host._ws = tunnel  # type: ignore[assignment]
+        monkeypatch.setattr(host, "_ws", tunnel)
     loop = asyncio.get_running_loop()
     polled = asyncio.Event()
     terminated = asyncio.Event()
@@ -1860,8 +1862,8 @@ async def test_watch_runner_silent_on_clean_exit(
 
     The runner-level idle reaper shuts an inactive runner down with a graceful
     (exit-code-0) self-exit while it is still tracked in ``self._runners``
-    (unlike a ``host.stop_runner``, which pops the handle first). The watcher
-    must treat a zero exit code as a clean shutdown and send nothing — a false
+    (unlike a ``host.stop_runner``, which records stop intent first). The watcher
+    must treat a post-connect zero exit as a clean shutdown and send nothing — a false
     ``host.runner_exited`` here would attach a scary "runner process exited"
     error to a session the user only has to message to reactivate. A non-zero
     exit is still a crash and is covered by
