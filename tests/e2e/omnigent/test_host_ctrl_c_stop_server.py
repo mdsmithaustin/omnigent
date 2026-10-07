@@ -43,6 +43,7 @@ import httpx
 import pexpect
 import psutil
 
+from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 
 # The host daemon's WS tunnel + local-server boot take the same path the
@@ -76,7 +77,7 @@ def _connect_env(base_env: Mapping[str, str], home: Path) -> dict[str, str]:
 
     Isolates ``HOME`` so the local-server pidfile, host registry, and sqlite
     db land under the per-test directory (``ensure_local_omnigent_server`` keys its
-    data dir off ``~/.omnigent`` when ``OMNIGENT_DATA_DIR`` is unset),
+    data dir from the installation directory when ``OMNIGENT_DATA_DIR`` is unset),
     keeping the test from touching the developer's real local server.
 
     :param base_env: Fixture-provided credentials environment, e.g.
@@ -135,7 +136,7 @@ def _read_local_server_record(home: Path) -> tuple[int, int]:
     :returns: ``(pid, port)`` recorded by ``ensure_local_omnigent_server``.
     :raises AssertionError: If the pidfile is missing or malformed.
     """
-    pid_path = home / ".omnigent" / "local_server.pid"
+    pid_path = home / USER_DIRNAME / "local_server.pid"
     try:
         lines = pid_path.read_text().strip().splitlines()
         return int(lines[0]), int(lines[1])
@@ -288,7 +289,7 @@ def _prespawn_persistent_server(
         )
         return pid, port
     except BaseException as exc:
-        _, survivors = reap_leaked_omnigent_processes(home / ".omnigent")
+        _, survivors = reap_leaked_omnigent_processes(home / USER_DIRNAME)
         if survivors:
             exc.add_note(f"pre-spawned server processes survived cleanup: {survivors}")
         raise

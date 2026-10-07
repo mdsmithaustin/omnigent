@@ -23,6 +23,7 @@ import signal
 import subprocess
 from pathlib import Path
 
+from omnigent.installation_defaults import USER_DIRNAME
 from tests.e2e.omnigent.test_host_ctrl_c_stop_server import (
     _BOOT_TIMEOUT,
     _connect_env,
@@ -66,7 +67,7 @@ def test_host_stop_succeeds_after_local_server_death(
     server_pid = -1
     record = None
     try:
-        record = _wait_for_daemon_record(home / ".omnigent" / "daemons", timeout=_BOOT_TIMEOUT)
+        record = _wait_for_daemon_record(home / USER_DIRNAME / "daemons", timeout=_BOOT_TIMEOUT)
         daemon_pid = json.loads(record.read_text())["pid"]
         server_pid, _port = _read_local_server_record(home)
         assert _pid_alive(daemon_pid), "background daemon should be alive after spawn"
