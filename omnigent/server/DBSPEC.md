@@ -6,9 +6,9 @@ including conversation labels, comments, policies, session permissions,
 conversation metadata, projects, hosts, users, and scheduled tasks. No model
 sets an explicit schema, so every table lives in the default one.
 
-Schema is managed by Alembic migrations in
-[`omnigent/db/migrations/`](../db/migrations/). SQLAlchemy models live in
-`omnigent/db/db_models.py`, which is the source of truth for the full table list.
+Schema is managed by Alembic migrations in `alembic/`. SQLAlchemy models live
+in `omnigent/db/db_models.py`, which is the source of truth for the full table
+list.
 
 A `tasks` table existed in an earlier design — DBOS-backed workflow execution,
 with a `try_deliver`/`close_inbox` steering handshake requiring transactional
@@ -26,9 +26,14 @@ status.
 
 ## agents
 
-See `SqlAgent` in [`omnigent/db/db_models.py`](../db/db_models.py) for agent
-columns, constraints, and indexes. The model comments explain how the store
-enforces template-name uniqueness while allowing session agents to reuse names.
+| Column | Type | Notes |
+|---|---|---|
+| id | String(64) PK | "ag_" + uuid4().hex |
+| created_at | Integer NOT NULL | Unix epoch seconds |
+| name | String(256) UNIQUE NOT NULL | Used as `model` in inference requests |
+| description | Text | nullable |
+
+**Indexes:** `uq_agents_name` (unique on name), `ix_agents_created_at`
 
 ---
 
