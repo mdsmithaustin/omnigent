@@ -61,14 +61,14 @@ def _item(kind: str, item_id: str, text: str) -> dict:
 
 def _rollout(tmp_path: Path, rows: list[dict]) -> Path:
     home = tmp_path / "native-home"
-    path = home / "sessions" / "2026" / "10" / "02" / "rollout-thread.jsonl"
+    path = home / "sessions" / "2026" / "10" / "02" / "rollout-2026-10-02T00-00-00-cafe.jsonl"
     path.parent.mkdir(parents=True)
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     write_bridge_state(
         tmp_path,
         CodexNativeBridgeState(
             session_id="conv",
-            thread_id="thread",
+            thread_id="cafe",
             codex_home=str(home),
             socket_path="ws://127.0.0.1:9999",
             active_turn_id="turn-1",
@@ -81,7 +81,7 @@ async def _complete(client, state, bridge_dir: Path, turn: str, item: dict) -> N
     await fwd._handle_completed_item(
         client,
         "conv",
-        {"threadId": "thread", "turnId": turn, "item": item},
+        {"threadId": "cafe", "turnId": turn, "item": item},
         forwarder_state=state,
         bridge_dir=bridge_dir,
     )
@@ -130,7 +130,7 @@ async def test_rollout_skills_precede_reply_without_user_message_notifications(
             "content": [{"type": "input_text", "text": original}],
         },
         "response_id": "codex_turn-1",
-        "source_id": "thread:turn-1:native-skill",
+        "source_id": "cafe:turn-1:native-skill",
     }
 
 
@@ -227,7 +227,7 @@ async def test_transient_skill_post_retry_keeps_source_and_precedes_reply(tmp_pa
         async def post(self, url, *, json, timeout=None):
             source = json["data"]["source_id"]
             self.attempted_sources.append(source)
-            if source == "thread:turn-1:skill" and self.attempted_sources.count(source) == 1:
+            if source == "cafe:turn-1:skill" and self.attempted_sources.count(source) == 1:
                 return httpx.Response(503, request=httpx.Request("POST", url))
             return await super().post(url, json=json, timeout=timeout)
 
@@ -237,10 +237,10 @@ async def test_transient_skill_post_retry_keeps_source_and_precedes_reply(tmp_pa
     await _complete(client, state, tmp_path, "turn-1", _item("agentMessage", "reply", "READY"))
 
     assert client.attempted_sources == [
-        "thread:turn-1:u",
-        "thread:turn-1:skill",
-        "thread:turn-1:skill",
-        "thread:turn-1:reply",
+        "cafe:turn-1:u",
+        "cafe:turn-1:skill",
+        "cafe:turn-1:skill",
+        "cafe:turn-1:reply",
     ]
     assert [message["item_data"]["content"][0]["text"] for message in _messages(client)] == [
         "$orchard",
@@ -265,7 +265,7 @@ async def test_reconnect_recovers_skills_from_a_turn_without_assistant_output(
             response={
                 "result": {
                     "thread": {
-                        "id": "thread",
+                        "id": "cafe",
                         "turns": [
                             {
                                 "id": "turn-1",
@@ -347,11 +347,11 @@ async def test_cancelled_skill_delivery_retries_same_source_id(tmp_path: Path) -
         await _complete(client, state, tmp_path, "turn-1", reply)
     await _complete(client, state, tmp_path, "turn-1", reply)
     assert [message["source_id"] for message in _messages(client)] == [
-        "thread:turn-1:u",
-        "thread:turn-1:skill",
-        "thread:turn-1:reply",
+        "cafe:turn-1:u",
+        "cafe:turn-1:skill",
+        "cafe:turn-1:reply",
     ]
-    assert client.cancelled_source == "thread:turn-1:skill"
+    assert client.cancelled_source == "cafe:turn-1:skill"
 
 
 async def test_turn_completion_recovers_truncated_tail_and_ignores_user_quotes(
@@ -380,11 +380,11 @@ async def test_turn_completion_recovers_truncated_tail_and_ignores_user_quotes(
             bridge_dir=tmp_path,
             event={
                 "method": "turn/completed",
-                "params": {"threadId": "thread", "turn": {"id": "turn-1", "status": "completed"}},
+                "params": {"threadId": "cafe", "turn": {"id": "turn-1", "status": "completed"}},
             },
             usage_coalescer=fwd._SessionUsageCoalescer(client, "conv"),
             elicitation_tracker=tracker,
-            expected_thread_id="thread",
+            expected_thread_id="cafe",
             forwarder_state=state,
         )
 
@@ -403,7 +403,7 @@ async def test_turn_completion_recovers_truncated_tail_and_ignores_user_quotes(
         original,
     ]
     source_id = _messages(client)[1]["source_id"]
-    assert source_id.startswith("thread:turn-1:rollout-skill-")
+    assert source_id.startswith("cafe:turn-1:rollout-skill-")
     fresh = fwd._CodexForwarderState()
     await _complete(client, fresh, tmp_path, "turn-1", _item("agentMessage", "reply", "READY"))
     assert _messages(client)[-2]["source_id"] == source_id

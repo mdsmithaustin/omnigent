@@ -7,7 +7,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import re
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable
@@ -55,6 +54,7 @@ from omnigent.harnesses.codex_native.elicitation import (
 from omnigent.harnesses.codex_native.elicitation import (
     is_codex_request_id as _is_codex_request_id,
 )
+from omnigent.harnesses.codex_native.skills import RolloutSkillReader
 from omnigent.native._native_forwarder_health import (
     note_post_success as note_native_post_success,
 )
@@ -459,6 +459,7 @@ class _CodexForwarderState:
     pending_child_threads: dict[str, str | None] = field(default_factory=dict)
     subscribed_child_threads: set[str] = field(default_factory=set)
     synced_item_keys: set[str] = field(default_factory=set)
+    rollout_skill_readers: dict[str, RolloutSkillReader] = field(default_factory=dict)
     surfaced_terminal_error_turns: set[str] = field(default_factory=set)
     posted_user_turns: set[str] = field(default_factory=set)
     posted_tool_calls: set[str] = field(default_factory=set)
@@ -6078,20 +6079,22 @@ async def _persist_rollout_skills(
     thread_id = _thread_id_from_params(params)
     if bridge_dir is None or turn_id is None or thread_id is None:
         return True
+    item = params.get("item")
+    before_id = item.get("id") if isinstance(item, dict) else None
     try:
-        bridge = read_bridge_state(bridge_dir)
-        if bridge is None:
-            return True
-        rollouts = sorted(
-            Path(bridge.codex_home).glob(f"sessions/**/*rollout-*{thread_id}.jsonl"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
+        reader = (
+            forwarder_state.rollout_skill_readers.get(thread_id)
+            if forwarder_state is not None
+            else None
         )
-        if not rollouts:
-            return True
-        item = params.get("item")
-        before_id = item.get("id") if isinstance(item, dict) else None
-        skills = _read_turn_skills(rollouts[0], turn_id, before_id)
+        if reader is None:
+            bridge = await asyncio.to_thread(read_bridge_state, bridge_dir)
+            if bridge is None:
+                return True
+            reader = RolloutSkillReader(Path(bridge.codex_home), thread_id)
+            if forwarder_state is not None:
+                forwarder_state.rollout_skill_readers[thread_id] = reader
+        skills = await asyncio.to_thread(reader.read_turn_skills, turn_id, before_id)
     except (OSError, UnicodeError):
         _logger.warning(
             "Could not read Codex skill rollout for thread=%s", thread_id, exc_info=True
@@ -6114,82 +6117,6 @@ async def _persist_rollout_skills(
         if forwarder_state is not None:
             forwarder_state.synced_item_keys.add(source_id)
     return True
-
-
-def _read_turn_skills(rollout: Path, turn_id: str, before_id: object) -> list[_JsonObject]:
-    current_turn = None
-    user_seen = False
-    user_texts: set[str] = set()
-    skills: list[_JsonObject] = []
-    with rollout.open("rb") as stream:
-        for line_number, line in enumerate(stream):
-            try:
-                row = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if not isinstance(row, dict) or not isinstance(payload := row.get("payload"), dict):
-                continue
-            row_type = row.get("type")
-            kind = payload.get("type")
-            if row_type == "turn_context" or (row_type == "event_msg" and kind == "task_started"):
-                next_turn = payload.get("turn_id")
-                if next_turn != current_turn:
-                    user_seen = False
-                current_turn = next_turn
-                continue
-            if current_turn != turn_id:
-                continue
-            if row_type == "event_msg":
-                event_turn = payload.get("turn_id")
-                if event_turn is not None and event_turn != turn_id:
-                    continue
-                event_item = payload.get("item")
-                if kind == "user_message":
-                    raw_text = payload.get("message")
-                    if isinstance(raw_text, str):
-                        user_texts.add(raw_text)
-                        user_seen = True
-                elif kind == "item_completed" and isinstance(event_item, dict):
-                    if event_item.get("type") in {"UserMessage", "userMessage"}:
-                        user_texts.add(_user_message_text(event_item))
-                        user_seen = True
-                    if before_id is not None and event_item.get("id") == before_id:
-                        break
-                elif kind in {"task_complete", "turn_aborted"}:
-                    break
-                continue
-            if row_type != "response_item":
-                continue
-            if before_id is not None and before_id in (payload.get("id"), payload.get("call_id")):
-                break
-            if not user_seen or kind != "message" or payload.get("role") != "user":
-                continue
-            metadata = payload.get("internal_chat_message_metadata_passthrough")
-            if isinstance(metadata, dict):
-                if metadata.get("turn_id", turn_id) != turn_id:
-                    continue
-                kinds = metadata.get("content_item_kinds")
-                if kinds is not None and kinds != ["skills.selected_skill_instructions"]:
-                    continue
-            content = payload.get("content")
-            if not isinstance(content, list) or not content:
-                continue
-            if not all(
-                isinstance(block, dict)
-                and block.get("type") == "input_text"
-                and isinstance(text := block.get("text"), str)
-                and re.fullmatch(
-                    r"<skill>\s*<name>[^<>\n]+</name>\s*<path>[^<>\n]+</path>\s*[\s\S]*</skill>",
-                    text.strip(),
-                )
-                for block in content
-            ):
-                continue
-            skill = dict(payload)
-            if not isinstance(skill.get("id"), str) or not skill["id"]:
-                skill["id"] = f"rollout-skill-{line_number}"
-            skills.append(skill)
-    return [skill for skill in skills if _user_message_text(skill) not in user_texts]
 
 
 async def _post_user_message(
