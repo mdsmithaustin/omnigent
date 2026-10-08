@@ -29,6 +29,14 @@ test:
     Follow the matching verification skill in .claude/skills
     (verify-prime-native, <harness>-e2e-dev, or cli-setup-verify). Docs-only changes need no live run.
 
+document:
+  instructions: |
+    Fork ownership. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
+    Before editing an existing file, run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent`; exit 0 means upstream-owned, an HTTP 404 means fork-owned, and any other gh error means ownership could not be checked.
+    Never edit an upstream-owned file or a file whose ownership could not be checked.
+    When the change makes such a doc stale, document the fork behavior in a fork-owned module's docstring or a fork-owned doc if one fits, and report the stale doc as a finding either way.
+    Leave staleness the change did not cause in upstream-owned files unreported; that is upstream's to fix.
+
 review:
   # A slash-free pattern matches the basename at any depth, so "*" covers every changed file.
   path_instructions:
