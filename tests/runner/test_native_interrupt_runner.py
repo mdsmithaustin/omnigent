@@ -346,6 +346,60 @@ async def test_claude_interrupt_resolves_bridge_id_and_injects(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "detail", "expected_status", "expected_body"),
+    [
+        (
+            "interrupt_accepted",
+            "Turn abort requested",
+            202,
+            {"status": "interrupt_accepted", "detail": "Turn abort requested"},
+        ),
+        (
+            "unavailable",
+            "No live Prime extension binding",
+            503,
+            {
+                "status": "unavailable",
+                "detail": "No live Prime extension binding",
+                "error": "prime_control_unavailable",
+            },
+        ),
+    ],
+)
+async def test_prime_interrupt_returns_registered_hook_response(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    detail: str,
+    expected_status: int,
+    expected_body: dict[str, str],
+) -> None:
+    import json
+
+    from omnigent.harnesses.prime_native import controls
+
+    sessions: list[str] = []
+    requests: list[tuple[object, float]] = []
+
+    async def execute(control: controls.Control, *, timeout_s: float) -> controls.ControlOutcome:
+        requests.append((control, timeout_s))
+        return controls.ControlOutcome(controls.ControlStatus(status), detail)
+
+    def binding(session_id: str) -> SimpleNamespace:
+        sessions.append(session_id)
+        return SimpleNamespace(execute=execute)
+
+    monkeypatch.setattr(controls, "prime_binding", binding)
+    runner, _captured = _make_runner()
+    response = await runner.interrupt("prime-native", "conv_prime")
+
+    assert response is not None and response.status_code == expected_status
+    assert json.loads(bytes(response.body)) == expected_body
+    assert sessions == ["conv_prime"]
+    assert requests == [(controls.Interrupt(), 3.0)]
+
+
+@pytest.mark.asyncio
 async def test_prime_stop_dispatches_registered_runtime_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

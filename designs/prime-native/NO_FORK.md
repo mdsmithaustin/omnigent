@@ -15,8 +15,8 @@ root-wide CLI shutdown, whose admission lease can block another Prime startup
 even when daemon discovery uses a private temporary directory. Native Windows
 launch is rejected because the published default named pipe is shared.
 
-Launch records a private reservation before its first asynchronous preparation
-step. A concurrent stop returns 503 while that owner is launching, so it cannot
+Launch records a private reservation before preparing or dispatching the
+terminal. A concurrent stop returns 503 while that owner is launching, so it cannot
 report success before an unregistered terminal starts. After terminal dispatch,
 the reservation clears only when a recorded terminal identity is live. Failed
 dispatch cleanup retains uncertain ownership for a later scoped stop. Orphan

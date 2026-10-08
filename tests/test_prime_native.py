@@ -1607,6 +1607,25 @@ def test_unqualified_version_fails_before_launch(
         process.resolve_prime_executable()
 
 
+def test_version_probe_is_memoized_until_binary_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "prime-agent"
+    probes = tmp_path / "probes"
+    binary.write_text(f"#!/bin/sh\necho x >> {probes}\nprintf '{process.QUALIFIED_VERSION}\\n'\n")
+    binary.chmod(0o700)
+    monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
+    process._VERSION_PROBES.clear()
+
+    assert process.resolve_prime_executable() == str(binary)
+    assert process.resolve_prime_executable() == str(binary)
+    assert len(probes.read_text().splitlines()) == 1
+
+    binary.write_text("#!/bin/sh\nprintf '0.9.7\\n'\n")
+    with pytest.raises(click.ClickException, match=r"found '0\.9\.7'"):
+        process.resolve_prime_executable()
+
+
 @pytest.mark.parametrize("root_args", [(), ("--profiling",)])
 def test_public_prime_command_help_dispatches(root_args: tuple[str, ...], tmp_path: Path) -> None:
     result = subprocess.run(

@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -34,6 +35,53 @@ class _DeliveryAck:
 class _EmptyTerminalRegistry:
     def list_for_conversation(self, _session_id: str) -> list[object]:
         return []
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_prime_reservation_allows_later_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
+    monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
+    entered = asyncio.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def blocked_reservation(paths: PrimeRuntimePaths) -> process.PrimeLaunchReservation:
+        loop.call_soon_threadsafe(entered.set)
+        try:
+            if not release.wait(timeout=5):
+                raise TimeoutError("reservation was not released")
+            return process.reserve_prime_launch(paths)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(main, "reserve_prime_launch", blocked_reservation)
+    registry = AsyncMock()
+    context = NativeLaunchContext(
+        session_id="conv_prime_cancel_reservation",
+        resource_registry=registry,
+        publish_event=lambda *_event: None,
+        server_client=None,
+    )
+    launched = asyncio.create_task(main.launch_prime_terminal(context))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        launched.cancel()
+    finally:
+        loop.call_soon(release.set)
+        assert await asyncio.to_thread(finished.wait, 5)
+        with pytest.raises(asyncio.CancelledError):
+            await launched
+
+    assert not (paths.root / "launch.pending.json").exists()
+    registry.launch_required_terminal.assert_not_awaited()
+    reservation = await asyncio.to_thread(process.reserve_prime_launch, paths)
+    assert reservation.state == "pending"
+    await asyncio.to_thread(process.abandon_prime_launch, paths, reservation, dispatched=False)
 
 
 @pytest.mark.asyncio

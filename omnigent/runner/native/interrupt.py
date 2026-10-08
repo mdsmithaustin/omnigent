@@ -350,14 +350,12 @@ class NativeInterruptRunner:
         if agent is None:
             return None
         key = agent.key
-        if key == "prime-native":
-            from omnigent.harnesses.prime_native.bridge import runtime_paths
-            from omnigent.harnesses.prime_native.controls import Interrupt, PrimeExtensionBinding
+        from omnigent.native.native_dispatch import resolve_hook_for_key
 
-            outcome = await PrimeExtensionBinding(runtime_paths(conv_id).root).execute(
-                Interrupt(), timeout_s=3.0
-            )
-            return JSONResponse(status_code=outcome.http_status, content=outcome.response_body())
+        interrupt_handler = resolve_hook_for_key(key, "interrupt_handler")
+        if interrupt_handler is not None:
+            status_code, content = await interrupt_handler(conv_id)
+            return JSONResponse(status_code=status_code, content=content)
         if key == "claude":
             return await self._claude_interrupt(conv_id)
         if key == "codex":
