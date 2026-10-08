@@ -21,6 +21,8 @@ _OWNER_INDEX = ["workspace_id", "kind", "created_by", "created_at", "id"]
 
 
 def _agent_indexes(conn: sa.Connection) -> dict[str, list[str]]:
+    # CockroachDB reflects index changes only after commit.
+    conn.commit()
     return {i["name"]: i["column_names"] for i in sa.inspect(conn).get_indexes("agents")}
 
 

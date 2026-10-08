@@ -34,19 +34,37 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+_TABLE = "agents"
+_INDEXES = (
+    ("ix_agents_id_name", ["workspace_id", "id", "name"]),
+    ("ix_agents_kind_owner_created", ["workspace_id", "kind", "created_by", "created_at", "id"]),
+)
+
+
+def _reflected_indexes() -> set[str | None] | None:
+    """Index names on MySQL, which lacks IF [NOT] EXISTS but commits each DDL; else None.
+
+    Elsewhere reflection can miss an index built earlier in the same transaction
+    (CockroachDB 23.2), so callers use IF [NOT] EXISTS instead.
+    """
+    bind = op.get_bind()
+    if bind.dialect.name != "mysql":
+        return None
+    return {index["name"] for index in sa.inspect(bind).get_indexes(_TABLE)}
+
+
 def upgrade() -> None:
-    indexes = {index["name"] for index in sa.inspect(op.get_bind()).get_indexes("agents")}
-    if "ix_agents_id_name" not in indexes:
-        op.create_index("ix_agents_id_name", "agents", ["workspace_id", "id", "name"])
-    if "ix_agents_kind_owner_created" not in indexes:
-        op.create_index(
-            "ix_agents_kind_owner_created",
-            "agents",
-            ["workspace_id", "kind", "created_by", "created_at", "id"],
-        )
+    existing = _reflected_indexes()
+    for name, columns in _INDEXES:
+        if existing is None:
+            op.create_index(name, _TABLE, columns, if_not_exists=True)
+        elif name not in existing:
+            op.create_index(name, _TABLE, columns)
 
 
 def downgrade() -> None:
-    indexes = {index["name"] for index in sa.inspect(op.get_bind()).get_indexes("agents")}
-    if "ix_agents_id_name" in indexes:
-        op.drop_index("ix_agents_id_name", table_name="agents")
+    existing = _reflected_indexes()
+    if existing is None:
+        op.drop_index("ix_agents_id_name", table_name=_TABLE, if_exists=True)
+    elif "ix_agents_id_name" in existing:
+        op.drop_index("ix_agents_id_name", table_name=_TABLE)
