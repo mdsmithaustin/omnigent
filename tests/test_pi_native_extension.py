@@ -1745,6 +1745,8 @@ fs.writeFileSync(
 
 process.env.OMNIGENT_PI_NATIVE_CONFIG = configPath;
 
+// A realistic edge sign-in document: served 200, carries an identifier a
+// classification string must never echo back to the model.
 const SIGNIN_HTML =
   '<!DOCTYPE html><html><head><title>Sign in</title></head><body>' +
   '<form action="/oauth2/authorize"><input name="state" ' +
@@ -1762,6 +1764,7 @@ global.fetch = async () => {
       status: 200,
       headers: headersOf("text/html; charset=utf-8"),
       async json() {
+        // What a real Response does with an HTML body: the message quotes it.
         throw new SyntaxError(
           'Unexpected token \'<\', "' + SIGNIN_HTML.slice(0, 24) + '"... is not valid JSON',
         );
@@ -1850,6 +1853,7 @@ function soleText(result) {
 }
 
 (async () => {
+  // 1. A 200 text/html sign-in page is a classified auth/edge failure.
   let htmlText;
   await assert.rejects(registered.sys_os_shell.execute("call-1", {}), error => {
     assert.ok(error instanceof Error);
@@ -1861,6 +1865,7 @@ function soleText(result) {
     "message does not name an authentication classification: " + htmlText,
   );
 
+  // 2. No part of the body, no header value, and no URL may appear.
   for (const forbidden of [
     "SECRET-STATE-b3f9c1",
     "<!DOCTYPE",
@@ -1876,11 +1881,13 @@ function soleText(result) {
     );
   }
 
+  // 3. A declared application/json 200 still round-trips unchanged.
   mode = "json";
   const good = await registered.sys_os_shell.execute("call-2", {});
   assert.equal(good.isError, false, JSON.stringify(good));
   assert.equal(soleText(good), "real answer");
 
+  // 4. A JSON content type with an unparseable body is bounded the same way.
   mode = "json-unparseable";
   let badText;
   await assert.rejects(registered.sys_os_shell.execute("call-3", {}), error => {
@@ -1893,6 +1900,8 @@ function soleText(result) {
     "parse-failure path leaked the body: " + badText,
   );
 
+  // 5. An unreadable (throwing) header accessor must not become an error
+  //    message carrying header or body text.
   mode = "throwing-headers";
   const thrower = await registered.sys_os_shell.execute("call-4", {});
   const throwerText = soleText(thrower);
@@ -1902,9 +1911,12 @@ function soleText(result) {
       "throwing header accessor leaked " + forbidden + ": " + throwerText,
     );
   }
+  // Unreadable is not a signal, so the parse still decides: this body is valid
+  // JSON and must round-trip.
   assert.equal(thrower.isError, false, JSON.stringify(thrower));
   assert.equal(throwerText, "real answer");
 
+  //    Same for a throwing `headers` *property* getter, not just get().
   mode = "throwing-headers-getter";
   const getterThrower = await registered.sys_os_shell.execute("call-5", {});
   const getterText = soleText(getterThrower);
@@ -1979,6 +1991,7 @@ let mcpCallCount = 0;
 let lastRetryBody = null;
 global.fetch = async (url, request) => {
   if (typeof url === "string" && url.indexOf("/policies/evaluate") !== -1) {
+    // The human declined → the ASK park collapses to DENY.
     return { ok: true, async json() { return { result: "POLICY_ACTION_DENY", reason: "nope" }; } };
   }
   mcpCallCount += 1;
@@ -1999,6 +2012,7 @@ global.fetch = async (url, request) => {
     };
   }
   lastRetryBody = JSON.parse(request.body);
+  // Server denies the declined retry with the MCP -32000 convention.
   return {
     ok: true,
     async json() {

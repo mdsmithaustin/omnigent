@@ -10881,11 +10881,50 @@ async def _fetch_model_options(
     conv: Conversation,
     agent_store: AgentStore | None = None,
 ) -> list[dict[str, Any]]:
+    """
+    Resolve the Web UI model-picker options for a native session.
+
+    Catalog sources:
+
+    * **pi-native / prime-native** use the extension-pushed cache described
+      by :func:`_persist_external_model_options`. Empty until the extension
+      posts its catalog on session start.
+
+    * **codex-native / cursor-native / kiro-native** — a *live* catalog only
+      the bound runner can read from the installed CLI. This stays
+      off the snapshot hot path: the first snapshot kicks a background fetch
+      and returns ``[]``; subsequent snapshots serve the cache. The cache
+      outlives the runner: with no runner bound (asleep session) it keeps
+      serving, and a stale-marked entry serves while a live re-fetch replaces
+      it.
+    * **claude-native** — the provider-neutral aliases from the exact launch
+      config, refreshed from Databricks before each new terminal starts.
+      With no runner bound and a cold cache (server restart while the
+      session slept), the session's host resolves a pre-launch preview
+      instead — the same source the new-session picker uses.
+    * **acp** — the deployment's curated provider ``models:`` shortlist from
+      the session's explicit provider (provider default first). Local to the
+      server, so a cold cache re-resolves inline with no runner round trip.
+      Served only when the deployment actually curated a set (2+ models); a
+      session configured without one shows no picker, matching pi-native's
+      no-scope-when-uncurated rule.
+
+    :param runner_client: HTTP client pointed at the bound runner, or
+        ``None`` when no runner is bound.
+    :param session_id: Session/conversation identifier,
+        e.g. ``"conv_abc123"``.
+    :param conv: Conversation row whose labels identify the wrapper.
+    :param agent_store: Optional store for the ACP spec lookup; resolves
+        from the runtime globals when ``None``.
+    :returns: Model options, or ``[]`` when the session has no model picker or
+        the runner-owned options are not yet available.
+    """
     wrapper = conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
     native_agent = await asyncio.to_thread(_native_coding_agent_for_session, conv)
     if wrapper == _PI_NATIVE_WRAPPER_LABEL_VALUE or (
         native_agent is not None and native_agent.harness == "prime-native"
     ):
+        # Extension pushes are validated by _persist_external_model_options.
         return _pushed_model_options_cache.get(session_id, [])
     endpoint = _MODEL_OPTIONS_ENDPOINT_BY_WRAPPER.get(wrapper or "")
     if endpoint is None:
