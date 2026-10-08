@@ -1,12 +1,26 @@
 """The agent-name covering index is additive and reversible."""
 
+import warnings
 from pathlib import Path
 
 import sqlalchemy as sa
 from alembic import command
 
 from omnigent.db.db_models import SqlAgent
-from omnigent.db.utils import _build_alembic_config, get_or_create_engine
+from omnigent.db.utils import (
+    _build_alembic_config,
+    _get_head_db_revision,
+    get_or_create_engine,
+)
+
+
+def test_migration_scripts_resolve_one_head_without_duplicate_revisions() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        head = _get_head_db_revision("sqlite://")
+    duplicates = [str(w.message) for w in caught if "present more than once" in str(w.message)]
+    assert duplicates == []
+    assert head == "fork1a2b3c4d"
 
 
 def test_agent_name_index_upgrade_downgrade_preserves_rows(tmp_path: Path) -> None:
