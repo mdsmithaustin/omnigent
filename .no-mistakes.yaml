@@ -32,10 +32,10 @@ test:
 document:
   instructions: |
     Fork ownership. This repository is a fork of omnigent-ai/omnigent and must keep merging from it cheaply.
-    Before editing an existing file, run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent`; exit 0 means upstream-owned, and an HTTP 404 means fork-owned.
-    Do not edit an upstream-owned file for staleness the change did not cause; that is upstream's to fix.
-    When the change makes an upstream-owned doc stale, document the fork behavior in a fork-owned module's docstring or a fork-owned doc and name the stale upstream doc in the summary.
-    If ownership cannot be checked, leave the file unedited and report it.
+    Before editing an existing file, run `gh api 'repos/omnigent-ai/omnigent/contents/<path>?ref=main' --silent`; exit 0 means upstream-owned, an HTTP 404 means fork-owned, and any other gh error means ownership could not be checked.
+    Never edit an upstream-owned file or a file whose ownership could not be checked.
+    When the change makes such a doc stale, document the fork behavior in a fork-owned module's docstring or a fork-owned doc if one fits, and report the stale doc as a finding either way.
+    Leave staleness the change did not cause in upstream-owned files unreported; that is upstream's to fix.
 
 review:
   # A slash-free pattern matches the basename at any depth, so "*" covers every changed file.
