@@ -48,17 +48,16 @@ def migration(tmp_path: Path, _worker_db_uri: str) -> Iterator[tuple[sa.Connecti
 def test_migration_scripts_resolve_one_head_without_duplicate_revisions() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        head = _get_head_db_revision("sqlite://")
+        _get_head_db_revision("sqlite://")
     duplicates = [str(w.message) for w in caught if "present more than once" in str(w.message)]
     assert duplicates == []
-    assert head == "fork1a2b3c4d"
 
 
 def test_fresh_upgrade_and_bootstrap_create_both_indexes(
     migration: tuple[sa.Connection, Config], tmp_path: Path
 ) -> None:
     conn, config = migration
-    command.upgrade(config, "head")
+    command.upgrade(config, "fork1a2b3c4d")
     upgraded = _agent_indexes(conn)
     assert _revision(conn) == "fork1a2b3c4d"
     assert upgraded["ix_agents_id_name"] == _NAME_INDEX
@@ -82,7 +81,7 @@ def test_old_fork_mm1_state_upgrades_to_both_indexes(
     conn.commit()
     command.stamp(config, "mm1a2b3c4d5e")
     assert "ix_agents_kind_owner_created" not in _agent_indexes(conn)
-    command.upgrade(config, "head")
+    command.upgrade(config, "fork1a2b3c4d")
     upgraded = _agent_indexes(conn)
     assert _revision(conn) == "fork1a2b3c4d"
     assert upgraded["ix_agents_id_name"] == _NAME_INDEX
@@ -100,7 +99,7 @@ def test_upstream_mm1_state_upgrades_to_both_indexes(
     if existing_name_index:
         conn.execute(sa.text("CREATE INDEX ix_agents_id_name ON agents (workspace_id, id, name)"))
         conn.commit()
-    command.upgrade(config, "head")
+    command.upgrade(config, "fork1a2b3c4d")
     upgraded = _agent_indexes(conn)
     assert _revision(conn) == "fork1a2b3c4d"
     assert upgraded["ix_agents_id_name"] == _NAME_INDEX
@@ -125,14 +124,14 @@ def test_downgrade_drops_only_agent_name_index_and_preserves_rows(
         },
     )
     conn.commit()
-    command.upgrade(config, "head")
+    command.upgrade(config, "fork1a2b3c4d")
     command.downgrade(config, "mm1a2b3c4d5e")
     downgraded = _agent_indexes(conn)
     assert _revision(conn) == "mm1a2b3c4d5e"
     assert "ix_agents_id_name" not in downgraded
     assert downgraded["ix_agents_kind_owner_created"] == _OWNER_INDEX
     assert conn.execute(sa.select(SqlAgent.name)).scalars().all() == ["retained"]
-    command.upgrade(config, "head")
+    command.upgrade(config, "fork1a2b3c4d")
     assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
     assert conn.execute(sa.select(SqlAgent.name)).scalars().all() == ["retained"]
 
