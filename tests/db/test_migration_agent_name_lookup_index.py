@@ -29,13 +29,15 @@ def _revision(conn: sa.Connection) -> str:
 
 
 @pytest.fixture
-def migration(tmp_path: Path) -> Iterator[tuple[sa.Connection, Config]]:
-    uri = f"sqlite:///{tmp_path / 'upgrade.db'}"
+def migration(tmp_path: Path, _worker_db_uri: str) -> Iterator[tuple[sa.Connection, Config]]:
+    uri = _worker_db_uri or f"sqlite:///{tmp_path / 'upgrade.db'}"
     engine = sa.create_engine(uri)
     config = _build_alembic_config(uri)
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             config.attributes["connection"] = conn
+            if _worker_db_uri:
+                command.downgrade(config, "ll1a2b3c4d5e")
             yield conn, config
     finally:
         engine.dispose()
@@ -75,6 +77,7 @@ def test_old_fork_mm1_state_upgrades_to_both_indexes(
     conn, config = migration
     command.upgrade(config, "ll1a2b3c4d5e")
     conn.execute(sa.text("CREATE INDEX ix_agents_id_name ON agents (workspace_id, id, name)"))
+    conn.commit()
     command.stamp(config, "mm1a2b3c4d5e")
     assert "ix_agents_kind_owner_created" not in _agent_indexes(conn)
     command.upgrade(config, "head")
@@ -84,12 +87,17 @@ def test_old_fork_mm1_state_upgrades_to_both_indexes(
     assert upgraded["ix_agents_kind_owner_created"] == _OWNER_INDEX
 
 
+@pytest.mark.parametrize("existing_name_index", [False, True])
 def test_upstream_mm1_state_upgrades_to_both_indexes(
     migration: tuple[sa.Connection, Config],
+    existing_name_index: bool,
 ) -> None:
     conn, config = migration
     command.upgrade(config, "mm1a2b3c4d5e")
     assert "ix_agents_id_name" not in _agent_indexes(conn)
+    if existing_name_index:
+        conn.execute(sa.text("CREATE INDEX ix_agents_id_name ON agents (workspace_id, id, name)"))
+        conn.commit()
     command.upgrade(config, "head")
     upgraded = _agent_indexes(conn)
     assert _revision(conn) == "fork1a2b3c4d"
@@ -114,6 +122,7 @@ def test_downgrade_drops_only_agent_name_index_and_preserves_rows(
             "kind": 2,
         },
     )
+    conn.commit()
     command.upgrade(config, "head")
     command.downgrade(config, "mm1a2b3c4d5e")
     downgraded = _agent_indexes(conn)
@@ -124,3 +133,15 @@ def test_downgrade_drops_only_agent_name_index_and_preserves_rows(
     command.upgrade(config, "head")
     assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
     assert conn.execute(sa.select(SqlAgent.name)).scalars().all() == ["retained"]
+
+
+def test_downgrade_without_agent_name_index_preserves_upstream_index(
+    migration: tuple[sa.Connection, Config],
+) -> None:
+    conn, config = migration
+    command.upgrade(config, "mm1a2b3c4d5e")
+    command.stamp(config, "fork1a2b3c4d")
+    command.downgrade(config, "mm1a2b3c4d5e")
+    assert _revision(conn) == "mm1a2b3c4d5e"
+    assert _agent_indexes(conn)["ix_agents_kind_owner_created"] == _OWNER_INDEX
+    assert "ix_agents_id_name" not in _agent_indexes(conn)

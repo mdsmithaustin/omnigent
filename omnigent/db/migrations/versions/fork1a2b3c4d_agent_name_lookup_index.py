@@ -4,6 +4,11 @@ This fork-only revision sits after upstream's mm1a2b3c4d5e and repairs databases
 stamped by either the fork's or upstream's mm1a2b3c4d5e, so both agents indexes
 exist at head.
 
+When an upstream sync brings a migration revising mm1a2b3c4d5e, add an Alembic
+merge revision of fork1a2b3c4d and the new upstream head in that sync.
+test_migration_scripts_resolve_one_head_without_duplicate_revisions fails until
+the merge revision exists.
+
 Coordinate this migration with the application deployment. The added index
 preserves compatibility with older SQL readers and writers, but older application
 processes cannot start against revision fork1a2b3c4d. Their startup revision check
@@ -20,6 +25,7 @@ that the recorded revision is mm1a2b3c4d5e before restarting the older applicati
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "fork1a2b3c4d"
@@ -29,17 +35,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_agents_id_name", "agents", ["workspace_id", "id", "name"], if_not_exists=True
-    )
-    # Databases that ran the fork's earlier mm1a2b3c4d5e never built upstream's index.
-    op.create_index(
-        "ix_agents_kind_owner_created",
-        "agents",
-        ["workspace_id", "kind", "created_by", "created_at", "id"],
-        if_not_exists=True,
-    )
+    indexes = {index["name"] for index in sa.inspect(op.get_bind()).get_indexes("agents")}
+    if "ix_agents_id_name" not in indexes:
+        op.create_index("ix_agents_id_name", "agents", ["workspace_id", "id", "name"])
+    if "ix_agents_kind_owner_created" not in indexes:
+        op.create_index(
+            "ix_agents_kind_owner_created",
+            "agents",
+            ["workspace_id", "kind", "created_by", "created_at", "id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_agents_id_name", table_name="agents", if_exists=True)
+    indexes = {index["name"] for index in sa.inspect(op.get_bind()).get_indexes("agents")}
+    if "ix_agents_id_name" in indexes:
+        op.drop_index("ix_agents_id_name", table_name="agents")
