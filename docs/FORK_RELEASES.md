@@ -20,7 +20,7 @@ python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
 
 It prints the upstream tag, the inventoried count, the pending SHAs, and `release_ready`. Ordinary feature PRs leave `main` pending, which is expected.
 
-Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync.
+Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch by rebasing onto `main` (or GitHub's "Update with rebase"), never by merging `main` into it.
 
 ## Check the source
 
