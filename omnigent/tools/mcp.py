@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 from anyio.streams.memory import (
     MemoryObjectReceiveStream,
@@ -1561,6 +1562,10 @@ _CONNECTION_ERROR_TYPES = (
     # transport-error 408 path instead, but retried here too if it
     # ever propagates directly.
     httpx.RemoteProtocolError,
+    # The SDK's stream into a transport that already died, e.g. an
+    # exited stdio server.
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
 )
 
 
