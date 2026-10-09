@@ -10,9 +10,9 @@ The certificate records source and artifact integrity under the reviewed workflo
 
 ## Source line
 
-Fork `main` is the only release line. It is a stable upstream tag commit followed by linear fork commits. Merge commits after the tag are forbidden. `.github/fork-release.json` pins the upstream release and inventories the first fork commits as ordered addons ending at `payload_commit`. Each commit after `payload_commit` is either policy-only, changing only the release-policy paths in `scripts/fork_release.py`, or pending, meaning it changes other paths and is not yet inventoried. `main` is release-ready when no commit is pending.
+Fork `main` is the only release line. It is a stable upstream tag commit followed by linear fork commits. Merge commits after the tag are forbidden. `.github/fork-release.json` pins the upstream release and inventories the first fork commits as ordered addons ending at `payload_commit`. Each commit after `payload_commit` is either policy-only, changing only the release-policy paths in `scripts/fork_release.py`, or pending, meaning it changes other paths or uses an unsafe file mode and is not yet inventoried. `main` is release-ready when no commit is pending.
 
-`check-line` checks this shape offline and reports pending commits. Any nonzero exit is a shape violation: the upstream commit is not an ancestor, a merge follows it, the inventory is not the exact linear prefix, or the payload anchor differs.
+`check-line` checks this shape offline and reports pending commits. A nonzero exit means the manifest or source line is invalid, or required Git objects are unavailable. Shape violations include an upstream commit that is not an ancestor, a merge after it, an inventory that is not the exact linear prefix, or a mismatched payload anchor.
 
 ```sh
 python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
@@ -89,7 +89,7 @@ PY
 
 Failed Python and addon shards upload `fork-python-GROUP-RUN_ID-RUN_ATTEMPT` or `fork-addons-GROUP-RUN_ID-RUN_ATTEMPT` with pytest output, JUnit, per-worker progress, and memory/process summaries. The collection-time shutdown cascade after a worker loss was reproduced in xdist; the initial worker loss remains unexplained. Use these diagnostics to establish that cause. No retry or pytest-exit masking is applied.
 
-The `source` job runs `check-line` on every pull request and push, so a shape violation fails immediately. It runs `check-source` and starts the certification jobs only when the line is release-ready. A pending source passes `source` and skips the rest. Manual dispatch rejects a pending source, and publication rejects any ref other than `main`.
+The `source` job runs `check-line` on every triggered pull request and push, so a shape violation fails immediately. It runs `check-source` and starts the certification jobs only when the line is release-ready. A pending source passes `source` and skips the rest. Manual dispatch rejects a pending source, and publication rejects any ref other than `main`.
 
 Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main` and on `codex/fork-release-*` candidate branches.
 
@@ -154,7 +154,7 @@ The workflow has no PyPI or GHCR publication target. It reuses upstream canonica
 
 ## Cut a release from main
 
-Cut revision `N` as two pull requests to `main`.
+Cut revision `N` as two pull requests to `main`. Replace `N` with the next positive revision number in the commands below. Use the version-stamping helper's `pre-release` command; its `post-release` command belongs to upstream's development-version workflow.
 
 1. Stamp the version. This is an ordinary pending commit. Each command must exit zero.
 
@@ -179,16 +179,26 @@ The push run on `main` then certifies that exact source. After review, dispatch 
 
 Rebuild `main` on a published stable upstream tag instead of merging upstream. A merge would place upstream history after the pinned tag, which `check-line` rejects, and would hide which fork commits remain. Replay keeps the fork as a short, reviewable patch series on the new tag. For `v0.18.0`:
 
-1. Fetch both tags from upstream and branch from the new one: `git fetch https://github.com/omnigent-ai/omnigent.git tag v0.17.0 tag v0.18.0` and `git switch -c sync/v0.18.0 v0.18.0`.
-2. Replay the fork commits since the old tag in order with `git cherry-pick v0.17.0..origin/main`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
+Each Git, generation, stamping, inventory, and verification command must exit zero before continuing.
+
+1. Fetch and record the old fork tip, fetch both upstream tags, and branch from the new one:
+
+   ```sh
+   git fetch origin main
+   old_main_sha=$(git rev-parse origin/main)
+   git fetch https://github.com/omnigent-ai/omnigent.git tag v0.17.0 tag v0.18.0
+   git switch -c sync/v0.18.0 v0.18.0
+   ```
+
+2. Replay the fork commits since the old tag in order with `git cherry-pick "v0.17.0..$old_main_sha"`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
 3. Resolve conflicts surgically and record their reasons. Regenerate OpenAPI with `uv run --no-sync python scripts/dump_openapi.py` if necessary.
 4. If upstream added migrations after the fork's, add a merge revision with `uv run --no-sync alembic -c omnigent/db/alembic.ini merge heads -m "merge upstream v0.18.0"`. `tests/db/test_migration_connections.py::test_single_alembic_head` must pass.
-5. Reset the manifest and commit it: pin the new upstream tag, commit SHA, release ID, and publication time from the upstream APIs, clear `addons`, set `payload_commit` to the tag commit, and set `version` to `0.18.0+mdsmithaustin.1`. Stamp the same version as above, then run `inventory --version 0.18.0+mdsmithaustin.1` and commit the result so the replayed commits become the addons.
+5. Reset the manifest and commit it: pin the new upstream tag, commit SHA, release ID, and publication time from the upstream APIs, clear `addons`, set `payload_commit` to the tag commit, and set `version` to `0.18.0+mdsmithaustin.1`. Stamp the same version and normalize and check the lockfile as above. Commit those version and lockfile changes before running `python scripts/fork_release.py inventory --version 0.18.0+mdsmithaustin.1`, because inventory reads the version from committed `HEAD`. Review the generated reasons and commit the result so the replayed commits become the addons.
 6. Run `pre-commit run --all-files`, the changed addon tests, and `check-source`. Archive the old line and replace `main`:
 
    ```sh
-   git fetch origin main && git push origin origin/main:refs/heads/archive/main-v0.17.0
-   git push --force-with-lease=main:OLD_MAIN_SHA origin sync/v0.18.0:main
+   git push origin "$old_main_sha:refs/heads/archive/main-v0.17.0"
+   git push --force-with-lease="main:$old_main_sha" origin sync/v0.18.0:main
    ```
 
 Releases then continue as `0.18.0+mdsmithaustin.N`. The archive branch and existing `fork/v0.17.0+mdsmithaustin.*` tags keep earlier certificates verifiable. Never move an existing fork tag.
