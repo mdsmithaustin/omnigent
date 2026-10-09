@@ -60,11 +60,16 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
                 if valid_output
                 else "missing-marker"
             )
+            (evidence / f"{name}.txt").write_text(result.stdout[:32768] + result.stderr[:32768])
             if check["outcome"] != "passed":
                 raise RuntimeError(f"Doctor failed for {name}, {check['outcome']}")
-            (evidence / f"{name}.txt").write_text(result.stdout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             check["outcome"] = "timeout"
+            output = "".join(
+                (value.decode(errors="replace") if isinstance(value, bytes) else value or "")[:32768]
+                for value in (exc.stdout, exc.stderr)
+            )
+            (evidence / f"{name}.txt").write_text(output)
             raise
         except OSError:
             check["outcome"] = "os-error"
@@ -554,8 +559,7 @@ def main() -> int:
         if prime is None:
             raise RuntimeError("The requested Prime binary is unavailable")
         doctor(prime, evidence, env)
-        if not args.doctor:
-            drive(prime, evidence, runtime, env, args.expected, args.inspect_seconds)
+        drive(prime, evidence, runtime, env, args.expected, args.inspect_seconds)
         status = 0
     except (
         OSError,
@@ -597,7 +601,6 @@ def main() -> int:
             json.dumps(
                 {
                     "exit": status,
-                    "doctor_only": args.doctor,
                     "evidence": str(evidence),
                     "runtime_removed": not runtime.exists(),
                 },

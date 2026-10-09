@@ -140,6 +140,56 @@ def test_doctor_module_entry_and_private_profile(helper, monkeypatch, tmp_path):
     assert not helper.allocations[1].exists()
 
 
+@pytest.mark.parametrize(
+    "name,argv,marker",
+    [
+        ("prime-version", ["/fixture/prime-agent", "--version"], "0.9.6\n"),
+        ("prime-help", ["/fixture/prime-agent", "--help"], "model\n"),
+        (
+            "prime-model-help",
+            ["/fixture/prime-agent", "model", "list", "--help"],
+            "List available models\n",
+        ),
+        (
+            "native-help",
+            [sys.executable, "-m", "omnigent", "prime-native", "--help"],
+            "--server\n",
+        ),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["success", "nonzero", "wrong-marker", "timeout"])
+def test_metadata_output_retained(helper, monkeypatch, name, argv, marker, outcome):
+    original_run = helper.subprocess.run
+    stdout = marker if outcome in ("success", "nonzero") else "unexpected public output\n"
+    stderr = "public command diagnostic\n"
+
+    def run(command, **kwargs):
+        if command != argv:
+            return original_run(command, **kwargs)
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(command, 30, stdout.encode(), stderr.encode())
+        return subprocess.CompletedProcess(
+            command, 7 if outcome == "nonzero" else 0, stdout, stderr
+        )
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    assert helper.main() == (0 if outcome == "success" else 1)
+    evidence = helper.allocations[0]
+    assert (evidence / f"{name}.txt").read_text() == stdout + stderr
+
+
+@pytest.mark.parametrize("outcome", ["nonzero", "timeout"])
+def test_metadata_output_is_bounded(helper, monkeypatch, outcome):
+    def run(argv, **kwargs):
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(argv, 30, b"x" * 70000, b"y" * 70000)
+        return subprocess.CompletedProcess(argv, 7, "x" * 70000, "y" * 70000)
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    assert helper.main() == 1
+    assert (helper.allocations[0] / "prime-version.txt").read_text() == "x" * 32768 + "y" * 32768
+
+
 def test_missing_executable_fails_with_receipt(helper, monkeypatch):
     monkeypatch.setattr(helper.shutil, "which", lambda name: None)
     assert helper.main() == 1
