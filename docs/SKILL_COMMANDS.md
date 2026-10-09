@@ -218,9 +218,7 @@ Omnigent does not create a full skill wrapper for this path. The CLI's transcrip
 forwarder preserves the expansion the CLI actually loaded as hidden context.
 Codex itself uses a `<skill>` wrapper, so native Codex transcripts still contain
 CLI-generated skill blocks. The Codex forwarder recovers those expansions from
-the turn's rollout records. User-message notifications remain visible even
-when their text is a complete `<skill>` block; pasted markup alone does not
-make a message hidden context.
+the turn's rollout records.
 
 Cold resume and history-based forks restore the historical command and its
 saved expansion. Reading that command as history does not run it again. This
