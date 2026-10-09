@@ -593,9 +593,8 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
     _logger.info("Running database migrations...")
     config = _build_alembic_config(db_uri)
     # Pass a shared connection so Alembic operates within the same engine.
-    # Most dialects let Alembic own transaction demarcation. CRDB needs an
-    # externally started SERIALIZABLE transaction for schema changes; on
-    # versions that provide it, autocommit_before_ddl is also enabled.
+    # CRDB uses _crdb_migration_session for SERIALIZABLE isolation and disables
+    # DDL autocommit where supported; other dialects let Alembic own transactions.
     with query_name_scope("omnigent.database.run_migrations"):
         crdb_version = (
             _crdb_server_version(engine) if is_cockroachdb(engine.dialect.name) else None
