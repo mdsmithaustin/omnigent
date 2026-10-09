@@ -8,9 +8,23 @@ Revision `.3` repairs native Codex startup when the server requires authenticate
 
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
+## Source line
+
+Fork `main` is the only release line. It is a stable upstream tag commit followed by linear fork commits. Merge commits after the tag are forbidden. `.github/fork-release.json` pins the upstream release and inventories the first fork commits as ordered addons ending at `payload_commit`. Each commit after `payload_commit` is either policy-only, changing only the release-policy paths in `scripts/fork_release.py`, or pending, meaning it changes other paths or uses an unsafe file mode and is not yet inventoried. `main` is release-ready when no commit is pending.
+
+`check-line` checks this shape offline and reports pending commits. A nonzero exit means the manifest or source line is invalid, or required Git objects are unavailable. Shape violations include an upstream commit that is not an ancestor, a merge after it, an inventory that is not the exact linear prefix, or a mismatched payload anchor.
+
+```sh
+python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
+```
+
+It prints the upstream tag, the inventoried count, the pending SHAs, and `release_ready`. Ordinary feature PRs leave `main` pending, which is expected.
+
+Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch with `git rebase origin/main`, never by merging `main` into it.
+
 ## Check the source
 
-Use a clean checkout of the authoritative permanent branch `release/v0.17.0-mdsmithaustin.3` with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
+Use a clean checkout of a release-ready `main` commit or a `fork/v*` tag with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
 
 Run these commands from the repository root. Any nonzero exit means the check failed.
 
@@ -75,14 +89,14 @@ PY
 
 Failed Python and addon shards upload `fork-python-GROUP-RUN_ID-RUN_ATTEMPT` or `fork-addons-GROUP-RUN_ID-RUN_ATTEMPT` with pytest output, JUnit, per-worker progress, and memory/process summaries. The collection-time shutdown cascade after a worker loss was reproduced in xdist; the initial worker loss remains unexplained. Use these diagnostics to establish that cause. No retry or pytest-exit masking is applied.
 
-Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main`, `release/**`, and `codex/fork-release-*`. A development `main` history that violates the pin cannot certify.
+The `source` job runs `check-line` on every triggered pull request and push, so a shape violation fails immediately. It runs `check-source` and starts the certification jobs only when the line is release-ready. A pending source passes `source` and skips the rest. Manual dispatch rejects a pending source, and publication rejects any ref other than `main`.
 
-GitHub requires the workflow file on the repository default branch before it accepts [manual dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow). Push the reviewed source to permanent branch `release/v0.17.0-mdsmithaustin.3` and let its push workflow pass every required check. After independent review and those checks succeed, select that release branch as the fork default. This keeps the default pinned to released source while retaining development `main` and its history.
+Pull requests run read-only checks against the PR head. Certificates are emitted only for pushes and manual dispatches whose workflow SHA equals the source SHA. This avoids treating GitHub's PR merge workflow as accepted head policy. Push checks run on `main` and on `codex/fork-release-*` candidate branches.
 
-Then run a manual check with publication disabled. A nonzero dispatch exit means the request failed. The run must later show every required job and `certificate` as successful.
+To recheck a release-ready `main` without publishing, run a manual check with publication disabled. A nonzero dispatch exit means the request failed. The run must later show every required job and `certificate` as successful.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.3 -f publish=false
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref main -f publish=false
 ```
 
 The `fork-certified-RUN_ID-RUN_ATTEMPT` artifact contains `dist/` with eight distributions and `evidence/` with `certificate.json`, `ui-inventory.json`, and `SHA256SUMS`. The certificate binds the final source SHA, tree, payload anchor, upstream release identity, addon inventory, manifest digest, workflow, run, checks, UI inventory, and artifact hashes.
@@ -128,26 +142,63 @@ The check creates its own HOME and workspace and cleans up its recorded test pro
 
 ## Publish the same certified bytes
 
-Publication requires an explicit manual dispatch with `publish=true` on the reviewed release branch. It is disabled by default. This command authorizes a new run and its final publication job. A nonzero dispatch exit or any failed required job prevents publication.
+Publication requires an explicit manual dispatch with `publish=true` on release-ready `main`. It is disabled by default. This command authorizes a new run and its final publication job. A nonzero dispatch exit or any failed required job prevents publication.
 
 ```sh
-gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref release/v0.17.0-mdsmithaustin.3 -f publish=true
+gh workflow run fork-release.yml --repo mdsmithaustin/omnigent --ref main -f publish=true
 ```
 
 Only the final publisher has release-write permission. It validates repository, dispatch intent, workflow, run, source, tag, certificate, checksums, UI evidence, and downloaded artifact bytes. It promotes those bytes to `mdsmithaustin/omnigent` GitHub Releases without rebuilding. A tag pointing elsewhere or existing different assets fail without overwrite. An existing identical release succeeds without changing it.
 
 The workflow has no PyPI or GHCR publication target. It reuses upstream canonical version, build, and default test mechanics. It does not replicate upstream's secure-release repository, benchmark or administrative approval gates, Homebrew, mobile, or image publication.
 
-## Start a new stable release branch
+## Cut a release from main
 
-Keep the current release branch and its recorded commits immutable. Protect it with review rules and retain the original addon source objects. A squash, rebase, or merge into development `main` changes the history and invalidates the inventory. Do not certify that altered history or force-update an existing release tag. Development `main` remains separate from the release source.
+Cut revision `N` as two pull requests to `main`. Replace `N` with the next positive revision number in the commands below. Use the version-stamping helper's `pre-release` command; its `post-release` command belongs to upstream's development-version workflow.
 
-Start the next release in another worktree at an explicitly selected published stable upstream tag. Resolve its peeled full SHA and release identity through the upstream APIs. Do not merge upstream `main` into a release branch.
+1. Stamp the version. This is an ordinary pending commit. Each command must exit zero.
 
-Replay the original addons in order with `git cherry-pick -n FULL_SOURCE_SHA`. Resolve conflicts surgically and record their reasons. Regenerate generated OpenAPI with `uv run --no-sync python scripts/dump_openapi.py` if necessary. A nonzero exit means generation failed. Before each commit, run `uv run --no-sync pre-commit run --all-files`. A nonzero hook exit means the commit is not ready. Record each original and applied full SHA immediately after committing.
+   ```sh
+   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.17.0+mdsmithaustin.N
+   uv lock
+   python scripts/normalize_uv_lock_registry.py uv.lock
+   uv run --no-sync python scripts/update_versions.py check --expect 0.17.0+mdsmithaustin.N
+   ```
 
-Run all changed addon unit and server tests on the integrated result. Then stamp the selected stable version plus the next fork revision with `uv run --no-sync python scripts/update_versions.py pre-release --new-version VERSION`. Run `uv lock`, normalize with `python scripts/normalize_uv_lock_registry.py uv.lock`, check versions and frozen resolution, and retain upstream third-party lock entries. Inventory every repair and the version commit. Finish any measured release-gate repairs, rerun their checks, and use the last inventoried payload commit as the anchor. All four package versions must still match.
+2. After the first PR merges, inventory the pending commits on a branch from `main`.
 
-Copy the reviewed release tooling after the anchor and regenerate `.github/fork-release.json` with the new stable identity, exact ordered commit inventory, anchor, and version. Review both the payload and tooling tail. Run `check-source` on the final committed SHA and let the workflow check that same source. Preserve the recorded chain when pushing the release branch. Publication creates the fork tag from that chain.
+   ```sh
+   python scripts/fork_release.py inventory --version 0.17.0+mdsmithaustin.N
+   ```
 
-For the next stable update, push the new permanent release branch with its reviewed inventory and let its push workflow certify that exact source. After all checks and independent review succeed, select the new branch as the fork default, then dispatch its publication explicitly. Retain prior release branches and tags unchanged so their certificates remain verifiable.
+   It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
+
+The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `fork/v0.17.0+mdsmithaustin.N` on that commit.
+
+## Sync to a new upstream tag
+
+Rebuild `main` on a published stable upstream tag instead of merging upstream. A merge would place upstream history after the pinned tag, which `check-line` rejects, and would hide which fork commits remain. Replay keeps the fork as a short, reviewable patch series on the new tag. For `v0.18.0`:
+
+Each Git, generation, stamping, inventory, and verification command must exit zero before continuing.
+
+1. Fetch and record the old fork tip, fetch both upstream tags, and branch from the new one:
+
+   ```sh
+   git fetch origin main
+   old_main_sha=$(git rev-parse origin/main)
+   git fetch https://github.com/omnigent-ai/omnigent.git tag v0.17.0 tag v0.18.0
+   git switch -c sync/v0.18.0 v0.18.0
+   ```
+
+2. Replay the fork commits since the old tag in order with `git cherry-pick "v0.17.0..${old_main_sha}"`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
+3. Resolve conflicts surgically and record their reasons. Regenerate OpenAPI with `uv run --no-sync python scripts/dump_openapi.py` if necessary.
+4. If upstream added migrations after the fork's, add a merge revision with `uv run --no-sync alembic -c omnigent/db/alembic.ini merge heads -m "merge upstream v0.18.0"`. `tests/db/test_migration_connections.py::test_single_alembic_head` must pass.
+5. Reset the manifest and commit it: pin the new upstream tag, commit SHA, release ID, and publication time from the upstream APIs, clear `addons`, set `payload_commit` to the tag commit, and set `version` to `0.18.0+mdsmithaustin.1`. Stamp the same version and normalize and check the lockfile as above. Commit those version and lockfile changes before running `python scripts/fork_release.py inventory --version 0.18.0+mdsmithaustin.1`, because inventory reads the version from committed `HEAD`. Review the generated reasons and commit the result so the replayed commits become the addons.
+6. Run `pre-commit run --all-files`, the changed addon tests, and `check-source`. Archive the old line and replace `main`:
+
+   ```sh
+   git push origin "${old_main_sha}:refs/heads/archive/main-v0.17.0"
+   git push --force-with-lease="main:${old_main_sha}" origin sync/v0.18.0:main
+   ```
+
+Releases then continue as `0.18.0+mdsmithaustin.N`. The archive branch and existing `fork/v0.17.0+mdsmithaustin.*` tags keep earlier certificates verifiable. Never move an existing fork tag.
