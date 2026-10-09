@@ -219,7 +219,7 @@ def build_prime_launch(
             source, target = source_dir / name, paths.agent_dir / name
             if source.is_file() and not target.exists():
                 _atomic_text(target, source.read_text(encoding="utf-8"))
-        _atomic_text(paths.root / "executable", executable)
+        _atomic_text(paths.executable_file, executable)
         _atomic_text(paths.root / KERNEL_PROCESS_NAMES_FILE, json.dumps(kernel_process_names))
         owner_claim.write_owner_claim(paths.root)
         _ACTIVE_RUNTIMES.add(paths)
@@ -337,7 +337,7 @@ def _read_kernel_process_names(paths: PrimeRuntimePaths) -> set[str]:
 
 def _read_prime_process_names(paths: PrimeRuntimePaths) -> set[str]:
     try:
-        executable = (paths.root / "executable").read_text(encoding="utf-8")
+        executable = (paths.executable_file).read_text(encoding="utf-8")
     except FileNotFoundError:
         return set()
     except (OSError, UnicodeError) as exc:
@@ -431,7 +431,7 @@ def _identity_alive(identity: _ProcessIdentity) -> bool:
 
 def _read_terminal_identity(paths: PrimeRuntimePaths) -> _TerminalIdentity | None:
     try:
-        record = json.loads((paths.root / "terminal.json").read_text(encoding="utf-8"))
+        record = json.loads(paths.terminal_file.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, UnicodeError, ValueError) as exc:
@@ -786,7 +786,7 @@ def _wait_for_runtime_absence(paths: PrimeRuntimePaths, captured: set[_ProcessId
 
 def _remove_runtime_records(paths: PrimeRuntimePaths) -> None:
     (paths.root / owner_claim.OWNER_PID_FILENAME).unlink(missing_ok=True)
-    (paths.root / "terminal.json").unlink(missing_ok=True)
+    paths.terminal_file.unlink(missing_ok=True)
 
 
 def stop_prime_runtime(
@@ -1004,7 +1004,7 @@ def main() -> int:
             "created_at": terminal_identity.created_at,
             "launch_token": token,
         }
-        _atomic_json(paths.root / "terminal.json", record)
+        _atomic_json(paths.terminal_file, record)
 
     def forward_signal(signum: int, _frame: object) -> None:
         with contextlib.suppress(ProcessLookupError):
