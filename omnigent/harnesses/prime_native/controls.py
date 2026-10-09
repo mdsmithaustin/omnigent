@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from omnigent.native.source_owner import NativeAdmission
 
 from omnigent.harnesses.pi_native.bridge import _atomic_text
+from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths, runtime_paths
 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
 from omnigent.util.reasoning_effort import PI_EFFORTS, to_pi_thinking_level
 
@@ -87,7 +88,7 @@ class PrimeExtensionBinding:
         *,
         native_admission: tuple[httpx.AsyncClient, NativeAdmission] | None = None,
     ) -> None:
-        self._root = bridge_dir / "controls"
+        self._root = PrimeRuntimePaths(bridge_dir).controls_dir
         self._native_admission = native_admission
 
     def _incarnation(self) -> str:
@@ -205,3 +206,10 @@ class PrimeExtensionBinding:
             for path in (request, result):
                 with contextlib.suppress(OSError):
                     path.unlink()
+
+
+async def interrupt_session(session_id: str) -> tuple[int, dict[str, object]]:
+    """Interrupt hook: return the ``(http_status, body)`` the runner should respond with."""
+    binding = PrimeExtensionBinding(runtime_paths(session_id).root)
+    outcome = await binding.execute(Interrupt(), timeout_s=3.0)
+    return outcome.http_status, outcome.response_body()

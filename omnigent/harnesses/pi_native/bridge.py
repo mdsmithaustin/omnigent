@@ -380,6 +380,7 @@ def write_extension_files(
     tools: list[_JsonObject] | None = None,
     usage_baseline: dict[str, int | float] | None = None,
     agent_label: str | None = None,
+    extra_config: _JsonObject | None = None,
 ) -> tuple[Path, Path]:
     """
     Write the Pi extension and config used by a native Pi terminal.
@@ -399,6 +400,8 @@ def write_extension_files(
         tools (Pi falls back to its own built-in tool surface only).
     :param usage_baseline: Server-recorded own-session cumulative usage,
         excluding child sessions; ``None`` retains local-only restoration.
+    :param agent_label: Optional display name the extension uses for the agent.
+    :param extra_config: Optional extra top-level keys merged into the config.
     :returns: ``(extension_path, config_path)``.
     """
     bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -417,6 +420,8 @@ def write_extension_files(
     (bridge_dir / _INPUT_READY_FILE).unlink(missing_ok=True)
     if agent_label is not None:
         payload["agentLabel"] = agent_label
+    if extra_config:
+        payload.update(extra_config)
     _atomic_json(config_path(bridge_dir), payload)
     _atomic_text(extension_path(bridge_dir), _extension_source())
     return extension_path(bridge_dir), config_path(bridge_dir)

@@ -42,6 +42,18 @@ class PrimeRuntimePaths:
         return self.root / "sessions"
 
     @property
+    def controls_dir(self) -> Path:
+        return self.root / "controls"
+
+    @property
+    def terminal_file(self) -> Path:
+        return self.root / "terminal.json"
+
+    @property
+    def executable_file(self) -> Path:
+        return self.root / "executable"
+
+    @property
     def env(self) -> dict[str, str]:
         return {
             "PRIME_AGENT_CODING_AGENT_DIR": str(self.agent_dir),
@@ -63,9 +75,9 @@ class PrimeRuntimePaths:
             self.temp_dir,
             self.session_dir,
             self.root / "inbox",
-            self.root / "controls",
-            self.root / "controls" / "requests",
-            self.root / "controls" / "results",
+            self.controls_dir,
+            self.controls_dir / "requests",
+            self.controls_dir / "results",
         )
 
     def validate_existing(self) -> bool:
@@ -107,9 +119,9 @@ class PrimeRuntimePaths:
             ensure_secure_dir(directory)
         for path in (
             *(self.agent_dir / name for name in ("auth.json", "settings.json", "models.json")),
-            self.root / "executable",
+            self.executable_file,
             self.root / KERNEL_PROCESS_NAMES_FILE,
-            self.root / "terminal.json",
+            self.terminal_file,
             self.root / "owner.pid",
             config_path(self.root),
             extension_path(self.root),
