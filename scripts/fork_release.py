@@ -11,10 +11,12 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from typing import Literal
+
+import tomllib
 
 UPSTREAM = "omnigent-ai/omnigent"
 FORK = "mdsmithaustin/omnigent"
@@ -199,16 +201,59 @@ def check_upstream(upstream: PublishedStable) -> None:
     )
 
 
-def check_source(root: Path, source: str) -> CheckedSource:
-    sha(source)
-    require(git(root, "rev-parse", "HEAD") == source, "checkout and source SHA differ")
-    require(
-        not git(root, "status", "--porcelain", "--untracked-files=all"),
-        "dirty tracked or nonignored source",
-    )
+def read_manifest(root: Path, source: str) -> tuple[bytes, ReleasePin]:
     raw = subprocess.check_output(["git", "-C", str(root), "show", f"{source}:{MANIFEST}"])
-    pin = read_pin(raw)
-    check_upstream(pin.upstream)
+    return raw, read_pin(raw)
+
+
+def policy_violation(root: Path, previous: str, commit: str) -> str | None:
+    changed = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "diff-tree",
+            "--no-commit-id",
+            "--raw",
+            "-r",
+            "--no-renames",
+            "-z",
+            previous,
+            commit,
+        ]
+    ).split(b"\0")
+    for index in range(0, len(changed) - 1, 2):
+        modes = changed[index].decode().split()
+        path = changed[index + 1].decode()
+        if path not in POLICY_PATHS:
+            return f"undeclared policy-tail path: {path}"
+        if not (
+            modes[0][1:] in {"000000", "100644", "100755"}
+            and modes[1] in {"000000", "100644", "100755"}
+        ):
+            return f"unsafe policy-tail mode: {path}"
+    return None
+
+
+@dataclass(frozen=True)
+class TailCommit:
+    commit: str
+    violation: str | None
+
+
+@dataclass(frozen=True)
+class SourceLine:
+    """Upstream tag, inventoried addons through payload_commit, then the tail."""
+
+    pin: ReleasePin
+    tail: tuple[TailCommit, ...]
+
+    @property
+    def pending(self) -> tuple[str, ...]:
+        return tuple(entry.commit for entry in self.tail if entry.violation)
+
+
+def trace_tail(root: Path, source: str, pin: ReleasePin) -> tuple[TailCommit, ...]:
     expected = [addon.applied_commit for addon in pin.addons]
     actual = git(
         root, "rev-list", "--reverse", f"{pin.upstream.commit}..{pin.payload_commit}"
@@ -232,40 +277,82 @@ def check_source(root: Path, source: str) -> CheckedSource:
             )
         previous = addon.applied_commit
     git(root, "merge-base", "--is-ancestor", pin.payload_commit, source)
-    tail = git(root, "rev-list", "--reverse", f"{pin.payload_commit}..{source}").splitlines()
-    for commit in tail:
+    tail = []
+    for commit in git(
+        root, "rev-list", "--reverse", f"{pin.payload_commit}..{source}"
+    ).splitlines():
         require(
             git(root, "rev-list", "--parents", "-n", "1", commit).split() == [commit, previous],
             "policy tail is not linear",
         )
-        changed = subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(root),
-                "diff-tree",
-                "--no-commit-id",
-                "--raw",
-                "-r",
-                "--no-renames",
-                "-z",
-                previous,
-                commit,
-            ]
-        ).split(b"\0")
-        for index in range(0, len(changed) - 1, 2):
-            modes = changed[index].decode().split()
-            path = changed[index + 1].decode()
-            require(path in POLICY_PATHS, f"undeclared policy-tail path: {path}")
-            require(
-                modes[0][1:] in {"000000", "100644", "100755"}
-                and modes[1] in {"000000", "100644", "100755"},
-                f"unsafe policy-tail mode: {path}",
-            )
+        tail.append(TailCommit(commit, policy_violation(root, previous, commit)))
         previous = commit
+    return tuple(tail)
+
+
+def check_line(root: Path, source: str) -> SourceLine:
+    sha(source)
+    _, pin = read_manifest(root, source)
+    upstream = pin.upstream.commit
+    ancestor = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", upstream, source],
+        capture_output=True,
+        check=False,
+    )
+    require(ancestor.returncode == 0, f"upstream commit {upstream} is not an ancestor")
+    merges = git(root, "rev-list", "--merges", f"{upstream}..{source}").split()
+    require(not merges, f"merge commit after upstream: {' '.join(merges)}")
+    return SourceLine(pin, trace_tail(root, source, pin))
+
+
+def check_source(root: Path, source: str) -> CheckedSource:
+    sha(source)
+    require(git(root, "rev-parse", "HEAD") == source, "checkout and source SHA differ")
+    require(
+        not git(root, "status", "--porcelain", "--untracked-files=all"),
+        "dirty tracked or nonignored source",
+    )
+    raw, pin = read_manifest(root, source)
+    check_upstream(pin.upstream)
+    for entry in trace_tail(root, source, pin):
+        if entry.violation:
+            raise ReleaseError(entry.violation)
     return CheckedSource(
         source, sha(git(root, "rev-parse", f"{source}^{{tree}}")), digest(raw), pin
     )
+
+
+def inventoried_addon(root: Path, commit: str) -> AddonCommit:
+    subject = git(root, "log", "-1", "--format=%s", commit)
+    slug = re.sub(r"[^a-z0-9]+", "-", subject.lower()).strip("-")[:48].rstrip("-")
+    return AddonCommit(f"{slug}-{commit[:12]}", None, commit, subject)
+
+
+def inventory(root: Path, version: str) -> ReleasePin:
+    """Extend the inventory through the last pending commit at HEAD."""
+    source = git(root, "rev-parse", "HEAD")
+    line = check_line(root, source)
+    project = tomllib.loads(git(root, "show", f"{source}:pyproject.toml"))["project"]["version"]
+    runtime = re.findall(
+        r'^VERSION = "([^"]*)"$', git(root, "show", f"{source}:omnigent/version.py"), re.MULTILINE
+    )
+    require(
+        project == version and runtime == [version],
+        f"pyproject and runtime version must already be {version}; "
+        "stamp it with scripts/update_versions.py first",
+    )
+    pending = [index for index, entry in enumerate(line.tail) if entry.violation]
+    added = line.tail[: pending[-1] + 1] if pending else ()
+    pin = replace(
+        line.pin,
+        addons=(*line.pin.addons, *(inventoried_addon(root, entry.commit) for entry in added)),
+        payload_commit=added[-1].commit if added else line.pin.payload_commit,
+        version=version,
+    )
+    raw = canonical(asdict(pin))
+    read_pin(raw)
+    (root / MANIFEST).write_bytes(raw)
+    return pin
 
 
 def inventory_ui(directory: Path) -> dict[str, str]:
@@ -616,8 +703,9 @@ def publish(certificate: Path, directory: Path, evidence: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    source = commands.add_parser("check-source")
-    source.add_argument("--source-sha", required=True)
+    for name in ("check-source", "check-line"):
+        commands.add_parser(name).add_argument("--source-sha", required=True)
+    commands.add_parser("inventory").add_argument("--version", required=True)
     cert = commands.add_parser("certify")
     cert.add_argument("--source-sha", required=True)
     cert.add_argument("--needs-json", type=Path, required=True)
@@ -633,10 +721,22 @@ def main() -> None:
     cert.add_argument("--artifacts", type=Path, required=True)
     args = parser.parse_args()
     try:
-        if args.command in {"check-source", "certify"}:
+        if args.command in {"check-source", "check-line", "inventory", "certify"}:
             root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel"))
         if args.command == "check-source":
             print(json.dumps(asdict(check_source(root, args.source_sha)), sort_keys=True))
+        elif args.command == "check-line":
+            line = check_line(root, args.source_sha)
+            report = {
+                "upstream_tag": line.pin.upstream.tag,
+                "inventoried": len(line.pin.addons),
+                "pending": list(line.pending),
+                "release_ready": not line.pending,
+            }
+            print(json.dumps(report, sort_keys=True))
+        elif args.command == "inventory":
+            pin = inventory(root, args.version)
+            print(f"Inventoried {len(pin.addons)} addons through {pin.payload_commit}")
         elif args.command == "certify":
             receipt = certify(
                 root,

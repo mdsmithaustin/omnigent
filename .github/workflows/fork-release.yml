@@ -4,7 +4,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main, 'release/**', 'codex/fork-release-*']
+    branches: [main, 'codex/fork-release-*']
   workflow_dispatch:
     inputs:
       publish:
@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      release_ready: ${{ steps.line.outputs.release_ready }}
       source_sha: ${{ steps.identity.outputs.source_sha }}
       run_id: ${{ steps.identity.outputs.run_id }}
       run_attempt: ${{ steps.identity.outputs.run_attempt }}
@@ -47,17 +48,36 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version-file: .python-version
-      - name: Verify pinned source and workflow identity
-        id: identity
+      - name: Check source line shape
+        id: line
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" != pull_request ]]; then
             test "$GITHUB_REPOSITORY" = mdsmithaustin/omnigent
             test "$SOURCE_SHA" = "$GITHUB_SHA"
             test "$SOURCE_SHA" = "$WORKFLOW_SHA"
           fi
+          line=$(python scripts/fork_release.py check-line --source-sha "$SOURCE_SHA")
+          echo "$line"
+          ready=$(python -c 'import json, sys; print(str(json.loads(sys.argv[1])["release_ready"]).lower())' "$line")
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$ready" != true ]]; then
+            echo "Manual dispatch requires a release-ready source; inventory the pending commits first" >&2
+            exit 1
+          fi
+          if [[ "$PUBLISH" == true && "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "Publication requires the main source line" >&2
+            exit 1
+          fi
+          echo "release_ready=$ready" >> "$GITHUB_OUTPUT"
+      - name: Verify pinned source and workflow identity
+        id: identity
+        if: steps.line.outputs.release_ready == 'true'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
           python scripts/fork_release.py check-source --source-sha "$SOURCE_SHA"
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
@@ -65,8 +85,10 @@ jobs:
           python -c 'import json, os; version=json.load(open(".github/fork-release.json"))["version"]; print("tag=fork/v"+version, file=open(os.environ["GITHUB_OUTPUT"], "a"))'
 
       - uses: ./.github/actions/setup-uv
+        if: steps.line.outputs.release_ready == 'true'
       - name: Load immutable canonical test shards
         id: matrix
+        if: steps.line.outputs.release_ready == 'true'
         run: |
           uv run --no-project --with PyYAML==6.0.3 python - <<'PYCODE'
           import json
@@ -113,6 +135,7 @@ jobs:
 
   lint:
     needs: source
+    if: needs.source.outputs.release_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -159,6 +182,7 @@ jobs:
   python:
     name: Fork Python (${{ matrix.group }})
     needs: source
+    if: needs.source.outputs.release_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -297,6 +321,7 @@ jobs:
 
   web:
     needs: source
+    if: needs.source.outputs.release_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -333,6 +358,7 @@ jobs:
   addons:
     name: Fork addons (${{ matrix.group }})
     needs: source
+    if: needs.source.outputs.release_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -471,6 +497,7 @@ jobs:
 
   build:
     needs: source
+    if: needs.source.outputs.release_ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
