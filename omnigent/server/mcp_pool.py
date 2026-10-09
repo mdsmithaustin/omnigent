@@ -252,7 +252,7 @@ class ServerMcpPool:
             with contextlib.suppress(ValueError):
                 self._lru.remove(agent_id)
         if entry is not None:
-            await self._close_entry(entry)
+            await self._close_entries([entry])
 
     async def shutdown_all(self) -> None:
         """Close all connections and clear the pool.
@@ -264,8 +264,7 @@ class ServerMcpPool:
             entries = list(self._entries.values())
             self._entries.clear()
             self._lru.clear()
-        for entry in entries:
-            await self._close_entry(entry)
+        await self._close_entries(entries)
 
     async def _ensure_warm(
         self,
@@ -297,7 +296,7 @@ class ServerMcpPool:
                     self._lru.remove(agent_id)
                 if old is not None:
                     t = asyncio.create_task(
-                        self._close_entry(old),
+                        self._close_entries([old]),
                         name=f"server-mcp-evict:{agent_id}",
                     )
                     self._evict_tasks.add(t)
@@ -365,22 +364,37 @@ class ServerMcpPool:
                 server.config.name,
             )
 
-    async def _close_entry(self, entry: _AgentEntry) -> None:
-        """Best-effort close of all connections in *entry*.
+    async def _close_entries(self, entries: list[_AgentEntry]) -> None:
+        """Best-effort close of all connections in *entries*.
 
-        :param entry: The agent entry to tear down.
+        A cancelled prewarm closes the servers it was still starting.
+        Caller cancellation is re-raised only after every server closed.
+
+        :param entries: The agent entries to tear down.
         """
-        if entry.prewarm_task is not None and not entry.prewarm_task.done():
-            entry.prewarm_task.cancel()
-        for server in entry.servers.values():
-            if server.connection is not None:
+        for entry in entries:
+            if entry.prewarm_task is not None:
+                entry.prewarm_task.cancel()
+        cancelled: asyncio.CancelledError | None = None
+        for entry in entries:
+            while entry.prewarm_task is not None and not entry.prewarm_task.done():
                 try:
-                    await server.connection.close()
-                except Exception:
-                    _logger.exception(
-                        "error closing MCP %r during ServerMcpPool shutdown",
-                        server.config.name,
-                    )
+                    await asyncio.wait({entry.prewarm_task})
+                except asyncio.CancelledError as exc:
+                    cancelled = exc
+            for server in entry.servers.values():
+                if server.connection is not None:
+                    try:
+                        await server.connection.close()
+                    except asyncio.CancelledError as exc:
+                        cancelled = exc
+                    except Exception:
+                        _logger.exception(
+                            "error closing MCP %r during ServerMcpPool shutdown",
+                            server.config.name,
+                        )
+        if cancelled is not None:
+            raise cancelled
 
     def _touch(self, agent_id: str) -> None:
         """Move *agent_id* to the most-recently-used end of the LRU list.
@@ -402,7 +416,7 @@ class ServerMcpPool:
             old_entry = self._entries.pop(oldest, None)
             if old_entry is not None:
                 t = asyncio.create_task(
-                    self._close_entry(old_entry),
+                    self._close_entries([old_entry]),
                     name=f"server-mcp-evict:{oldest}",
                 )
                 self._evict_tasks.add(t)
