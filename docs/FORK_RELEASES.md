@@ -20,7 +20,7 @@ python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
 
 It prints the upstream tag, the inventoried count, the pending SHAs, and `release_ready`. Ordinary feature PRs leave `main` pending, which is expected.
 
-Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches.
+Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it.
 
 ## Check the source
 
@@ -179,7 +179,7 @@ The push run on `main` then certifies that exact source. After review, dispatch 
 
 Rebuild `main` on a published stable upstream tag instead of merging upstream. A merge would place upstream history after the pinned tag, which `check-line` rejects, and would hide which fork commits remain. Replay keeps the fork as a short, reviewable patch series on the new tag. For `v0.18.0`:
 
-1. Fetch both tags and branch from the new one: `git fetch parent tag v0.17.0 tag v0.18.0` and `git switch -c sync/v0.18.0 v0.18.0`.
+1. Fetch both tags from upstream and branch from the new one: `git fetch https://github.com/omnigent-ai/omnigent.git tag v0.17.0 tag v0.18.0` and `git switch -c sync/v0.18.0 v0.18.0`.
 2. Replay the fork commits since the old tag in order with `git cherry-pick v0.17.0..origin/main`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
 3. Resolve conflicts surgically and record their reasons. Regenerate OpenAPI with `uv run --no-sync python scripts/dump_openapi.py` if necessary.
 4. If upstream added migrations after the fork's, add a merge revision with `uv run --no-sync alembic -c omnigent/db/alembic.ini merge heads -m "merge upstream v0.18.0"`. `tests/db/test_migration_connections.py::test_single_alembic_head` must pass.
