@@ -171,7 +171,7 @@ Cut revision `N` as two pull requests to `main`. Replace `N` with the next posit
    python scripts/fork_release.py inventory --version 0.17.0+mdsmithaustin.N
    ```
 
-   It refuses unless `pyproject.toml` and `omnigent/version.py` already carry that version. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
+   It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
 
 The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `fork/v0.17.0+mdsmithaustin.N` on that commit.
 
