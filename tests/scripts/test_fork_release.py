@@ -576,6 +576,175 @@ def test_source_checkout_must_be_exact_and_clean(release, case):
     )
 
 
+def line(release) -> dict[str, object]:
+    result = cli(
+        release, "check-line", "--source-sha", command(release["root"], "git", "rev-parse", "HEAD")
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def stamp(root: Path, version: str) -> str:
+    (root / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    (root / "omnigent").mkdir(exist_ok=True)
+    (root / "omnigent/version.py").write_text(f'VERSION = "{version}"\n')
+    return commit(root, "chore: bump version")
+
+
+def test_inventory_turns_pending_main_into_a_certifiable_release(release):
+    root = release["root"]
+    (root / "runtime.py").write_text("stable = True\naddon = True\nfeature = True\n")
+    feature = commit(root, "feat(runtime): Add the feature!")
+    (root / "docs/FORK_RELEASES.md").write_text("interleaved policy\n")
+    interleaved = commit(root, "docs: interleaved policy")
+    bump = stamp(root, "0.17.0+mdsmithaustin.2")
+    (root / "docs/FORK_RELEASES.md").write_text("trailing policy\n")
+    commit(root, "docs: trailing policy")
+    assert line(release) == {
+        "inventoried": 1,
+        "pending": [feature, bump],
+        "release_ready": False,
+        "upstream_tag": "v0.17.0",
+    }
+    assert not (release["tmp"] / "calls.jsonl").exists()
+
+    result = cli(release, "inventory", "--version", "0.17.0+mdsmithaustin.2")
+    assert result.returncode == 0, result.stderr
+    pin = json.loads((root / ".github/fork-release.json").read_text())
+    assert pin["addons"][1:] == [
+        {
+            "name": "complete-release-policy-" + release["source"][:12],
+            "source_commit": None,
+            "applied_commit": release["source"],
+            "reason": "complete release policy",
+        },
+        {
+            "name": "feat-runtime-add-the-feature-" + feature[:12],
+            "source_commit": None,
+            "applied_commit": feature,
+            "reason": "feat(runtime): Add the feature!",
+        },
+        {
+            "name": "docs-interleaved-policy-" + interleaved[:12],
+            "source_commit": None,
+            "applied_commit": interleaved,
+            "reason": "docs: interleaved policy",
+        },
+        {
+            "name": "chore-bump-version-" + bump[:12],
+            "source_commit": None,
+            "applied_commit": bump,
+            "reason": "chore: bump version",
+        },
+    ]
+    assert pin["payload_commit"] == bump
+    assert pin["version"] == "0.17.0+mdsmithaustin.2"
+
+    release["source"] = commit(root, "chore(release): inventory revision 2")
+    assert line(release) == {
+        "inventoried": 5,
+        "pending": [],
+        "release_ready": True,
+        "upstream_tag": "v0.17.0",
+    }
+    result = check(release)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["pin"]["payload_commit"] == bump
+
+
+def test_inventory_requires_the_stamped_version(release):
+    root = release["root"]
+    stamp(root, "0.17.0+mdsmithaustin.2")
+    before = (root / ".github/fork-release.json").read_text()
+    result = cli(release, "inventory", "--version", "0.17.0+mdsmithaustin.3")
+    assert result.returncode == 1
+    assert "version must already be 0.17.0+mdsmithaustin.3" in result.stderr
+    assert (root / ".github/fork-release.json").read_text() == before
+
+
+@pytest.mark.parametrize("case", ["merge", "prefix", "ancestor"])
+def test_check_line_rejects_shape_violations(release, case):
+    root = release["root"]
+    if case == "merge":
+        command(root, "git", "checkout", "-qb", "side")
+        (root / "side.py").write_text("side\n")
+        commit(root, "side feature")
+        command(root, "git", "checkout", "-q", "-")
+        (root / "runtime.py").write_text("main\n")
+        commit(root, "main feature")
+        command(root, "git", "merge", "--no-ff", "-qm", "merge side", "side")
+    else:
+        if case == "prefix":
+            release["pin"]["addons"] = []
+        else:
+            branch = command(root, "git", "branch", "--show-current")
+            command(root, "git", "checkout", "-q", "--orphan", "unrelated")
+            orphan = commit(root, "unrelated root")
+            command(root, "git", "checkout", "-q", branch)
+            release["pin"]["upstream"]["commit"] = orphan
+        amend_pin(release)
+    result = cli(release, "check-line", "--source-sha", command(root, "git", "rev-parse", "HEAD"))
+    assert result.returncode == 1
+    assert {
+        "merge": "merge commit after upstream",
+        "prefix": "addon history differs from ordered inventory",
+        "ancestor": "is not an ancestor",
+    }[case] in result.stderr
+
+
+def test_workflow_runs_certification_only_for_a_release_ready_line(release):
+    workflow = yaml.safe_load(
+        (SCRIPT.parent.parent / ".github/workflows/fork-release.yml").read_bytes()
+    )
+    source = workflow["jobs"]["source"]
+    script = next(step for step in source["steps"] if step.get("id") == "line")["run"]
+    script = script.replace("scripts/fork_release.py", str(SCRIPT))
+    root = release["root"]
+
+    def run_line(event: str, ref: str = "refs/heads/main", publish: str = "") -> tuple[int, str]:
+        head = command(root, "git", "rev-parse", "HEAD")
+        output = release["tmp"] / "github-output"
+        output.write_text("")
+        result = subprocess.run(
+            ["bash", "-eo", "pipefail", "-c", script],
+            cwd=root,
+            env={
+                **release["env"],
+                "GITHUB_EVENT_NAME": event,
+                "GITHUB_REPOSITORY": "mdsmithaustin/omnigent",
+                "GITHUB_REF": ref,
+                "GITHUB_SHA": head,
+                "SOURCE_SHA": head,
+                "WORKFLOW_SHA": head,
+                "PUBLISH": publish,
+                "GITHUB_OUTPUT": str(output),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode, output.read_text() + result.stderr
+
+    assert run_line("push") == (0, "release_ready=true\n")
+    assert run_line("workflow_dispatch", "refs/heads/side", "true") == (
+        1,
+        "Publication requires the main source line\n",
+    )
+    (root / "runtime.py").write_text("pending = True\n")
+    commit(root, "feat: pending")
+    assert run_line("pull_request") == (0, "release_ready=false\n")
+    assert run_line("workflow_dispatch", publish="false") == (
+        1,
+        "Manual dispatch requires a release-ready source; inventory the pending commits first\n",
+    )
+    gate = "needs.source.outputs.release_ready == 'true'"
+    assert {name: job.get("if") for name, job in workflow["jobs"].items() if name in JOBS} == {
+        **{name: gate for name in JOBS if name != "source"},
+        "source": None,
+    }
+    assert source["outputs"]["release_ready"] == "${{ steps.line.outputs.release_ready }}"
+
+
 @pytest.fixture
 def artifacts(release):
     directory = release["tmp"] / "dist"
