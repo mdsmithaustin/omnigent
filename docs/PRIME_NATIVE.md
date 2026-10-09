@@ -177,8 +177,8 @@ Prime's main terminal is eligible for native pane idle cleanup. By default,
 the runner checks every 60 seconds and closes the pane after one hour of
 observed inactivity. Set `OMNIGENT_NATIVE_PANE_IDLE_TIMEOUT_S` in the runner
 environment to change that window; `0` disables pane reaping. Active turns,
-observed native `running` or `waiting` status, fresh approval waits, and recent
-terminal output or viewer input protect the pane. An attached viewer alone
+observed native `running` or `waiting` status, and recent terminal output or
+viewer input protect the pane. An attached viewer alone
 does not. Closing the pane shuts down its private Prime runtime while retaining
 saved history. Resume after that shutdown does not preserve Python memory.
 Detaching preserves the living kernel only while the runtime remains alive.
