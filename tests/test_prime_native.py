@@ -864,6 +864,154 @@ def test_maintenance_retains_owner_on_shutdown_failure_for_retry(tmp_path: Path)
     assert bridge.prune_orphaned_bridge_dirs() == 0
 
 
+_DELETED = (404, {"error": {"code": "not_found", "message": "Conversation not found"}})
+
+
+@contextmanager
+def _sessions_server(responses: dict[str, tuple[int, object]]) -> Iterator[str]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            status, payload = (
+                responses.get(self.path.partition("?")[0], _DELETED)
+                if self.headers.get("Authorization") == "Bearer recorded"
+                else (401, {"error": {"code": "unauthorized", "message": "no"}})
+            )
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}"
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+
+def _retained_runtime(
+    session_id: str, server_url: str, *, headers: dict[str, str] | None = None
+) -> PrimeRuntimePaths:
+    paths = bridge.runtime_paths(session_id)
+    paths.prepare()
+    (paths.root / "executable").write_text("/opt/prime-agent")
+    (paths.session_dir / "saved.jsonl").write_text("saved transcript")
+    (paths.root / "config.json").write_text(
+        json.dumps(
+            {
+                "sessionId": session_id,
+                "serverUrl": server_url,
+                "authHeaders": headers or {"Authorization": "Bearer recorded"},
+            }
+        )
+    )
+    return paths
+
+
+@pytest.mark.parametrize("dead_owner", [False, True])
+def test_maintenance_removes_runtime_of_deleted_conversation(dead_owner: bool) -> None:
+    with _sessions_server({}) as server_url:
+        paths = _retained_runtime("conv_deleted", server_url)
+        if dead_owner:
+            _write_dead_owner(paths)
+        assert bridge.prune_orphaned_bridge_dirs() == 1
+        assert not paths.root.exists()
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (200, {"id": "conv_kept"}),
+        (404, {"detail": "Not Found"}),
+        (500, {"error": {"code": "internal", "message": "down"}}),
+        "unauthorized",
+        "unreachable",
+    ],
+)
+def test_maintenance_retains_runtime_when_deletion_is_unconfirmed(
+    response: tuple[int, object] | str,
+) -> None:
+    responses = {} if isinstance(response, str) else {"/v1/sessions/conv_kept": response}
+    headers = {"Authorization": "Bearer stale"} if response == "unauthorized" else None
+    with _sessions_server(responses) as server_url:
+        paths = _retained_runtime("conv_kept", server_url, headers=headers)
+        if response != "unreachable":
+            assert bridge.prune_orphaned_bridge_dirs() == 0
+    if response == "unreachable":
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize(
+    "identity", ["missing", "malformed", "no-session", "other-session", "symlink", "hardlink"]
+)
+def test_maintenance_retains_deleted_runtime_without_established_identity(
+    tmp_path: Path, identity: str
+) -> None:
+    with _sessions_server({}) as server_url:
+        paths = _retained_runtime("conv_unproven", server_url)
+        config = paths.root / "config.json"
+        record = json.loads(config.read_text())
+        if identity == "missing":
+            config.unlink()
+        elif identity == "malformed":
+            config.write_text("not JSON")
+        elif identity == "no-session":
+            config.write_text(json.dumps({**record, "sessionId": None}))
+        elif identity == "other-session":
+            config.write_text(json.dumps({**record, "sessionId": "conv_elsewhere"}))
+        else:
+            outside = tmp_path / "outside.json"
+            outside.write_text(config.read_text())
+            config.unlink()
+            if identity == "symlink":
+                config.symlink_to(outside)
+            else:
+                os.link(outside, config)
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_retains_deleted_runtime_with_live_owner() -> None:
+    with _sessions_server({}) as server_url:
+        paths = _retained_runtime("conv_live_owner", server_url)
+        build_prime_launch(
+            paths, executable="/opt/prime-agent", extension=Path("e"), config=Path("c"), environ={}
+        )
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert (paths.root / "owner.pid").exists()
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_retains_deleted_runtime_with_live_terminal() -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with _sessions_server({}) as server_url:
+            paths = _retained_runtime("conv_live_terminal", server_url)
+            (paths.root / "terminal.json").write_text(
+                json.dumps(
+                    {
+                        "pid": child.pid,
+                        "created_at": process.psutil.Process(child.pid).create_time(),
+                    }
+                )
+            )
+            assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert child.poll() is None
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+
+
 def _wrapper_command(paths: PrimeRuntimePaths, *child_command: str) -> list[str]:
     source = (
         "import sys; from pathlib import Path; "
