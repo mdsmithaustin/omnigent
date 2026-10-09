@@ -427,7 +427,7 @@ allocation-matched removal and closed-owner receipts. A failed fixture receipt r
 Owner exit precedes completion publication. Inspect the completed native
 outage error before generation 2 starts, the new server PID and nonce, matching
 native, provider, and fixture results, and the same root and kernel process
-after recovery, with the seeded token advancing from 41 to 42 and an open
-socket. Those fields do not prove object or socket identity. Follow the [MCP verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
+after recovery, with the seeded token, a count advancing from 41 to 42, and an
+open socket. Those fields do not prove object or socket identity. Follow the [MCP verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
 for the exact sequence and evidence files. This case does not qualify MRTR,
 stdio, all servers, or all providers.
