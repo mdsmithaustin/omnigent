@@ -13,11 +13,15 @@ Serialize the DDL-heavy tests behind a cross-process lock so only one worker
 mutates the shared schema catalog at a time. Scoped to CockroachDB (other
 dialects keep per-database isolation) and to the migration modules (the small
 non-DDL ``tests/db`` unit tests stay fully parallel).
+
+The ``test_crdb_migration`` modules leave half-migrated schemas behind, so on
+CockroachDB each of their tests gets a fresh database, also under the lock.
 """
 
 from __future__ import annotations
 
 import tempfile
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -44,3 +48,35 @@ def _serialize_crdb_schema_ddl(
 
     with FileLock(str(_CRDB_SCHEMA_LOCK)):
         yield
+
+
+@pytest.fixture()
+def _worker_db_uri(request: pytest.FixtureRequest, _worker_db_uri: str) -> Iterator[str]:
+    if "cockroachdb" not in _worker_db_uri or not request.node.path.name.startswith(
+        "test_crdb_migration"
+    ):
+        yield _worker_db_uri
+        return
+    import sqlalchemy as sa
+    from filelock import FileLock
+
+    from omnigent.db.utils import _engine_cache, _engine_lock
+
+    name = f"omnigent_schema_{uuid.uuid4().hex}"
+    uri = sa.make_url(_worker_db_uri).set(database=name).render_as_string(hide_password=False)
+    with FileLock(str(_CRDB_SCHEMA_LOCK)):
+        root = sa.create_engine(_worker_db_uri, isolation_level="AUTOCOMMIT")
+        try:
+            with root.connect() as connection:
+                connection.execute(sa.text(f'CREATE DATABASE "{name}"'))
+            try:
+                yield uri
+            finally:
+                with _engine_lock:
+                    engine = _engine_cache.pop(uri, None)
+                if engine is not None:
+                    engine.dispose()
+                with root.connect() as connection:
+                    connection.execute(sa.text(f'DROP DATABASE "{name}" CASCADE'))
+        finally:
+            root.dispose()

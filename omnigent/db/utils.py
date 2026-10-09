@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 from sqlalchemy.orm import Session, sessionmaker
 
 from omnigent.db.cockroachdb import (
+    _crdb_migration_session,
     _crdb_server_version,
     _initialize_or_verify_crdb_schema,
     _prepare_crdb_schema_transaction,
@@ -592,22 +593,17 @@ def _run_migrations(engine: Engine, db_uri: str) -> None:
     _logger.info("Running database migrations...")
     config = _build_alembic_config(db_uri)
     # Pass a shared connection so Alembic operates within the same engine.
-    # Most dialects let Alembic own transaction demarcation. CRDB needs an
-    # externally started SERIALIZABLE transaction for schema changes; on
-    # versions that provide it, autocommit_before_ddl is also enabled.
+    # CRDB uses _crdb_migration_session for SERIALIZABLE isolation and disables
+    # DDL autocommit where supported; other dialects let Alembic own transactions.
     with query_name_scope("omnigent.database.run_migrations"):
         crdb_version = (
             _crdb_server_version(engine) if is_cockroachdb(engine.dialect.name) else None
         )
         with engine.connect() as connection:
-            if crdb_version is not None:
-                _prepare_crdb_schema_transaction(connection, crdb_version)
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            with _crdb_migration_session(connection, crdb_version):
+                command.upgrade(config, "head")
             if crdb_version is not None:
-                if connection.in_transaction():
-                    connection.commit()
-                _prepare_crdb_schema_transaction(connection, crdb_version)
                 for base in (OmnigentBase, ConversationBase):
                     base.metadata.create_all(bind=connection, checkfirst=True)
                 connection.commit()
