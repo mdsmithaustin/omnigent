@@ -4,12 +4,16 @@ import contextlib
 import dataclasses
 import importlib.util
 import json
+import os
+import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import psutil
 import pytest
 
 
@@ -597,6 +601,230 @@ def test_selected_root_identity_rejects_binding_or_native_session_change(field, 
 
     with pytest.raises(RuntimeError, match=message):
         probe.assert_same_selected_root_identity(before, after)
+
+
+_SPAWNER = """
+import json, subprocess, sys
+for line in sys.stdin:
+    child = subprocess.Popen(json.loads(line), stdout=subprocess.DEVNULL)
+    print(child.pid, flush=True)
+"""
+_SETUID_TOP = Path("/usr/bin/top")
+
+
+@contextlib.contextmanager
+def _process_tree(env: dict[str, str]):
+    root = subprocess.Popen(
+        [sys.executable, "-c", _SPAWNER],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, **env},
+    )
+    assert root.stdin is not None and root.stdout is not None
+
+    def spawn(argv: list[str]) -> int:
+        root.stdin.write(json.dumps(argv) + "\n")
+        root.stdin.flush()
+        return int(root.stdout.readline())
+
+    try:
+        yield root, spawn
+    finally:
+        for child in psutil.Process(root.pid).children(recursive=True):
+            with contextlib.suppress(psutil.NoSuchProcess):
+                child.kill()
+        root.kill()
+        root.wait(timeout=5)
+
+
+def _spawn_unreadable(probe, monkeypatch, spawn, kind: str) -> tuple[int, str]:
+    """Spawn a child whose argv and environment cannot be read, as macOS reports setuid ps."""
+    if kind == "setuid":
+        if (
+            sys.platform != "darwin"
+            or os.getuid() == 0
+            or not _SETUID_TOP.stat().st_mode & stat.S_ISUID
+        ):
+            pytest.skip("needs a non-root macOS user and setuid /usr/bin/top")
+        return spawn([str(_SETUID_TOP), "-l", "0", "-s", "1"]), str(_SETUID_TOP)
+    pid = spawn([sys.executable, "-c", "import time; time.sleep(60)"])
+    exe = probe.psutil.Process(pid).exe()
+    for name in ("cmdline", "environ"):
+        original = getattr(probe.psutil.Process, name)
+
+        def hidden(self, original=original):
+            if self.pid == pid:
+                raise probe.psutil.AccessDenied(pid)
+            return original(self)
+
+        monkeypatch.setattr(probe.psutil.Process, name, hidden)
+    return pid, exe
+
+
+def _census_run(probe, tmp_path: Path):
+    run = probe._OwnedRun.__new__(probe._OwnedRun)
+    run.evidence = tmp_path / "evidence"
+    run.runtime = tmp_path / "runtime"
+    run.evidence.mkdir()
+    (run.runtime / "data").mkdir(parents=True)
+    run.url = "http://127.0.0.1:1"
+    run.session_id = None
+    run.owners = {}
+    run.census_errors = set()
+    run.unowned_unreadable = {}
+    run.bridge_roots = set()
+    run.foreground_host = None
+    run.foreground_host_identity = None
+    run.host_log_handle = None
+    return run
+
+
+@pytest.mark.parametrize("kind", ["setuid", "simulated"])
+def test_census_owns_an_unreadable_descendant_through_its_owned_parent(
+    tmp_path, monkeypatch, kind
+):
+    probe = _provider_probe()
+    run = _census_run(probe, tmp_path)
+    with _process_tree({"OMNIGENT_DATA_DIR": str(run.runtime / "data")}) as (root, spawn):
+        helper, exe = _spawn_unreadable(probe, monkeypatch, spawn, kind)
+        started = probe.psutil.Process(helper).create_time()
+        observations = [run.census(), run.census()]
+
+    for records in observations:
+        assert [record for record in records if record["pid"] == helper] == [
+            {
+                "pid": helper,
+                "started": started,
+                "argv": [],
+                "ownership": "initial_owned_descendant_unreadable",
+            }
+        ]
+        assert root.pid in {record["pid"] for record in records}
+    assert run.census_errors == set()
+    receipt = json.loads((run.evidence / "progress.json").read_text())
+    assert [owner for owner in receipt["owners"] if owner["pid"] == helper] == [
+        {
+            "pid": helper,
+            "started": started,
+            "argv": [],
+            "exe": exe,
+            "ownership": "owned_descendant_unreadable",
+        }
+    ]
+
+
+def test_census_reports_an_unreadable_process_outside_the_owned_tree(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    run = _census_run(probe, tmp_path)
+    owned_env = {"OMNIGENT_DATA_DIR": str(run.runtime / "data")}
+    with _process_tree(owned_env) as (root, _), _process_tree({}) as (_, spawn_foreign):
+        foreign, exe = _spawn_unreadable(probe, monkeypatch, spawn_foreign, "simulated")
+        started = probe.psutil.Process(foreign).create_time()
+        records = run.census()
+
+    assert root.pid in {record["pid"] for record in records}
+    assert foreign not in {record["pid"] for record in records}
+    assert foreign not in {pid for pid, _ in run.owners}
+    receipt = json.loads((run.evidence / "progress.json").read_text())
+    assert [item for item in receipt["unowned_unreadable"] if item["pid"] == foreign] == [
+        {"pid": foreign, "started": started, "exe": exe}
+    ]
+
+
+def _selected_root_run(probe, tmp_path: Path, monkeypatch):
+    run = _census_run(probe, tmp_path)
+    bridge = run.runtime / "bridge"
+    (bridge / "controls").mkdir(parents=True)
+    (bridge / "agent").mkdir()
+    config = bridge / "config.json"
+    config.write_text(
+        json.dumps({"sessionId": "session-1", "primeControlsDir": str(bridge / "controls")})
+    )
+    (bridge / "controls/binding.json").write_text(json.dumps({"pid": 1, "incarnation": "i-1"}))
+    run.session_id = "session-1"
+    run.external_id = "prime-session-1"
+    run.config_path = config
+    run.admit_config = lambda path: json.loads(path.read_text())
+    run.request = SimpleNamespace(prime_path=Path(sys.executable))
+    run.requested_kernel = SimpleNamespace(entry=Path("/absent/kernel/python"))
+    monkeypatch.setattr(
+        probe,
+        "qualify_selected_root_roles",
+        lambda identities, **_: SimpleNamespace(worker=SimpleNamespace(started=1.0)),
+    )
+    env = {
+        "PRIME_AGENT_CODING_AGENT_DIR": str(bridge / "agent"),
+        "OMNIGENT_EXTENSION_NATIVE_CONFIG": str(config),
+    }
+    return run, env
+
+
+def _spawn_after_census(run, spawn_child):
+    census = run.census
+    spawned: list[int] = []
+
+    def census_then_spawn():
+        records = census()
+        if not spawned:
+            spawned.append(spawn_child())
+        return records
+
+    run.census = census_then_spawn
+    return spawned
+
+
+@pytest.mark.parametrize("timing", ["before_census", "after_census"])
+@pytest.mark.parametrize("kind", ["readable", "setuid", "simulated"])
+def test_selected_root_owns_descendants_of_the_qualified_root(tmp_path, monkeypatch, kind, timing):
+    probe = _provider_probe()
+    run, env = _selected_root_run(probe, tmp_path, monkeypatch)
+    with _process_tree(env) as (_, spawn):
+
+        def spawn_child() -> int:
+            if kind == "readable":
+                return spawn([sys.executable, "-c", "import time; time.sleep(60)"])
+            return _spawn_unreadable(probe, monkeypatch, spawn, kind)[0]
+
+        spawned = [spawn_child()] if timing == "before_census" else []
+        if not spawned:
+            spawned = _spawn_after_census(run, spawn_child)
+        run.selected_root(passive=True)
+        child = spawned[0]
+        started = probe.psutil.Process(child).create_time()
+        ownership = run.owners[(child, started)]["ownership"]
+        later_census = probe._OwnedRun.census(run)
+
+    assert ownership == {
+        ("readable", "before_census"): "exact_run",
+        ("setuid", "before_census"): "owned_descendant_unreadable",
+        ("simulated", "before_census"): "owned_descendant_unreadable",
+    }.get((kind, timing), "selected_descendant")
+    assert child in {record["pid"] for record in later_census}
+    assert run.census_errors == set()
+
+
+def test_selected_root_rejects_a_descendant_owned_by_another_user(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    run, env = _selected_root_run(probe, tmp_path, monkeypatch)
+    with _process_tree(env) as (_, spawn):
+        spawned = _spawn_after_census(
+            run, lambda: spawn([sys.executable, "-c", "import time; time.sleep(60)"])
+        )
+        uids = probe.psutil.Process.uids
+
+        def foreign_uids(self):
+            if spawned and self.pid == spawned[0]:
+                return SimpleNamespace(real=os.getuid() + 1)
+            return uids(self)
+
+        monkeypatch.setattr(probe.psutil.Process, "uids", foreign_uids)
+        with pytest.raises(RuntimeError) as failure:
+            run.selected_root(passive=True)
+        exe = probe.psutil.Process(spawned[0]).exe()
+
+    assert str(failure.value) == f"selected_descendant_foreign_uid {spawned[0]} {exe}"
+    assert spawned[0] not in {pid for pid, _ in run.owners}
 
 
 class _OwnedHostProcess:
