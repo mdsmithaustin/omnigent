@@ -25,6 +25,10 @@ import pytest
 from omnigent.harnesses.prime_native import bridge, process
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.harnesses.prime_native.process import build_prime_launch, stop_prime_runtime
+from omnigent.inner.datamodel import TerminalEnvSpec
+from omnigent.inner.terminal import TerminalCreateResult, TerminalInstance
+from omnigent.terminals import TerminalRegistry
+from omnigent.terminals import registry as registry_mod
 
 _PRIME_DAEMON_SERVER = r"""
 import contextlib
@@ -151,6 +155,50 @@ def private_prime_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iter
         monkeypatch.setattr(bridge, "_COMPACT_ROOT", Path(compact_root) / "compact")
         monkeypatch.setattr(process, "_ACTIVE_RUNTIMES", set())
         yield
+
+
+async def test_native_panes_selects_registered_prime_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _ControlledTerminal(TerminalInstance):
+        async def launch(self, *, cwd: Path | None = None) -> None:
+            self.running = True
+
+        async def is_alive(self) -> bool:
+            return self.running
+
+    def _create_terminal(
+        name: str, session_key: str, *_args: object, **_kwargs: object
+    ) -> TerminalCreateResult:
+        return TerminalCreateResult(
+            instance=_ControlledTerminal(
+                name=name,
+                session_key=session_key,
+                socket_path=tmp_path / f"{name}-{session_key}.sock",
+                private_dir=tmp_path / f"{name}-{session_key}",
+                running=False,
+            ),
+            cwd=tmp_path,
+        )
+
+    monkeypatch.setattr(registry_mod, "create_terminal_instance", _create_terminal)
+    reg = TerminalRegistry()
+    for name, session_key in (
+        ("prime-native", "main"),
+        ("prime-native", "other"),
+        ("shell", "main"),
+    ):
+        await reg.launch(
+            "conv_prime",
+            name,
+            session_key,
+            TerminalEnvSpec(command="bash"),
+        )
+
+    assert reg.native_panes() == [
+        ("conv_prime", "prime-native", tmp_path / "prime-native-main.sock")
+    ]
 
 
 def test_prime_modules_import_without_posix_user_id() -> None:
@@ -1257,9 +1305,13 @@ def test_stop_retains_records_for_an_orphaned_renamed_kernel(
         },
     )
     try:
-        for _ in range(200):
-            if ready.exists() or kernel.poll() is not None:
+        deadline = time.monotonic() + 2
+        while True:
+            assert kernel.poll() is None, "Synthetic kernel exited before readiness"
+            if ready.exists() and ready.read_text() == "ready":
                 break
+            if time.monotonic() >= deadline:
+                pytest.fail("Synthetic kernel did not become ready within 2 seconds")
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(kernel.pid).name()
@@ -1309,9 +1361,13 @@ def test_stop_retains_records_for_an_orphaned_renamed_prime_executable(
         env={**os.environ, **launch.env, "PYTHONHOME": sys.base_prefix},
     )
     try:
-        for _ in range(200):
-            if ready.exists() or child.poll() is not None:
+        deadline = time.monotonic() + 2
+        while True:
+            assert child.poll() is None, "Synthetic Prime executable exited before readiness"
+            if ready.exists() and ready.read_text() == "ready":
                 break
+            if time.monotonic() >= deadline:
+                pytest.fail("Synthetic Prime executable did not become ready within 2 seconds")
             time.sleep(0.01)
         assert ready.read_text() == "ready"
         reported_name = process.psutil.Process(child.pid).name()

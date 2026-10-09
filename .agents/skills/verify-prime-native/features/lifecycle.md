@@ -6,7 +6,8 @@ Users can detach their terminal and return to their Prime session. Explicit stop
 
 - Fresh launch creates one Prime Native conversation.
 - Reattachment uses the existing terminal when it is alive.
-- Detaching the tmux attachment leaves the required TUI and worker alive.
+- Detaching leaves the TUI and worker alive subject to the
+  [pane idle cleanup policy](../../../../docs/PRIME_NATIVE.md#state-and-compatibility).
 - Exiting the required TUI shuts down its private daemon and workers.
 - Interrupt stops the active turn and permits a subsequent turn.
 - Explicit stop tears down the owned daemon and workers.
@@ -31,7 +32,7 @@ Preconditions are a session created by this run and its isolated Prime daemon en
 
 ## Gotchas
 
-Prime itself persists workers after the TUI exits. The adapter explicitly shuts down its private daemon when the required TUI exits. Detaching the tmux attachment keeps that TUI alive.
+Prime itself persists workers after the TUI exits. The adapter explicitly shuts down its private daemon when the required TUI exits. Detaching does not disable [pane idle cleanup](../../../../docs/PRIME_NATIVE.md#state-and-compatibility).
 
 The default helper detaches the owned tmux attachment, resumes the same conversation, and requires the same native session ID and owned Prime process IDs. It also checks session deletion and owned process absence. The full adapter probe retains a literal Python value across reattachment in the same living kernel. It observes separate native interrupted events for API abort and terminal Ctrl+C, then requires a distinct successful reply after each. Saved-history resume after a worker restart does not preserve that kernel. Stable root recovery and uncertain-command reconciliation require separate published-daemon conformance proof. An Omnigent lease cannot fence arbitrary native Prime clients. These limits are explicit in the [no-fork design](../../../../designs/prime-native/NO_FORK.md).
 
