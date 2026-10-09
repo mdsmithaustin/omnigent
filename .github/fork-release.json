@@ -407,9 +407,99 @@
       "name": "skill-delivery-ci-ad3127f5a28f",
       "reason": "test: trim routing and pidfile fixture narration.",
       "source_commit": null
+    },
+    {
+      "applied_commit": "15517eb8e87886871e91bbca1eaf8a2c1503449a",
+      "name": "chore-release-inventory-final-ci-qualification-r-15517eb8e878",
+      "reason": "chore(release): inventory final CI qualification repairs",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "69fb6c0989a766709a43053974722b14f7813909",
+      "name": "build-fork-release-cut-releases-from-main-23-69fb6c0989a7",
+      "reason": "build(fork-release): cut releases from main (#23)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8a67e55f4d1e8a4dc14c392ecc063a6f455e5896",
+      "name": "chore-no-mistakes-restore-the-push-gate-config-o-8a67e55f4d1e",
+      "reason": "chore(no-mistakes): restore the push gate config on the v0.17.0-based main (#22)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "bdf1e4d315f61ff9191c3c31488524d3b541f47e",
+      "name": "perf-codex-native-read-rollout-skills-incrementa-bdf1e4d315f6",
+      "reason": "perf(codex-native): read rollout skills incrementally off the event loop (#25)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a9be95b3b8f2ec05ec5d4f23c427b57215d2aa94",
+      "name": "fix-db-retry-cockroachdb-migrations-and-isolate-a9be95b3b8f2",
+      "reason": "fix(db): retry CockroachDB migrations and isolate DB lifecycle tests (#26)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "64561d49c8eb50f80ef74ebe3f905e155f31cb15",
+      "name": "test-stabilize-repl-clipboard-and-native-seccomp-64561d49c8eb",
+      "reason": "test: stabilize REPL, clipboard, and native seccomp checks (#24)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d3776865e4d3296b0a604bf180138f9c1af13a54",
+      "name": "fix-prime-native-idle-cleanup-and-finite-verific-d3776865e4d3",
+      "reason": "fix(prime-native): idle cleanup and finite verification (#28)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c644ccf708582245a00385a501a43c76c20b74c4",
+      "name": "perf-db-index-workspace-agent-name-lookups-by-id-c644ccf70858",
+      "reason": "perf(db): index workspace agent-name lookups by ID (#27)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "f84bde08129e583095e2581a0e58def5f0fde2ee",
+      "name": "refactor-prime-native-name-runtime-files-and-rou-f84bde08129e",
+      "reason": "refactor(prime-native): name runtime files and route interrupts through the hook (#29)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ccbcf95224e67f3a845eafb99f40bfc888794d54",
+      "name": "fix-mcp-bound-connection-lifecycle-and-preserve-ccbcf95224e6",
+      "reason": "fix(mcp): bound connection lifecycle and preserve native tool error context (#30)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "144467a91c106efafbc92f16a3d1e6872c2e115c",
+      "name": "test-mcp-close-lifecycle-review-follow-ups-32-144467a91c10",
+      "reason": "test(mcp): close lifecycle review follow-ups (#32)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7f341e9bcf1c289176a816688b4571881649e0b9",
+      "name": "docs-prime-qualify-readiness-and-refusal-verific-7f341e9bcf1c",
+      "reason": "docs(prime): qualify readiness and refusal verification (#31)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "61c6cc247271efb878ba676550283c2d3f7eaf1d",
+      "name": "docs-restore-accurate-upstream-comments-and-docs-61c6cc247271",
+      "reason": "docs: restore accurate upstream comments and docstrings (#33)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0abf83a67b249eba0d6b5090362c8d801bd9653e",
+      "name": "fix-isolate-prime-metadata-doctor-checks-0abf83a67b24",
+      "reason": "fix: isolate Prime metadata doctor checks",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7dda6cc9a4334cedc3ac0d1e8cc223f6ef34044e",
+      "name": "chore-release-stamp-0-17-0-mdsmithaustin-4-34-7dda6cc9a433",
+      "reason": "chore(release): stamp 0.17.0+mdsmithaustin.4 (#34)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "ad3127f5a28f3abbe0fc8748e0c7c5a92888548a",
+  "payload_commit": "7dda6cc9a4334cedc3ac0d1e8cc223f6ef34044e",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
@@ -418,5 +508,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.17.0"
   },
-  "version": "0.17.0+mdsmithaustin.3"
+  "version": "0.17.0+mdsmithaustin.4"
 }
