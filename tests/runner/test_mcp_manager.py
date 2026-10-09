@@ -23,9 +23,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from mcp.types import Tool as McpToolDef
 
@@ -38,6 +40,7 @@ from omnigent.runner.mcp_manager import (
     compute_spec_hash,
 )
 from omnigent.spec.types import AgentSpec, MCPServerConfig
+from tests.tools.test_mcp import controlled_mcp_lifecycle, recovery_config
 
 
 def _make_spec(*configs: MCPServerConfig) -> AgentSpec:
@@ -651,6 +654,44 @@ async def test_shutdown_cancels_in_flight_schema_connect(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["initialize", "discover"])
+async def test_shutdown_closes_in_flight_schema_lifecycle(stage: str) -> None:
+    """shutdown() cancels on-demand connect tasks that never completed.
+
+    Otherwise the runner would leak background tasks holding refs to
+    half-opened MCP transports.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def startup(generation: int) -> None:
+        started.set()
+        await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        setattr(sdk, f"on_{stage}", startup)
+        manager = RunnerMcpManager()
+        schemas_task = asyncio.create_task(manager.schemas_for(_make_spec(recovery_config())))
+        shutdown = None
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            assert sdk.active == 1
+            shutdown = asyncio.create_task(manager.shutdown())
+            await asyncio.wait_for(asyncio.shield(shutdown), 5)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(schemas_task), 5)
+            assert sdk.active == 0
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+        finally:
+            release.set()
+            schemas_task.cancel()
+            await asyncio.gather(
+                schemas_task, *([shutdown] if shutdown else []), return_exceptions=True
+            )
+            await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_evicted_spec_closes_late_completed_shared_connect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -868,3 +909,53 @@ def test_strip_mcp_tool_prefix_preserves_bare_double_underscore() -> None:
     assert _strip_mcp_tool_prefix("bare_name") == "bare_name"
     # Looks-like-prefix but only two parts: preserved.
     assert _strip_mcp_tool_prefix("mcp__missing_third") == "mcp__missing_third"
+
+
+@pytest.mark.asyncio
+async def test_retained_manager_connection_recovers_after_exhausted_replacement() -> None:
+    config = replace(recovery_config(), tools=["echo"])
+    spec = _make_spec(config)
+    alias_spec = _make_spec(replace(config, name="alias"))
+    with controlled_mcp_lifecycle([_make_tool_def("echo"), _make_tool_def("hidden")]) as sdk:
+        manager = RunnerMcpManager()
+        try:
+            assert (await manager.schemas_for(spec)).tool_names == {"recovery__echo"}
+            assert (await manager.schemas_for(alias_spec)).tool_names == {"alias__echo"}
+            route = manager._resolve_tool_route(spec, "recovery__echo")
+            alias_route = manager._resolve_tool_route(alias_spec, "alias__echo")
+            assert route is not None and alias_route is not None
+            connection = route[0].connection
+            assert connection is alias_route[0].connection
+            assert (
+                await manager.call_tool(spec, "recovery__echo", {"nonce": "before"})
+                == "generation-1"
+            )
+            sdk.online = False
+            with pytest.raises(httpx.ConnectError, match="server offline"):
+                await manager.call_tool(spec, "echo", {"nonce": "outage"})
+            sdk.online = True
+            sdk.generation = 2
+            assert (
+                await manager.call_tool(spec, "recovery__echo", {"nonce": "after"})
+                == "generation-2"
+            )
+            assert (
+                await manager.call_tool(alias_spec, "alias__echo", {"nonce": "peer"})
+                == "generation-2"
+            )
+            for current_spec, name in [(spec, "recovery__hidden"), (alias_spec, "alias__hidden")]:
+                with pytest.raises(RuntimeError, match="no live MCP serving tool"):
+                    await manager.call_tool(current_spec, name, {})
+            assert route[0].connection is connection
+            assert alias_route[0].connection is connection
+            assert sdk.starts == 4
+            assert sdk.requests == [
+                (1, "echo", {"nonce": "before"}),
+                (1, "echo", {"nonce": "outage"}),
+                (2, "echo", {"nonce": "after"}),
+                (2, "echo", {"nonce": "peer"}),
+            ]
+        finally:
+            await manager.shutdown()
+        assert sdk.active == 0
+        assert sdk.peak_active == 1
