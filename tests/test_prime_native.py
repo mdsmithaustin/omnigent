@@ -1581,10 +1581,10 @@ def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
 
 
 _KERNEL_WITH_HELPER = """
-import subprocess, sys, time
+import subprocess, sys
 helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
 print(helper.pid, flush=True)
-time.sleep(float(sys.argv[1]))
+sys.stdin.read()
 """
 
 
@@ -1610,14 +1610,15 @@ def _hide_process_arguments(
 
 
 def _start_private_kernel(
-    tmp_path: Path, paths: PrimeRuntimePaths, *, lifetime: float
+    tmp_path: Path, paths: PrimeRuntimePaths
 ) -> tuple[subprocess.Popen[str], int]:
     package = tmp_path / "rlm"
     package.mkdir(exist_ok=True)
     (package / "__init__.py").write_text("")
     (package / "repl.py").write_text(_KERNEL_WITH_HELPER)
     kernel = subprocess.Popen(
-        [sys.executable, "-m", "rlm.repl", str(lifetime)],
+        [sys.executable, "-m", "rlm.repl"],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
         env={
@@ -1641,7 +1642,7 @@ def test_unreadable_helper_is_owned_only_through_an_owned_ancestor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, helper_parent: str
 ) -> None:
     paths = _shutdown_paths(tmp_path)
-    kernel, kernel_helper = _start_private_kernel(tmp_path, paths, lifetime=60)
+    kernel, kernel_helper = _start_private_kernel(tmp_path, paths)
     unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     helper = kernel_helper if helper_parent == "owned_kernel" else unrelated.pid
     try:
@@ -1658,6 +1659,8 @@ def test_unreadable_helper_is_owned_only_through_an_owned_ancestor(
         _kill(kernel_helper, kernel.pid, unrelated.pid)
         kernel.wait(timeout=5)
         unrelated.wait(timeout=5)
+        assert kernel.stdin is not None
+        kernel.stdin.close()
 
 
 def test_stop_settles_a_captured_kernel_that_is_unreadable_while_exiting(
@@ -1665,16 +1668,34 @@ def test_stop_settles_a_captured_kernel_that_is_unreadable_while_exiting(
 ) -> None:
     paths = _shutdown_paths(tmp_path)
     process.owner_claim.write_owner_claim(paths.root)
-    kernel, helper = _start_private_kernel(tmp_path, paths, lifetime=0.8)
+    kernel, helper = _start_private_kernel(tmp_path, paths)
     _kill(helper)
+    assert kernel.stdin is not None
+    observations = 0
+    identity_alive = process._identity_alive
+
+    def release_kernel(identity: process._ProcessIdentity) -> bool:
+        nonlocal observations
+        if identity.pid == kernel.pid:
+            observations += 1
+            if observations == 4:
+                assert kernel.stdin is not None
+                kernel.stdin.close()
+                kernel.wait(timeout=5)
+        return identity_alive(identity)
+
     try:
         _hide_process_arguments(monkeypatch, kernel.pid, readable_calls=2)
+        monkeypatch.setattr(process, "_identity_alive", release_kernel)
+        monkeypatch.setattr(process, "_SHUTDOWN_POLL_INTERVAL_S", 0)
         stop_prime_runtime(paths)
+        assert observations == 4
         assert kernel.wait(timeout=5) == 0
         assert not (paths.root / "owner.pid").exists()
     finally:
         _kill(kernel.pid)
         kernel.wait(timeout=5)
+        kernel.stdin.close()
 
 
 def test_stop_fails_closed_when_private_process_observation_is_unreadable(
