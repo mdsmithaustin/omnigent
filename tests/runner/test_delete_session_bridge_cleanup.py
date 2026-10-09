@@ -133,6 +133,35 @@ async def test_delete_session_removes_native_bridge_dir(
     assert not cached.exists()
 
 
+async def test_delete_native_bridge_dirs_skips_absent_prime_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.harnesses.prime_native import bridge, process
+    from omnigent.runner.native.orchestration import _delete_native_bridge_dirs
+
+    monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact")
+    other_root = tmp_path / "other-native"
+    other_root.mkdir()
+    (other_root / "bridge.json").write_text("{}")
+    for resolver in BRIDGE_DIR_RESOLVERS.values():
+        monkeypatch.setattr(f"{resolver.__module__}.{resolver.__name__}", lambda _: other_root)
+    monkeypatch.setattr(
+        "omnigent.inner.native_attachments.attachment_cache_dir", lambda target: target / "cache"
+    )
+    stopped: list[bridge.PrimeRuntimePaths] = []
+    monkeypatch.setattr(process, "stop_prime_runtime", stopped.append)
+    paths = bridge.runtime_paths("conv_without_prime")
+    assert not paths.root.exists()
+
+    await _delete_native_bridge_dirs(server_client=None, session_id="conv_without_prime")
+
+    assert stopped == []
+    assert not paths.root.exists()
+    assert not other_root.exists()
+
+
 @pytest.mark.parametrize("family", sorted(BRIDGE_DIR_RESOLVERS))
 @pytest.mark.parametrize("bridge_present", [True, False])
 async def test_cleanup_resources_removes_native_bridge_dir(
