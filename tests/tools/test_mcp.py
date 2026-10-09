@@ -2133,6 +2133,7 @@ async def test_cancelled_reconnect_drain_preserves_discovery(method: str) -> Non
     with controlled_mcp_lifecycle() as sdk:
         conn = McpServerConnection(config=recovery_config())
         call = None
+        follower = None
         try:
             snapshot = await conn.connect()
             owner = conn._lifecycle_task
@@ -2146,8 +2147,14 @@ async def test_cancelled_reconnect_drain_preserves_discovery(method: str) -> Non
             assert conn._discovered_tools is snapshot
             assert conn._active_session_id is None
             assert not conn._call_lock.locked()
+            conn.config.retry = RetryPolicy(max_retries=0)
+            follower = asyncio.create_task(getattr(conn, method)("echo", {}))
+            await asyncio.sleep(0.01)
+            assert not follower.done()
+            assert [request[0] for request in sdk.requests] == [1]
             release.set()
-            assert await getattr(conn, method)("echo", {}) == "generation-2"
+            assert await asyncio.wait_for(follower, 2) == "generation-2"
+            assert [request[0] for request in sdk.requests] == [1, 2]
             assert owner is not None and owner.done() and not owner.cancelled()
             assert sdk.starts == 2 and sdk.peak_active == 1
             assert conn._breaker.consecutive_failures == 0
@@ -2155,6 +2162,8 @@ async def test_cancelled_reconnect_drain_preserves_discovery(method: str) -> Non
             release.set()
             if call is not None:
                 await asyncio.gather(call, return_exceptions=True)
+            if follower is not None:
+                await asyncio.gather(follower, return_exceptions=True)
             await conn.close()
 
 

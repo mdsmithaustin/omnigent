@@ -1734,7 +1734,11 @@ async def _call_tool_with_reconnect(
             # still-recovering network is itself classified and
             # retried on the next attempt instead of aborting the
             # whole call.
-            if needs_reconnect or conn._session is None:
+            if (
+                needs_reconnect
+                or conn._session is None
+                or (conn._close_event is not None and conn._close_event.is_set())
+            ):
                 await conn._reconnect()
                 needs_reconnect = False
             session, lifecycle = conn._session, conn._lifecycle_task
