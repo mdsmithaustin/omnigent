@@ -33,6 +33,13 @@ from tests.runner.test_native_interrupt_runner import _make_runner
 
 
 @pytest.fixture(autouse=True)
+def private_compact_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "omnigent.harnesses.prime_native.bridge._COMPACT_ROOT", tmp_path / "compact"
+    )
+
+
+@pytest.fixture(autouse=True)
 def no_real_terminal(monkeypatch):
     monkeypatch.setattr("omnigent.harnesses.prime_native.main.launch_prime_terminal", AsyncMock())
 
