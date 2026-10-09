@@ -26,6 +26,7 @@ from omnigent._wrapper_labels import (
     KIRO_NATIVE_WRAPPER_VALUE,
     OPENCODE_NATIVE_WRAPPER_VALUE,
     PI_NATIVE_WRAPPER_VALUE,
+    PRIME_NATIVE_WRAPPER_VALUE,
     QWEN_NATIVE_WRAPPER_VALUE,
     UI_MODE_LABEL_KEY,
     UI_MODE_TERMINAL_VALUE,
@@ -181,7 +182,7 @@ PRIME_NATIVE_CODING_AGENT = NativeCodingAgent(
     display_name="Prime Native",
     agent_name="prime-native-ui",
     harness="prime-native",
-    wrapper_label="prime-native-ui",
+    wrapper_label=PRIME_NATIVE_WRAPPER_VALUE,
     terminal_name="prime-native",
 )
 
@@ -345,6 +346,7 @@ _BUILTIN_NATIVE_PROVIDERS: tuple[NativeHarnessProvider, ...] = (
         run_native="omnigent.harnesses.prime_native.main:run_prime_native",
         auto_create_terminal="omnigent.harnesses.prime_native.main:launch_prime_terminal",
         spawn_env_builder="omnigent.harnesses.prime_native.bridge:build_prime_native_spawn_env",
+        interrupt_handler="omnigent.harnesses.prime_native.controls:interrupt_session",
         stop_handler="omnigent.harnesses.prime_native.process:stop_session",
         input_ready_probe="omnigent.harnesses.prime_native.bridge:native_input_ready",
         materialize_agent_spec="omnigent.harnesses.prime_native.main:_materialize_prime_agent_spec",

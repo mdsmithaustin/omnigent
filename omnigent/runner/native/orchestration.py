@@ -9206,7 +9206,8 @@ async def _delete_native_bridge_dirs(
     from omnigent.inner.native_attachments import attachment_cache_dir
 
     prime_paths = runtime_paths(session_id)
-    await asyncio.to_thread(stop_prime_runtime, prime_paths)
+    if os.path.lexists(prime_paths.root):
+        await asyncio.to_thread(stop_prime_runtime, prime_paths)
 
     labels: dict[str, str] = {}
     if server_client is not None:
