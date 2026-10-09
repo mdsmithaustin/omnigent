@@ -145,8 +145,8 @@ class TerminalRegistry:
         """
         self._conversation_link_base_url = conversation_link_base_url
         # Two-level dict: conversation_id -> (name, key) -> instance.
-        # Per-conversation maps make ``cleanup_conversation`` cheap
-        # (one pop) and ``list_for_conversation`` direct.
+        # Per-conversation maps make ``cleanup_conversation`` and
+        # ``list_for_conversation`` direct.
         self._by_conversation: dict[str, dict[tuple[str, str], TerminalInstance]] = {}
         self._failed_launches: dict[str, list[TerminalListEntry]] = {}
         self._launch_locks: dict[tuple[str, str, str], _LaunchLockEntry] = {}

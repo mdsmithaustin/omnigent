@@ -2328,7 +2328,7 @@ module.exports = function (pi) {
     // Ctrl+P cycling) back to Omnigent so the web picker reflects it. Skip
     // ``restore`` — that is Pi re-applying the session's saved model at
     // startup, not a user switch, and posting it could clobber a pending
-    // web-side override. The server dedups against ``model_override``, so a
+    // web-side override. The server dedups against ``reported_model``, so a
     // web-initiated switch (which already persisted the value before queuing
     // the inbox ``model_change``) round-trips here as a no-op. prime-native
     // mirrors ``restore`` too.
