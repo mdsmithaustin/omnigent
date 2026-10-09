@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 
-from omnigent.db.db_models import SqlAgent
+from omnigent.db.db_models import OmnigentBase, SqlAgent
 from omnigent.db.utils import (
     _build_alembic_config,
     _get_head_db_revision,
@@ -41,6 +41,8 @@ def migration(tmp_path: Path, _worker_db_uri: str) -> Iterator[tuple[sa.Connecti
             if _worker_db_uri:
                 command.downgrade(config, "ll1a2b3c4d5e")
             yield conn, config
+            if _worker_db_uri:
+                command.upgrade(config, "head")
     finally:
         engine.dispose()
 
@@ -70,6 +72,17 @@ def test_fresh_upgrade_and_bootstrap_create_both_indexes(
         assert bootstrap["ix_agents_kind_owner_created"] == _OWNER_INDEX
     finally:
         fresh.dispose()
+
+
+def test_model_metadata_declares_agent_name_index(tmp_path: Path) -> None:
+    # CockroachDB bootstraps from model metadata rather than the migration chain.
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'metadata.db'}")
+    try:
+        OmnigentBase.metadata.create_all(engine)
+        with engine.connect() as conn:
+            assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
+    finally:
+        engine.dispose()
 
 
 def test_old_fork_mm1_state_upgrades_to_both_indexes(
@@ -124,16 +137,17 @@ def test_downgrade_drops_only_agent_name_index_and_preserves_rows(
         },
     )
     conn.commit()
+    retained = sa.select(SqlAgent.name).where(SqlAgent.id == "1" * 32)
     command.upgrade(config, "fork2a3b4c5d")
     command.downgrade(config, "za3b4c5d6e7f")
     downgraded = _agent_indexes(conn)
     assert _revision(conn) == "za3b4c5d6e7f"
     assert "ix_agents_id_name" not in downgraded
     assert downgraded["ix_agents_kind_owner_created"] == _OWNER_INDEX
-    assert conn.execute(sa.select(SqlAgent.name)).scalars().all() == ["retained"]
+    assert conn.execute(retained).scalars().all() == ["retained"]
     command.upgrade(config, "fork2a3b4c5d")
     assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
-    assert conn.execute(sa.select(SqlAgent.name)).scalars().all() == ["retained"]
+    assert conn.execute(retained).scalars().all() == ["retained"]
 
 
 def test_downgrade_without_agent_name_index_preserves_upstream_index(
