@@ -42,15 +42,20 @@ the first commit in place without the second.
 
 An empty CRDB database is required for the first startup. Omnigent creates the
 current schema directly and stamps the current Alembic revision. It does not
-run the historical PostgreSQL migration chain. A database left at a partial
-revision by an earlier migration attempt is unsupported and must be replaced
-with a new empty database. A first bootstrap interrupted mid-run is repaired
-automatically when the same Omnigent version restarts; if Omnigent is upgraded
-before that repair completes, startup fails and the database must be replaced
-with a new empty one.
+run the historical PostgreSQL migration chain. Revisions older than the CRDB
+baseline `gf1b2c3d4e5f` are unsupported and require a new empty database.
+A first bootstrap interrupted mid-run resumes when the same Omnigent version
+restarts. Startup checks required tables, columns, and indexes before stamping
+head. Missing columns in an existing table stop bootstrap and retain its marker.
+If Omnigent is upgraded before bootstrap completes, startup fails and requires
+a new empty database.
 
 Existing CRDB databases created by a supported Omnigent release use normal
-Alembic upgrades for subsequent migrations.
+Alembic upgrades for subsequent migrations. Startup retries SQLSTATE `40001`
+failures up to three times, using a restored or replacement connection and the
+last durable Alembic revision. Other errors and retry exhaustion still fail startup.
+Migrations that commit before their revision is recorded must support resuming
+from their partially published schema and data.
 
 ## Connection pool
 
