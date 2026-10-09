@@ -12,4 +12,4 @@ the two in sync, so releases are cut by bumping pyproject alone (via
 ``scripts/update_versions.py``).
 """
 
-VERSION = "0.17.0+mdsmithaustin.3"
+VERSION = "0.17.0+mdsmithaustin.4"
