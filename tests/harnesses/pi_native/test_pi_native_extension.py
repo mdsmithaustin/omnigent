@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -1189,93 +1190,436 @@ require(extensionPath)(pi);
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_mcp_unreachable_fails_closed_without_throwing(tmp_path: Path) -> None:
-    """An unreachable Omnigent MCP server resolves to an error, never a throw.
-
-    Boundary discipline at the /mcp call site: a transport failure (connection
-    refused) and an HTTP non-2xx must each resolve ``execute`` to a readable
-    ``isError: true`` tool result so the Pi agent loop keeps running, rather than
-    rejecting the promise and wedging the turn.
-    """
+def _run_registered_mcp_source_semantics(
+    consumer: str, extension_source: str | None = None
+) -> subprocess.CompletedProcess[str]:
     node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is required for the pi-native extension e2e test")
-
-    extension_path = (
-        Path(__file__).resolve().parents[3]
-        / "omnigent"
-        / "resources"
-        / "pi_native"
-        / "omnigent_pi_native_extension.js"
-    )
-
+    assert node is not None, "node is required for both consumer controls"
     script = r"""
 const assert = require("assert").strict;
 const fs = require("fs");
-const path = require("path");
+const vm = require("vm");
+const source = fs.readFileSync(0, "utf8");
+const consumer = process.argv[1];
+assert.ok(["prime-0.9.6", "pi-0.84.2"].includes(consumer));
+const plain = value => JSON.parse(JSON.stringify(value));
+const jsonResponse = json => ({ ok: true, status: 200, json: async () => json });
+const unavailable = "Omnigent tools require a live Prime root binding";
+const nonJson = "Omnigent tool call failed: the server answered 2xx with a non-JSON " +
+  "body, which usually means an authenticating proxy or sign-in page " +
+  "answered instead of Omnigent. Re-authenticate and retry.";
+const malformed = "Omnigent tool call requires approval but the server sent " +
+  "no resolvable elicitation";
+const repeated = "Omnigent tool call still requires approval after one round — not retrying";
 
-const extensionPath = process.argv[1];
-const tmpDir = process.argv[2];
-const inboxDir = path.join(tmpDir, "inbox");
-const configPath = path.join(tmpDir, "config.json");
+function bridge(prime = false, configured = true) {
+  const config = {
+    serverUrl: configured ? "http://omnigent.test" : "",
+    sessionId: "conv_abc", authHeaders: {},
+    ...(prime ? { primeControlsDir: "/fixture/controls" } : {}),
+    tools: [{ name: "sys_os_shell", description: "fixture tool",
+      parameters: { type: "object", properties: {} } }],
+  };
+  const mcp = [], policy = [], events = [];
+  const registered = {}, handlers = {};
+  let respond = async () => { throw new Error("missing MCP responder"); };
+  let verdict = async () => jsonResponse({ result: "POLICY_ACTION_ALLOW" });
+  let clock = 0;
+  const sandbox = vm.createContext({
+    require: name => name === "fs" ? {
+      ...fs, readFileSync: () => JSON.stringify(config), existsSync: () => false,
+    } : require(name),
+    module: { exports: {} }, console, Error, AbortController,
+    process: { env: { OMNIGENT_PI_NATIVE_CONFIG: "/fixture/config.json" } },
+    Date: class extends Date { static now() { return clock; } },
+    setInterval: () => ({}), clearInterval() {}, clearTimeout() {},
+    setTimeout: (fn, ms) => {
+      if (ms < 240000) { clock += ms; setImmediate(fn); }
+      return {};
+    },
+    fetch: async (url, request) => {
+      const body = JSON.parse(request.body);
+      if (url.endsWith("/mcp")) { mcp.push(body); return respond(body); }
+      if (url.endsWith("/policies/evaluate")) { policy.push(body); return verdict(body); }
+      events.push(body);
+      return jsonResponse({});
+    },
+  });
+  vm.runInContext(source, sandbox, { filename: "omnigent_pi_native_extension.js" });
+  sandbox.module.exports({
+    registerCommand() {}, on: (name, handler) => { handlers[name] = handler; },
+    registerTool: spec => { registered[spec.name] = spec; }, sendUserMessage() {},
+  });
+  const helpers = vm.runInContext("({callOmnigentTool, piResultFromMcpResponse})", sandbox);
+  return { registered, handlers, helpers, config, mcp, policy, events, sandbox,
+    response: fn => { respond = fn; }, policyResponse: fn => { verdict = fn; } };
+}
 
-fs.mkdirSync(inboxDir, { recursive: true });
-fs.writeFileSync(
-  configPath,
-  JSON.stringify({
-    serverUrl: "http://omnigent.test",
-    sessionId: "conv_abc",
-    inboxDir,
-    authHeaders: {},
-    tools: [
-      { name: "sys_os_shell", description: "", parameters: { type: "object", properties: {} } },
-    ],
-  }),
-);
+async function primeExecute(prepared) {
+  const updates = [];
+  let accepting = true;
+  try {
+    const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args,
+      undefined, update => { if (accepting) updates.push(Promise.resolve(update)); });
+    accepting = false;
+    await Promise.all(updates);
+    return { result, isError: false };
+  } catch (error) {
+    accepting = false;
+    await Promise.all(updates).catch(() => {});
+    return { result: { content: [{ type: "text", text: error instanceof Error
+      ? error.message : String(error) }],
+      details: {} }, isError: true };
+  }
+}
+async function primeFinalize(prepared, executed, after) {
+  let { result, isError } = executed;
+  const patch = await after({ toolCall: prepared.toolCall, args: prepared.args, result, isError });
+  if (patch) {
+    result = { content: patch.content ?? result.content, details: patch.details ?? result.details,
+      terminate: patch.terminate ?? result.terminate };
+    isError = patch.isError ?? isError;
+  }
+  return { toolCall: prepared.toolCall, result, isError };
+}
+function primeMessage(finalized) {
+  return { role: "toolResult", toolCallId: finalized.toolCall.id,
+    toolName: finalized.toolCall.name,
+    content: finalized.result.content, details: finalized.result.details,
+      isError: finalized.isError };
+}
+async function piExecute(prepared) {
+  const updateEvents = [];
+  let acceptingUpdates = true;
+  try {
+    const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, undefined,
+      update => { if (acceptingUpdates) updateEvents.push(Promise.resolve(update)); });
+    acceptingUpdates = false;
+    await Promise.all(updateEvents);
+    return { result, isError: false };
+  } catch (error) {
+    acceptingUpdates = false;
+    await Promise.all(updateEvents);
+    return { result: { content: [{ type: "text", text: error instanceof Error
+      ? error.message : String(error) }],
+      details: {} }, isError: true };
+  } finally { acceptingUpdates = false; }
+}
+async function piFinalize(prepared, executed, after) {
+  let result = executed.result;
+  let isError = executed.isError;
+  const afterResult = await after({ toolCall: prepared.toolCall, args: prepared.args, result,
+    isError });
+  if (afterResult) {
+    result = { ...result, content: afterResult.content ?? result.content,
+      details: afterResult.details ?? result.details, usage: afterResult.usage ?? result.usage,
+      terminate: afterResult.terminate ?? result.terminate };
+    isError = afterResult.isError ?? isError;
+  }
+  return { toolCall: prepared.toolCall, result, isError };
+}
+function piMessage(finalized) {
+  return { role: "toolResult", toolCallId: finalized.toolCall.id,
+    toolName: finalized.toolCall.name,
+    content: finalized.result.content ?? [], details: finalized.result.details,
+    usage: finalized.result.usage, isError: finalized.isError };
+}
+const sdk = consumer.startsWith("prime")
+  ? { execute: primeExecute, finalize: primeFinalize, message: primeMessage }
+  : { execute: piExecute, finalize: piFinalize, message: piMessage };
 
-process.env.OMNIGENT_PI_NATIVE_CONFIG = configPath;
-
-let mode = "throw";
-global.fetch = async () => {
-  if (mode === "throw") throw new Error("ECONNREFUSED 127.0.0.1:7284");
-  return { ok: false, status: 503, async json() { return {}; } };
-};
-global.setInterval = () => ({ fakeInterval: true });
-
-const registered = {};
-const pi = {
-  registerCommand() {},
-  on() {},
-  registerTool(spec) { registered[spec.name] = spec; },
-  sendUserMessage() {},
-};
-
-require(extensionPath)(pi);
+async function consumeLoop(b, calls, expected, options = {}) {
+  const history = [], observations = [];
+  let turns = 0;
+  const model = messages => {
+    turns += 1;
+    if (turns === 1) return { role: "assistant", stopReason: "toolUse", content: calls };
+    const previous = messages.filter(message => message.role === "toolResult");
+    assert.deepEqual(previous.map(message => ({ id: message.toolCallId,
+      text: message.content[0].text, isError: message.isError })), expected);
+    assert.equal(previous.length, calls.length);
+    return { role: "assistant", stopReason: "stop", content: [{ type: "text",
+      text: JSON.stringify(previous.map(message => [message.toolCallId, message.isError,
+        message.content[0].text])) }] };
+  };
+  let hasMoreToolCalls = true;
+  while (hasMoreToolCalls) {
+    const assistant = model(history);
+    history.push(assistant);
+    const toolCalls = assistant.content.filter(block => block.type === "toolCall");
+    hasMoreToolCalls = false;
+    if (toolCalls.length) {
+      const finalized = await Promise.all(toolCalls.map(async toolCall => {
+        const prepared = { toolCall, args: toolCall.arguments,
+          tool: options.tool ?? { execute: (...args) =>
+            b.registered[toolCall.name].execute(...args, options.ctx) } };
+        const executed = await sdk.execute(prepared);
+        return sdk.finalize(prepared, executed, async event => {
+          const observed = { type: "tool_result", toolName: event.toolCall.name,
+            toolCallId: event.toolCall.id, input: event.args, content: event.result.content,
+            details: event.result.details, isError: event.isError };
+          observations.push(observed);
+          return b.handlers.tool_result(observed, options.ctx ?? {});
+        });
+      }));
+      hasMoreToolCalls = !finalized.every(entry => entry.result.terminate === true);
+      for (const entry of finalized) {
+        const message = sdk.message(entry);
+        if (options.changeId) message.toolCallId = "wrong-id";
+        history.push(message);
+      }
+      if (options.suppressContinuation) break;
+    }
+  }
+  assert.equal(turns, 2, "continuation must consume the native results");
+  assert.equal(history.filter(message => message.role === "assistant").length, 2);
+  assert.equal(history.filter(message => message.role === "toolResult").length, calls.length);
+  assert.equal(observations.length, expected.length);
+  for (const entry of expected) {
+    const matching = observations.filter(event => event.toolCallId === entry.id);
+    assert.equal(matching.length, 1);
+    assert.deepEqual({ id: matching[0].toolCallId, text: matching[0].content[0].text,
+      isError: matching[0].isError }, entry);
+  }
+  assert.equal(history.at(-1).content[0].text,
+    JSON.stringify(expected.map(entry => [entry.id, entry.isError, entry.text])));
+  return history;
+}
+const call = (id, arguments = {}) => ({ type: "toolCall", id, name: "sys_os_shell", arguments });
+const expectation = (id, text, isError) => [{ id, text, isError }];
+let cases = 0, inverseControls = 0;
 
 (async () => {
-  const thrown = await registered.sys_os_shell.execute("call-1", {});
-  assert.equal(thrown.isError, true, JSON.stringify(thrown));
-  assert.ok(thrown.content[0].text.indexOf("ECONNREFUSED") !== -1, thrown.content[0].text);
+  const casesToRun = [
+    ["transport", () => { throw new Error("ECONNREFUSED 127.0.0.1:7284"); },
+      "Omnigent tool call failed: ECONNREFUSED 127.0.0.1:7284", true],
+    ["http", () => ({ ok: false, status: 503 }), "Omnigent tool call failed: HTTP 503", true],
+    ["parse", () => ({ ok: true,
+      json: async () => { throw new SyntaxError("private body"); } }), nonJson, true],
+    ["non-json", () => ({ ok: true, headers: { get: () => "text/html" },
+      json: async () => { throw new Error("must not parse private body"); } }), nonJson, true],
+    ["rpc", () => jsonResponse({ error: { code: -32000, message: "Runner failed\nlog ref" } }),
+      "Runner failed\nlog ref", true],
+    ["rpc-empty", () => jsonResponse({ error: { message: "" } }), "Omnigent tool call failed",
+      true],
+    ["multi", () => jsonResponse({ result: { content: [{ type: "text", text: "first\nline" },
+      { type: "text", text: "" }, { type: "text", text: "last" }], isError: true } }),
+        "first\nline\n\nlast", true],
+    ["empty", () => jsonResponse({ result: { content: [], isError: true } }),
+      '{"content":[],"isError":true}', true],
+    ["one-empty", () => jsonResponse({ result: { content: [{ type: "text", text: "" }],
+      isError: true } }),
+      '{"content":[{"type":"text","text":""}],"isError":true}', true],
+    ["two-empty", () => jsonResponse({ result: { content: [{ type: "text", text: "" },
+      { type: "text", text: "" }], isError: true } }), "\n", true],
+    ["nontext", () => jsonResponse({ result: { content: [{ type: "image", data: "xyz" }],
+      isError: true } }),
+      '{"content":[{"type":"image","data":"xyz"}],"isError":true}', true],
+    ["nontext-text", () => jsonResponse({ result: { content: [{ type: "image",
+      text: "retained" }], isError: true } }), "retained", true],
+    ["success-same-text", () => jsonResponse({ result: { content: [{ type: "text",
+      text: "same" }], isError: false } }), "same", false],
+    ["failure-same-text", () => jsonResponse({ result: { content: [{ type: "text",
+      text: "same" }], isError: true } }), "same", true],
+    ["success-after-failure", () => jsonResponse({ result: { content: [{ type: "text",
+      text: "ok again" }] } }), "ok again", false],
+  ];
+  const b = bridge();
+  for (const [name, respond, text, isError] of casesToRun) {
+    const id = `call-${name}|fc_original`;
+    b.response(respond);
+    const before = b.mcp.length;
+    await consumeLoop(b, [call(id)], expectation(id, text, isError));
+    assert.equal(b.mcp.length - before, 1, name);
+    assert.equal(b.policy.length, 0, name);
+    assert.deepEqual(plain(b.mcp.at(-1)), { jsonrpc: "2.0", id: 1, method: "tools/call",
+      params: { name: "sys_os_shell", arguments: {} } });
+    cases += 1;
+  }
+  const helper = await b.helpers.callOmnigentTool(b.config, "sys_os_shell", {});
+  assert.equal(helper.isError, false);
+  assert.equal(helper.content[0].text, "ok again");
+  b.response(() => jsonResponse({ error: { message: "helper stays resolved" } }));
+  const mappedFailure = await b.helpers.callOmnigentTool(b.config, "sys_os_shell", {});
+  assert.equal(mappedFailure.isError, true);
+  assert.equal(mappedFailure.content[0].text, "helper stays resolved");
+  await assert.rejects(b.registered.sys_os_shell.execute("raw-failure", {}),
+    error => error instanceof Error && error.message === "helper stays resolved");
 
-  mode = "http";
-  const http = await registered.sys_os_shell.execute("call-2", {});
-  assert.equal(http.isError, true, JSON.stringify(http));
-  assert.ok(http.content[0].text.indexOf("503") !== -1, http.content[0].text);
-})().catch((error) => {
-  console.error(error && error.stack ? error.stack : error);
-  process.exit(1);
-});
+  const identity = bridge();
+  const mapped = { content: [{ type: "text", text: "identity success" }], isError: false,
+    details: { retained: 7 } };
+  identity.sandbox.mapped = mapped;
+  vm.runInContext("callOmnigentTool = async () => mapped", identity.sandbox);
+  assert.strictEqual(await identity.registered.sys_os_shell.execute("raw-ok", {}), mapped);
+  const identityHistory = await consumeLoop(identity, [call("identity|fc_original")],
+    expectation("identity|fc_original", "identity success", false));
+  assert.strictEqual(identityHistory[1].content, mapped.content);
+  assert.strictEqual(identityHistory[1].details, mapped.details);
+  assert.equal(identity.mcp.length, 0);
+  cases += 1;
+
+  for (const guard of ["unbound", "child", "stale", "live"]) {
+    const guarded = bridge(true);
+    let ctx = {};
+    if (guard !== "unbound") {
+      guarded.sandbox.binding = { isCurrent: () => guard !== "stale" };
+      vm.runInContext("startPrimeControls = () => binding", guarded.sandbox);
+      const root = { sessionManager: { getHeader: () => ({ rlmDepth: 0 }),
+        getSessionId: () => "root" } };
+      await guarded.handlers.session_start({}, root);
+      ctx = guard === "child" ? { sessionManager: { getHeader: () => ({ rlmDepth: 1 }) } } : root;
+    }
+    const live = guard === "live";
+    guarded.response(() => jsonResponse({ result: {
+      content: [{ type: "text", text: "bound success" }] } }));
+    const execution = guarded.registered.sys_os_shell.execute(`guard-${guard}`, {},
+      undefined, undefined, ctx);
+    if (live) assert.equal((await execution).content[0].text, "bound success");
+    else await assert.rejects(execution,
+      error => error instanceof Error && error.message === unavailable);
+    await consumeLoop(guarded, [call(`guard-${guard}|fc_original`)],
+      expectation(`guard-${guard}|fc_original`, live ? "bound success" : unavailable,
+        !live), { ctx });
+    assert.equal(guarded.mcp.length, live ? 2 : 0);
+    assert.equal(guarded.policy.length, 0);
+    cases += 1;
+  }
+  const unconfigured = bridge(false, false);
+  await consumeLoop(unconfigured, [call("unconfigured|fc_original")],
+    expectation("unconfigured|fc_original", "Omnigent tool bridge is not configured", true));
+  assert.equal(unconfigured.mcp.length, 0);
+  cases += 1;
+
+  const ask = { result: { resultType: "input_required",
+    inputRequests: { elicit_original: { method: "elicitation/create", params: {} } },
+    requestState: '{"elicitation_id":"elicit_original","session_id":"conv_abc"}' } };
+  for (const mode of ["accept", "decline", "malformed", "repeated", "unresolved",
+    "policy-error", "raw-ask-budget"]) {
+    const approval = bridge();
+    let text = mode === "accept" ? "accepted output" : "Tool call denied by user";
+    approval.response(body => {
+      if (body.id === 1) {
+        if (mode === "unresolved") approval.sandbox.fetch = undefined;
+        return jsonResponse(mode === "malformed"
+          ? { result: { resultType: "input_required" } } : ask);
+      }
+      if (mode === "repeated") return jsonResponse(ask);
+      return jsonResponse(mode === "accept" ? { result: { content: [{ type: "text",
+        text }] } } : { error: { code: -32000, message: text } });
+    });
+    approval.policyResponse(() => {
+      if (mode === "policy-error") return { ok: false, status: 400 };
+      return jsonResponse({ result: mode === "raw-ask-budget" ? "POLICY_ACTION_ASK"
+        : mode === "accept" || mode === "repeated"
+          ? "POLICY_ACTION_ALLOW" : "POLICY_ACTION_DENY" });
+    });
+    if (mode === "malformed") text = malformed;
+    if (mode === "repeated") text = repeated;
+    if (mode === "unresolved") text = "Omnigent tool call requires approval " +
+      "but the policy server was unreachable";
+    await consumeLoop(approval, [call(`ask-${mode}|fc_original`, { command: "fixture" })],
+      expectation(`ask-${mode}|fc_original`, text, mode !== "accept"));
+    assert.deepEqual(plain(approval.mcp[0].params), {
+      name: "sys_os_shell", arguments: { command: "fixture" } });
+    assert.deepEqual(approval.mcp.map(body => body.id), ["malformed",
+      "unresolved"].includes(mode) ? [1] : [1, 2]);
+    assert.equal(approval.policy.length, ["malformed", "unresolved"].includes(mode)
+      ? 0 : mode === "raw-ask-budget" ? 50 : 1);
+    if (!["malformed", "unresolved"].includes(mode)) {
+      assert.deepEqual(plain(approval.policy[0].event), { type: "PHASE_TOOL_CALL", target: "",
+        data: { name: "sys_os_shell", arguments: { command: "fixture" } }, context: {} });
+      assert.equal(approval.mcp[1].params.requestState, ask.result.requestState);
+      assert.deepEqual(plain(approval.mcp[1].params.inputResponses), {
+        elicit_original: { action: mode === "accept" || mode === "repeated"
+          ? "accept" : "decline" } });
+    }
+    if (mode === "raw-ask-budget") {
+      assert.equal(new Set(approval.policy.map(body => body._omnigent_elicitation_id)).size, 1);
+    }
+    cases += 1;
+  }
+
+  const concurrent = bridge();
+  const completions = [];
+  let finishFirst;
+  concurrent.response(body => {
+    if (body.params.arguments.order === 1) {
+      return new Promise(resolve => { finishFirst = resolve; });
+    }
+    completions.push(2);
+    setImmediate(() => finishFirst(jsonResponse({ result: { content: [{ type: "text",
+      text: "first failed" }], isError: true } })));
+    return jsonResponse({ result: { content: [{ type: "text", text: "second succeeded" }] } });
+  });
+  const firstExecute = concurrent.registered.sys_os_shell.execute;
+  concurrent.registered.sys_os_shell.execute = async (...args) => {
+    try { return await firstExecute(...args); }
+    finally { completions.push(args[1].order === 1 ? "first-execute" : "second-execute"); }
+  };
+  await consumeLoop(concurrent, [call("first|fc_one", { order: 1 }), call("second|fc_two",
+    { order: 2 })],
+    [{ id: "first|fc_one", text: "first failed", isError: true },
+      { id: "second|fc_two", text: "second succeeded", isError: false }]);
+  assert.deepEqual(completions, [2, "second-execute", "first-execute"]);
+  assert.equal(concurrent.mcp.length, 2);
+  assert.equal(concurrent.policy.length, 0);
+  cases += 1;
+
+  const old = bridge();
+  old.response(() => jsonResponse({ result: { content: [{ type: "text", text: "same" }],
+    isError: true } }));
+  const oldTool = { execute: () => old.helpers.callOmnigentTool(old.config, "sys_os_shell", {}) };
+  const oldHistory = await consumeLoop(old, [call("old|fc_original")],
+    expectation("old|fc_original", "same", false), { tool: oldTool });
+  assert.equal(oldHistory[1].isError, false);
+  await assert.rejects(consumeLoop(old, [call("old|fc_original")],
+    expectation("old|fc_original", "same", true), { tool: oldTool }), assert.AssertionError);
+  inverseControls += 1;
+  for (const inverse of ["throw-success", "alter-text", "alter-id", "suppress-continuation"]) {
+    const control = bridge();
+    const fail = inverse !== "throw-success";
+    control.response(() => jsonResponse({ result: { content: [{ type: "text", text: "same" }],
+      isError: fail } }));
+    const execute = control.registered.sys_os_shell.execute;
+    const tool = { execute: async (...args) => {
+      try {
+        const result = await execute(...args);
+        if (inverse === "throw-success") throw new Error("same");
+        return result;
+      } catch (error) {
+        if (inverse === "alter-text") throw new Error(error.message + " changed");
+        throw error;
+      }
+    } };
+    await assert.rejects(consumeLoop(control, [call("inverse|fc_original")],
+      expectation("inverse|fc_original", "same", fail), { tool,
+        changeId: inverse === "alter-id",
+          suppressContinuation: inverse === "suppress-continuation" }), assert.AssertionError);
+    inverseControls += 1;
+  }
+  console.log(JSON.stringify({ consumer, cases, inverseControls }));
+})().catch(error => { console.error(error.stack || error); process.exit(1); });
 """
-
-    result = subprocess.run(
-        [node, "-e", script, str(extension_path), str(tmp_path)],
+    return subprocess.run(
+        [node, "-e", script, consumer],
+        input=extension_source if extension_source is not None else _extension_path().read_text(),
         capture_output=True,
         check=False,
         text=True,
-        timeout=10,
+        timeout=15,
     )
 
+
+@pytest.mark.parametrize("consumer", ["prime-0.9.6", "pi-0.84.2"])
+def test_registered_mcp_errors_follow_selected_sdk_source_semantics(consumer: str) -> None:
+    result = _run_registered_mcp_source_semantics(consumer)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {
+        "consumer": consumer,
+        "cases": 29,
+        "inverseControls": 5,
+    }
 
 
 def test_mcp_200_html_signin_is_classified_not_parsed_as_json(
@@ -1291,8 +1635,8 @@ def test_mcp_200_html_signin_is_classified_not_parsed_as_json(
 
     Asserts, at the ``/mcp`` tool-call call site only:
 
-    1. a declared ``text/html`` 200 resolves to ``isError: true`` naming an
-       authentication / sign-in classification, without throwing;
+    1. a declared ``text/html`` 200 rejects with an error naming an
+       authentication / sign-in classification;
     2. the message leaks no part of the body, no header value, and no URL;
     3. a declared ``application/json`` 200 still round-trips normally;
     4. a JSON content type with an unparseable body is classified the same
@@ -1305,7 +1649,7 @@ def test_mcp_200_html_signin_is_classified_not_parsed_as_json(
     Not covered here, and unchanged from ``main``: the outer catch still reports
     a *transport* error's ``err.message``, which can name the request URL. That
     predates this change and is asserted by
-    ``test_mcp_unreachable_fails_closed_without_throwing``.
+    ``test_registered_mcp_errors_follow_selected_sdk_source_semantics``.
     """
     node = shutil.which("node")
     if node is None:
@@ -1446,9 +1790,12 @@ function soleText(result) {
 
 (async () => {
   // 1. A 200 text/html sign-in page is a classified auth/edge failure.
-  const html = await registered.sys_os_shell.execute("call-1", {});
-  assert.equal(html.isError, true, JSON.stringify(html));
-  const htmlText = soleText(html);
+  let htmlText;
+  await assert.rejects(registered.sys_os_shell.execute("call-1", {}), error => {
+    assert.ok(error instanceof Error);
+    htmlText = error.message;
+    return true;
+  });
   assert.ok(
     /sign-in|sign in|authenticat/i.test(htmlText),
     "message does not name an authentication classification: " + htmlText,
@@ -1478,9 +1825,12 @@ function soleText(result) {
 
   // 4. A JSON content type with an unparseable body is bounded the same way.
   mode = "json-unparseable";
-  const bad = await registered.sys_os_shell.execute("call-3", {});
-  assert.equal(bad.isError, true, JSON.stringify(bad));
-  const badText = soleText(bad);
+  let badText;
+  await assert.rejects(registered.sys_os_shell.execute("call-3", {}), error => {
+    assert.ok(error instanceof Error);
+    badText = error.message;
+    return true;
+  });
   assert.ok(
     badText.indexOf("SECRET-STATE-b3f9c1") === -1,
     "parse-failure path leaked the body: " + badText,
@@ -1532,11 +1882,11 @@ function soleText(result) {
 
 
 def test_input_required_denied_fails_closed_not_false_success(tmp_path: Path) -> None:
-    """A declined ASK gate fails CLOSED (isError) — never reports false success.
+    """A declined ASK gate rejects — never reports false success.
 
     When the elicitation park collapses to DENY, the extension retries once with
-    ``{action: "decline"}``; the proxy returns a -32000 error which surfaces as an
-    ``isError: true`` tool result. The raw ``input_required`` envelope must never
+    ``{action: "decline"}``; the proxy returns a -32000 error which rejects
+    the tool callback. The raw ``input_required`` envelope must never
     be returned to the model as a successful result.
     """
     node = shutil.which("node")
@@ -1630,18 +1980,16 @@ const pi = {
 require(extensionPath)(pi);
 
 (async () => {
-  const result = await registered.sys_os_shell.execute("call-1", {});
+  await assert.rejects(registered.sys_os_shell.execute("call-1", {}),
+    error => error instanceof Error && error.message === "Tool call denied by user");
 
   assert.equal(mcpCallCount, 2, "expected one approval retry");
   assert.deepEqual(lastRetryBody.params.inputResponses, {
     [ELICIT_ID]: { action: "decline" },
   });
 
-  // Must surface as an error, NOT a false success, and must not leak the raw
-  // input_required envelope.
-  assert.equal(result.isError, true, JSON.stringify(result));
-  assert.ok(result.content[0].text.indexOf("denied") !== -1, result.content[0].text);
-  assert.equal(result.content[0].text.indexOf("input_required"), -1, result.content[0].text);
+  assert.equal(lastRetryBody.id, 2);
+  assert.equal(lastRetryBody.params.requestState, REQUEST_STATE);
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);
   process.exit(1);

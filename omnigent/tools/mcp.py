@@ -21,13 +21,14 @@ import os
 import shlex
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 from anyio.streams.memory import (
     MemoryObjectReceiveStream,
@@ -49,6 +50,7 @@ from mcp.types import (
     ContentBlock,
     ElicitRequestParams,
     ElicitResult,
+    ErrorData,
     ImageContent,
     TextContent,
 )
@@ -569,7 +571,7 @@ class McpServerConnection:
     _ready_future: asyncio.Future[list[McpToolDef]] | None = field(
         default=None, init=False, repr=False
     )
-    _discovered_tools: list[McpToolDef] = field(default_factory=list, init=False, repr=False)
+    _discovered_tools: list[McpToolDef] | None = field(default=None, init=False, repr=False)
     _breaker: _CircuitBreaker = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -585,6 +587,10 @@ class McpServerConnection:
         """
         Establish the MCP connection and discover tools.
 
+        Reuses an alive lifecycle and its successful discovery snapshot.
+        Serializes with calls so replacement has one owner. A cancelled
+        connect tears down the startup it was waiting on.
+
         Schedules :meth:`_run_lifecycle` as a long-lived task on
         the running event loop. The lifecycle task opens the
         transport + ClientSession in a single ``async with``
@@ -599,11 +605,16 @@ class McpServerConnection:
             session initialize, or tool discovery is propagated
             here via the ready future.
         """
-        loop = asyncio.get_running_loop()
-        self._ready_future = loop.create_future()
-        self._close_event = asyncio.Event()
-        self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
-        return await self._ready_future
+        async with self._call_lock:
+            ready, close_event = self._ready_future, self._close_event
+            if ready is None or close_event is None or close_event.is_set():
+                await self._close_lifecycle()
+                ready = self._start_lifecycle()
+            try:
+                return await asyncio.shield(ready)
+            except asyncio.CancelledError:
+                await self._close_lifecycle()
+                raise
 
     async def call_tool(
         self,
@@ -632,33 +643,35 @@ class McpServerConnection:
             Forwarded to ``_invoke_tool`` for inline elicitation
             context. ``None`` when no session is available.
         :returns: A tagged image result or the legacy newline-joined text.
-        :raises RuntimeError: If ``connect()`` has not been called.
+        :raises RuntimeError: If never successfully connected or explicitly closed.
         :raises McpServerDisabledError: If the circuit breaker is
             tripped.
         """
-        if self._session is None:
-            raise RuntimeError(
-                f"MCP server {self.config.name!r} has no live "
-                f"session — call connect() before call_tool()"
-            )
-        self._breaker.pre_call(self.config.name)
-        retry = self.config.retry or _MCP_RECONNECT_DEFAULTS
-        try:
-            result = await _call_tool_with_reconnect(
-                conn=self,
-                name=name,
-                arguments=arguments,
-                retry=retry,
-                session_id=session_id,
-            )
-        except Exception:
-            self._breaker.record_failure(self.config.name)
-            raise
-        self._breaker.record_success()
-        return result
+        async with self._call_lock:
+            self._require_open()
+            self._breaker.pre_call(self.config.name)
+            retry = self.config.retry or _MCP_RECONNECT_DEFAULTS
+
+            async def invoke(session: ClientSession) -> str:
+                return await self._invoke_tool(session, name, arguments, session_id=session_id)
+
+            try:
+                result = await _call_tool_with_reconnect(
+                    conn=self,
+                    name=name,
+                    invoke=invoke,
+                    retry=retry,
+                    session_id=session_id,
+                )
+            except Exception:
+                self._breaker.record_failure(self.config.name)
+                raise
+            self._breaker.record_success()
+            return result
 
     async def _invoke_tool(
         self,
+        session: ClientSession,
         name: str,
         arguments: dict[str, Any],  # JSON values — see call_tool
         session_id: str | None = None,
@@ -666,7 +679,7 @@ class McpServerConnection:
         """
         Send a single ``tools/call`` request to the MCP session.
 
-        Acquires :attr:`_call_lock` and sets
+        The caller holds :attr:`_call_lock` and sets
         :attr:`_active_session_id` for the duration of the call so
         the inline elicitation handler knows which session to
         surface the approval on. The lock serializes concurrent
@@ -678,30 +691,16 @@ class McpServerConnection:
         ``/mcp/execute`` → Omnigent server) can surface the elicitation
         to the user and retry with ``inputResponses``.
 
+        :param session: The current SDK session after any reconnect.
         :param name: The tool name.
         :param arguments: The tool arguments dict.
-        :param session_id: Omnigent session id, e.g. ``"conv_abc123"``.
-            Set on the connection for the inline elicitation handler.
+        :param session_id: Omnigent session id for completion observation.
         :returns: The formatted tool result string.
         :raises McpElicitationRequired: When the MCP server returns
             an ``InputRequiredResult`` requiring user input before
             the tool can execute.
         """
-        if self._session is None:
-            raise RuntimeError("MCP session not initialized — call connect() first")
-        async with self._call_lock:
-            self._active_session_id = session_id
-            # Scope the unhealthy-transport signal to this attempt:
-            # bumping the serial invalidates recordings from any
-            # still-lingering response stream of a previous timed-out
-            # call, and the fresh slot only accepts failures from
-            # responses opened during this attempt.
-            self._call_serial += 1
-            self._transport_error = None
-            try:
-                result = await self._session.call_tool(name=name, arguments=arguments)
-            finally:
-                self._active_session_id = None
+        result = await session.call_tool(name=name, arguments=arguments)
 
         # ── MRTR: detect InputRequiredResult ─────────────────────────
         extras = getattr(result, "model_extra", {}) or {}
@@ -752,28 +751,22 @@ class McpServerConnection:
         :param request_state: The opaque ``requestState`` from the
             ``InputRequiredResult``. Echoed back verbatim.
         :returns: The formatted tool result string.
-        :raises RuntimeError: If ``connect()`` has not been called.
+        :raises RuntimeError: If never successfully connected or explicitly closed.
         """
-        if self._session is None:
-            raise RuntimeError("MCP session not initialized — call connect() first")
-
-        retry_params: dict[str, Any] = {
-            "name": name,
-            "arguments": arguments,
-        }
-        if input_responses is not None:
-            retry_params["inputResponses"] = input_responses
-        if request_state:
-            retry_params["requestState"] = request_state
-
         async with self._call_lock:
-            self._active_session_id = session_id
-            # Same attempt scoping as _invoke_tool: invalidate stale
-            # recordings and start a clean slot for this request.
-            self._call_serial += 1
-            self._transport_error = None
-            try:
-                result = await self._session.send_request(
+            self._require_open()
+
+            retry_params: dict[str, Any] = {
+                "name": name,
+                "arguments": arguments,
+            }
+            if input_responses is not None:
+                retry_params["inputResponses"] = input_responses
+            if request_state is not None:
+                retry_params["requestState"] = request_state
+
+            async def invoke(session: ClientSession) -> str:
+                result = await session.send_request(
                     ClientRequest(
                         CallToolRequest(
                             params=CallToolRequestParams(**retry_params),
@@ -781,41 +774,64 @@ class McpServerConnection:
                     ),
                     CallToolResult,
                 )
-            finally:
-                self._active_session_id = None
+                # Multi-round MRTR: the server may return another
+                # InputRequiredResult on the retry. Raise so the Omnigent server
+                # can surface the next elicitation round.
+                extras = getattr(result, "model_extra", {}) or {}
+                if extras.get("resultType") == "input_required":
+                    raise McpElicitationRequired(
+                        input_requests=extras.get("inputRequests") or {},
+                        request_state=extras.get("requestState", ""),
+                        tool_name=name,
+                        arguments=arguments,
+                    )
+                return _format_call_result(result)
 
-        # Multi-round MRTR: the server may return another
-        # InputRequiredResult on the retry. Raise so the Omnigent server
-        # can surface the next elicitation round.
-        extras = getattr(result, "model_extra", {}) or {}
-        if extras.get("resultType") == "input_required":
-            raise McpElicitationRequired(
-                input_requests=extras.get("inputRequests") or {},
-                request_state=extras.get("requestState", ""),
-                tool_name=name,
-                arguments=arguments,
+            return await _call_tool_with_reconnect(
+                conn=self,
+                name=name,
+                invoke=invoke,
+                retry=self.config.retry or _MCP_RECONNECT_DEFAULTS,
+                session_id=session_id,
             )
-        return _format_call_result(result)
 
     async def _reconnect(self) -> None:
         """
         Tear down the dead session and open a fresh one.
 
         Called by ``call_tool()`` after detecting a connection
-        error. Does not re-discover tools — the tool list from
-        the original ``connect()`` is still valid, but the
-        session needs to be live for the next ``call_tool``.
+        error. Refuses to start once :meth:`close` revoked admission.
 
         Same task-identity rule as :meth:`connect` applies: the
         new lifecycle task owns the new transport + session
         end to end.
         """
-        await self.close()
-        loop = asyncio.get_running_loop()
-        self._ready_future = loop.create_future()
-        self._close_event = asyncio.Event()
+        await self._close_lifecycle()
+        self._require_open()
+        await asyncio.shield(self._start_lifecycle())
+
+    def _start_lifecycle(self) -> asyncio.Future[list[McpToolDef]]:
+        """
+        Schedule a lifecycle task and return its ready future.
+
+        A set close event marks the lifecycle closing or ended. A
+        lifecycle that ends before settling ready, such as one cancelled
+        during startup, fails ready with the closed error.
+        """
+        ready: asyncio.Future[list[McpToolDef]] = asyncio.get_running_loop().create_future()
+        close_event = asyncio.Event()
+
+        def on_exit(_task: asyncio.Task[None]) -> None:
+            close_event.set()
+            if not ready.done():
+                ready.set_exception(self._closed_error())
+                ready.exception()
+
+        self._ready_future = ready
+        self._close_event = close_event
         self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
-        await self._ready_future
+        self._lifecycle_task.add_done_callback(on_exit)
+        return ready
 
     async def _run_lifecycle(self) -> None:
         """
@@ -882,6 +898,7 @@ class McpServerConnection:
                 # signal recorded on the previous connection.
                 self._transport_error = None
                 discovered = await self._discover_or_use_cache()
+                self._discovered_tools = discovered
                 ready.set_result(discovered)
                 # Hold transport + session open until close() signals.
                 # All call_tool() invocations during this window run
@@ -917,14 +934,13 @@ class McpServerConnection:
         calling ``tools/list``. Otherwise performs a live
         ``tools/list`` call and updates the cache.
 
-        Must be called after ``_open_session()`` so that
+        Must be called after session initialization so that
         ``self._session`` is live.
 
         :returns: List of MCP tool definitions.
         """
         cached = self._check_cache() if self.discovery_limit is None else None
         if cached is not None:
-            self._discovered_tools = cached
             _logger.debug(
                 "MCP server %r: using cached discovery (%d tools)",
                 self.config.name,
@@ -948,7 +964,6 @@ class McpServerConnection:
             tools = tools[: self.discovery_limit]
         else:
             self._update_cache(tools)
-        self._discovered_tools = tools
         _logger.info(
             "MCP server %r: discovered %d tool(s)",
             self.config.name,
@@ -958,26 +973,50 @@ class McpServerConnection:
 
     async def close(self) -> None:
         """
-        Tear down the MCP session and transport.
+        Tear down the MCP session and transport and revoke call admission.
 
         Signals the lifecycle task to exit its
         ``async with AsyncExitStack`` block, then awaits the
         task's completion so resource teardown is observable
         from the caller. Safe to call multiple times or if
-        :meth:`connect` was never called.
+        :meth:`connect` was never called. Does not wait for in-flight
+        calls: session teardown fails them with a closed error.
         """
-        if self._close_event is not None:
-            self._close_event.set()
-        task = self._lifecycle_task
-        if task is not None and not task.done():
-            # Logged inside ``_run_lifecycle``; caller (RunnerMcpManager.shutdown)
-            # only cares that close() ran to completion.
-            with suppress(Exception):
-                await task
-        self._lifecycle_task = None
-        self._close_event = None
-        self._ready_future = None
-        self._session = None
+        self._discovered_tools = None
+        await self._close_lifecycle()
+
+    async def _close_lifecycle(self) -> None:
+        """
+        Signal the current lifecycle to exit and await its teardown.
+
+        A startup never reaches its close wait, so it is cancelled. A
+        cancelled caller leaves teardown finishing on the lifecycle task.
+        """
+        task, ready, close_event = self._lifecycle_task, self._ready_future, self._close_event
+        if task is None or ready is None or close_event is None:
+            return
+        close_event.set()
+        if not ready.done():
+            task.cancel()
+        await asyncio.wait({task})
+        ready.exception()
+        if self._lifecycle_task is task:
+            self._lifecycle_task = None
+            self._close_event = None
+            self._ready_future = None
+            self._session = None
+
+    def _require_open(self) -> None:
+        """
+        Reject calls before a successful :meth:`connect` or after :meth:`close`.
+        """
+        if self._discovered_tools is None:
+            raise self._closed_error()
+
+    def _closed_error(self) -> RuntimeError:
+        return RuntimeError(
+            f"MCP server {self.config.name!r} connection is closed; call connect() first"
+        )
 
     def _check_cache(self) -> list[McpToolDef] | None:
         """
@@ -1363,8 +1402,8 @@ class McpServerConnection:
         Called by the SDK's receive-loop task when the MCP server
         sends ``elicitation/create`` during a ``tools/call``.
         Delegates to :attr:`elicitation_callback` with the session
-        id from :attr:`_active_session_id` (set under
-        :attr:`_call_lock` by ``_invoke_tool``).
+        id from :attr:`_active_session_id`, set under
+        :attr:`_call_lock` for each invocation attempt.
 
         :param context: MCP SDK ``RequestContext`` (unused).
         :param params: Elicitation params from the server.
@@ -1523,6 +1562,10 @@ _CONNECTION_ERROR_TYPES = (
     # transport-error 408 path instead, but retried here too if it
     # ever propagates directly.
     httpx.RemoteProtocolError,
+    # The SDK's stream into a transport that already died, e.g. an
+    # exited stdio server.
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
 )
 
 
@@ -1553,6 +1596,9 @@ def _is_connection_error(exc: BaseException) -> bool:
     """
     if isinstance(exc, _CONNECTION_ERROR_TYPES):
         return True
+    # A reconnect during an outage surfaces the transport's task-group error.
+    if isinstance(exc, BaseExceptionGroup):  # noqa: F821 — Python >=3.12
+        return all(_is_connection_error(inner) for inner in exc.exceptions)
     if isinstance(exc, McpError):
         if exc.error.code == CONNECTION_CLOSED:
             return True
@@ -1655,7 +1701,7 @@ async def _sleep(seconds: float) -> None:
 async def _call_tool_with_reconnect(
     conn: McpServerConnection,
     name: str,
-    arguments: dict[str, Any],  # JSON values — see call_tool
+    invoke: Callable[[ClientSession], Awaitable[str]],
     retry: RetryPolicy,
     session_id: str | None = None,
 ) -> str:
@@ -1669,11 +1715,10 @@ async def _call_tool_with_reconnect(
 
     :param conn: The MCP server connection to invoke on.
     :param name: The tool name as returned by discovery.
-    :param arguments: The tool arguments dict.
+    :param invoke: One attempt receiving the current SDK session.
     :param retry: Retry policy controlling max attempts, backoff
         base, and backoff cap.
-    :param session_id: Omnigent session id forwarded to
-        ``_invoke_tool`` for inline elicitation context.
+    :param session_id: Omnigent session id for this attempt's inline elicitation.
     :returns: The formatted tool result string.
     """
     last_exc: Exception | None = None
@@ -1682,18 +1727,50 @@ async def _call_tool_with_reconnect(
 
     for attempt in range(total_tries):
         try:
+            if conn._lifecycle_task is not None and not conn._lifecycle_task.done():
+                ready = conn._ready_future
+                assert ready is not None
+                if not ready.done():
+                    await asyncio.shield(ready)
             # Reconnect first when the previous attempt broke the
             # session. Inside the try so a reconnect that fails on a
             # still-recovering network is itself classified and
             # retried on the next attempt instead of aborting the
             # whole call.
-            if needs_reconnect:
+            if (
+                needs_reconnect
+                or conn._session is None
+                or (conn._close_event is not None and conn._close_event.is_set())
+            ):
                 await conn._reconnect()
                 needs_reconnect = False
-            return await conn._invoke_tool(name, arguments, session_id=session_id)
+            session, lifecycle = conn._session, conn._lifecycle_task
+            if session is None or lifecycle is None:
+                # The replacement lifecycle ended before this attempt started.
+                raise McpError(ErrorData(code=CONNECTION_CLOSED, message="Connection closed"))
+            conn._active_session_id = session_id
+            # Scope the unhealthy-transport signal to this attempt:
+            # bumping the serial invalidates recordings from any
+            # still-lingering response stream of a previous timed-out
+            # call, and the fresh slot only accepts failures from
+            # responses opened during this attempt.
+            conn._call_serial += 1
+            conn._transport_error = None
+            request = asyncio.ensure_future(invoke(session))
+            try:
+                # The SDK leaves a pending request waiting after its session
+                # is torn down, so the request ends with its lifecycle.
+                await asyncio.wait({request, lifecycle}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                request.cancel()
+                conn._active_session_id = None
+            if request.done():
+                return request.result()
+            raise McpError(ErrorData(code=CONNECTION_CLOSED, message="Connection closed"))
         except Exception as exc:
             if not (_is_connection_error(exc) or _is_dead_session_timeout(exc, conn)):
                 raise
+            conn._require_open()
             last_exc = exc
             needs_reconnect = True
             # Last attempt — don't reconnect, just raise.
