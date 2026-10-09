@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from packaging.version import InvalidVersion, Version
 from sqlalchemy import Engine, Index, inspect, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from omnigent.db.query_context import query_name_scope
 
@@ -107,6 +110,50 @@ def _prepare_crdb_schema_transaction(connection: Any, version: Version) -> None:
     """
     _enable_crdb_ddl_autocommit(connection, version)
     connection.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+
+
+@contextmanager
+def _crdb_migration_session(connection: Any, version: Version | None) -> Iterator[None]:
+    """Run Alembic in a CRDB schema transaction, then restore or discard the session."""
+    if version is None:
+        yield
+        return
+    migration_failed = True
+    try:
+        _prepare_crdb_schema_transaction(connection, version)
+        if version >= Version("24.1"):
+            # DDL and its Alembic revision must share a durable boundary.
+            connection.execute(text("SET autocommit_before_ddl = false"))
+        yield
+        if connection.in_transaction():
+            connection.commit()
+        migration_failed = False
+    finally:
+        try:
+            connection.rollback()
+            _prepare_crdb_schema_transaction(connection, version)
+        except BaseException as restoration_error:
+            connection.invalidate(restoration_error)
+            if not migration_failed:
+                raise
+
+
+def _run_crdb_migrations(engine: Engine, db_uri: str) -> None:
+    """Retry serialization failures from the last durable Alembic revision."""
+    from omnigent.db.utils import _is_serialization_failure, _run_migrations
+
+    retries = 3
+    for attempt in range(retries + 1):
+        try:
+            _run_migrations(engine, db_uri)
+            return
+        except DBAPIError as exc:
+            if attempt == retries or not _is_serialization_failure(exc):
+                raise
+            _logger.warning(
+                "Retrying CockroachDB migration after a serialization failure",
+                extra={"retry_count": attempt + 1},
+            )
 
 
 def _crdb_revision_is_supported(db_uri: str, current: str, head: str) -> bool:
@@ -277,7 +324,6 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
         _build_alembic_config,
         _get_current_db_revision,
         _get_head_db_revision,
-        _run_migrations,
         _verify_db_revision_is_supported,
     )
 
@@ -303,6 +349,19 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                 raise RuntimeError(
                     "CockroachDB schema bootstrap did not create expected tables: "
                     + ", ".join(sorted(missing))
+                )
+            inspector = inspect(engine)
+            missing_columns = [
+                f"{table.name}.{column}"
+                for base in (OmnigentBase, ConversationBase)
+                for table in base.metadata.tables.values()
+                for column in set(table.columns.keys())
+                - {c["name"] for c in inspector.get_columns(table.name)}
+            ]
+            if missing_columns:
+                raise RuntimeError(
+                    "CockroachDB schema bootstrap has missing columns: "
+                    + ", ".join(sorted(missing_columns))
                 )
             _repair_and_verify_crdb_model_indexes(engine, version)
             config = _build_alembic_config(db_uri)
@@ -337,7 +396,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
         # access than the database credential itself.
         safe_uri = make_url(db_uri).render_as_string(hide_password=True)
         try:
-            _run_migrations(engine, db_uri)
+            _run_crdb_migrations(engine, db_uri)
         except Exception as exc:
             raise RuntimeError(
                 "CockroachDB schema migration failed "

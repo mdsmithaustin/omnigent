@@ -34,6 +34,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.host_store import HostStore
 from tests.server.helpers import websocket_scope as _websocket_scope
+from tests.server.mock_host import close_mock_host
 
 # Same liveness-race flake guard as test_hosts_filesystem.py: the mock
 # WS host can be starved + deregistered under parallel CI load. Tests
@@ -125,19 +126,12 @@ async def mkdir_setup(
     conn = registry.get(_HOST_ID)
     assert conn is not None
     replies: dict[str, dict[str, Any]] = {}
-    stop_drain = asyncio.Event()
 
     async def _drain() -> None:
-        """Drain outbound WS frames and reply to create_dir frames.
-
-        :returns: None when ``stop_drain`` is set or no events arrive
-            within the per-iteration timeout.
-        """
-        while not stop_drain.is_set():
-            try:
-                output = await comm.receive_output(timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
+        """Drain outbound WS frames and reply to create_dir frames."""
+        while True:
+            # A receive timeout would cancel the tunnel app while the host idles.
+            output = await comm.receive_output(timeout=None)
             if output.get("type") != "websocket.send":
                 continue
             text = output.get("text")
@@ -173,11 +167,7 @@ async def mkdir_setup(
     try:
         yield app, registry, comm, replies, drain_task
     finally:
-        stop_drain.set()
-        try:
-            await asyncio.wait_for(drain_task, timeout=1.0)
-        except asyncio.TimeoutError:
-            drain_task.cancel()
+        await close_mock_host(comm, drain_task)
 
 
 # ── Happy path ──────────────────────────────────────────
