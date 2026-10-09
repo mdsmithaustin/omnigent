@@ -960,6 +960,18 @@ async def test_native_pbcopy_uses_consent_transport_not_host_clipboard(
         ),
     )
     instance = created.instance
+    copied = "native copy λ\nsecond line\n"
+    ready = instance.private_dir / "copy-ready"
+    start = instance.private_dir / "copy-start"
+    done = instance.private_dir / "copy-done"
+    copy_command = (
+        f"touch {shlex.quote(str(ready))}; "
+        f"while [ ! -f {shlex.quote(str(start))} ]; do sleep 0.02; done; "
+        f"printf %s {shlex.quote(copied)} | pbcopy; "
+        f'printf %s "$?" > {shlex.quote(str(done))}; '
+        "exec bash --noprofile --norc"
+    )
+    instance.args.extend(["-c", copy_command])
     ws = _FakeWebSocket(
         inbound=[{"type": "websocket.receive", "bytes": b"\r"}] if recent_input else []
     )
@@ -974,22 +986,20 @@ async def test_native_pbcopy_uses_consent_transport_not_host_clipboard(
                 read_only=read_only,
             )
         )
-        for _ in range(100):
-            if ws.sent:
+        for _ in range(500):
+            if ws.sent and ready.exists() and not ws._inbound:
                 break
             await asyncio.sleep(0.02)
         assert ws.sent, "terminal did not attach"
-        await asyncio.sleep(0.1)
-        copied = "native copy λ\nsecond line\n"
-        done = instance.private_dir / "copy-done"
-        await instance.send(
-            text=f"printf %s {shlex.quote(copied)} | pbcopy && touch {shlex.quote(str(done))}"
-        )
+        assert ready.exists(), b"".join(ws.sent).decode(errors="replace")
+        assert not ws._inbound, "terminal did not receive the scripted browser input"
+        start.touch()
         for _ in range(100):
-            if done.exists():
+            if done.exists() and done.read_text():
                 break
             await asyncio.sleep(0.03)
         assert done.exists(), b"".join(ws.sent).decode(errors="replace")
+        assert done.read_text() == "0", b"".join(ws.sent).decode(errors="replace")
         assert not bypass_marker.exists(), "native pbcopy bypassed browser consent"
         if recent_input and not read_only:
             for _ in range(100):
