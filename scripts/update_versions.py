@@ -38,7 +38,7 @@ Usage::
     python scripts/update_versions.py pre-release --new-version 0.1.2
     python scripts/update_versions.py pre-release --new-version 0.1.2rc1
 
-    # Upstream only; fork releases follow docs/FORK_RELEASES.md:
+    # After releasing X, move main to the next dev version:
     python scripts/update_versions.py post-release --new-version 0.1.2
     #   -> stamps 0.1.3.dev0 everywhere
 
@@ -227,7 +227,7 @@ def next_dev_version(released: str) -> str:
     """
     Compute the next development version after releasing *released*.
 
-    Upstream ``main`` carries the next MINOR as ``.dev0`` (the 0.5 cycle left main at
+    ``main`` carries the next MINOR as ``.dev0`` (the 0.5 cycle left main at
     ``0.6.0.dev0``), and post-release runs only when a new ``branch-X.Y``
     cycle is cut — patches never move main — so bump the minor, not the
     micro. A micro bump would re-freeze main on the released line and make
