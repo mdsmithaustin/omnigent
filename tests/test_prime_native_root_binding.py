@@ -172,7 +172,9 @@ assert.deepEqual(child.statuses, []);
 assert.equal(fs.existsSync(controlFile), true);
 assert.equal(fs.existsSync(inboxFile), true);
 assert.equal(fs.existsSync(resultFile), false);
-assert.equal((await relay(child)).isError, true);
+await assert.rejects(relay(child), {{
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+}});
 assert.equal(posted.length, posts);
 if (child.handlers.session_shutdown) await child.handlers.session_shutdown({{}}, child.ctx);
 assert.equal(binding(), before);
@@ -199,7 +201,9 @@ await i.handlers.session_start({{}}, i.ctx);
 await exercise(i);
 assert.equal(fs.existsSync(bindingFile), false);
 assert.deepEqual(posted, []);
-assert.equal((await relay(i)).isError, true);
+await assert.rejects(relay(i), {{
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+}});
 const live = instance({{ rlmDepth: 0 }});
 await live.handlers.session_start({{}}, live.ctx);
 assert.deepEqual((await relay(live)).content, [{{ type: "text", text: "root relay result" }}]);
@@ -212,7 +216,9 @@ def test_unknown_callbacks_and_execution_context_cannot_borrow_root_relay(tmp_pa
         tmp_path,
         r"""
 await exercise(rootInstance);
-assert.equal((await relay(rootInstance)).isError, true);
+await assert.rejects(relay(rootInstance), {
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+});
 assert.deepEqual(posted, []);
 assert.equal(timers.size, 0);
 await rootInstance.handlers.session_start({}, rootInstance.ctx);
@@ -220,11 +226,16 @@ queue();
 const child = instance({ rlmDepth: 1 });
 const posts = posted.length;
 await exercise(rootInstance, child.ctx);
-assert.equal((await relay(rootInstance, child.ctx)).isError, true);
-assert.equal((await rootInstance.tools.root_tool.execute("call", {})).isError, true);
-const taskResult = await rootInstance.tools.manage_todo_list.execute("call",
-  { operation: "write", todoList: [] }, undefined, undefined, child.ctx);
-assert.equal(taskResult.isError, true);
+await assert.rejects(relay(rootInstance, child.ctx), {
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+});
+await assert.rejects(rootInstance.tools.root_tool.execute("call", {}), {
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+});
+await assert.rejects(rootInstance.tools.manage_todo_list.execute("call",
+  { operation: "write", todoList: [] }, undefined, undefined, child.ctx), {
+    name: "Error", message: "Omnigent tools require a live Prime root binding",
+  });
 assert.equal(posted.length, posts);
 await assertRootWorks();
 const result = await rootInstance.tools.manage_todo_list.execute("call", {
@@ -259,7 +270,9 @@ assert.equal(fs.existsSync(bindingFile), false);
 const posts = posted.length;
 await tick();
 await exercise(replacement);
-assert.equal((await relay(replacement)).isError, true);
+await assert.rejects(relay(replacement), {
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+});
 assert.equal(posted.length, posts);
 assert.equal(timers.size, 0);
 """,
@@ -311,7 +324,9 @@ await assert.rejects(rootInstance.handlers.session_start({}, rootInstance.ctx),
   /unwritable binding/);
 fs.mkdirSync = mkdir;
 await exercise(rootInstance);
-assert.equal((await relay(rootInstance)).isError, true);
+await assert.rejects(relay(rootInstance), {
+  name: "Error", message: "Omnigent tools require a live Prime root binding",
+});
 assert.equal(fs.existsSync(bindingFile), false);
 assert.deepEqual(posted, []);
 await rootInstance.handlers.session_start({}, rootInstance.ctx);

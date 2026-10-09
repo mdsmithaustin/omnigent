@@ -20,15 +20,17 @@ Covers the non-trivial logic in the AP-server-side MCP connection pool:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+import httpx
 import pytest
 from mcp.types import Tool as McpToolDef
 
 from omnigent.server import mcp_pool as _mcp_pool_module
 from omnigent.server.mcp_pool import McpToolEntry, ServerMcpPool
 from omnigent.spec.types import AgentSpec, MCPServerConfig
+from tests.tools.test_mcp import controlled_mcp_lifecycle, recovery_config
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -544,3 +546,180 @@ async def test_lru_evicts_least_recently_used_at_capacity(
     )
 
     await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_retained_server_pool_connection_recovers_after_exhausted_replacement() -> None:
+    spec = _make_spec(recovery_config())
+    with controlled_mcp_lifecycle() as sdk:
+        pool = ServerMcpPool()
+        try:
+            assert (
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "before"})
+                == "generation-1"
+            )
+            connection = pool._entries["agent"].servers["recovery"].connection
+            sdk.online = False
+            with pytest.raises(httpx.ConnectError, match="server offline"):
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "outage"})
+            sdk.online = True
+            sdk.generation = 2
+            assert (
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "after"})
+                == "generation-2"
+            )
+            assert pool._entries["agent"].servers["recovery"].connection is connection
+            assert [entry.tool.name for entry in await pool.list_tools("agent", spec)] == ["echo"]
+            assert sdk.requests == [
+                (1, "echo", {"nonce": "before"}),
+                (1, "echo", {"nonce": "outage"}),
+                (2, "echo", {"nonce": "after"}),
+            ]
+            assert sdk.starts == 4
+        finally:
+            await pool.shutdown_all()
+        assert sdk.active == 0
+        assert sdk.peak_active == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "shutdown_for", "shutdown_all"])
+@pytest.mark.parametrize("stage", ["initialize", "discover"])
+async def test_cancelled_prewarm_closes_owned_lifecycle(action: str, stage: str) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize(generation: int) -> None:
+        entered.set()
+        await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        setattr(sdk, f"on_{stage}", initialize)
+        pool = ServerMcpPool()
+        warm = asyncio.create_task(pool.list_tools("agent", _make_spec(recovery_config())))
+        cleanup = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            assert sdk.active == 1
+            if action == "cancel":
+                warm.cancel()
+            elif action == "shutdown_for":
+                cleanup = asyncio.create_task(pool.shutdown_for("agent"))
+            else:
+                cleanup = asyncio.create_task(pool.shutdown_all())
+            if cleanup is not None:
+                await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(warm), timeout=5)
+            assert sdk.active == 0
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+        finally:
+            release.set()
+            if not warm.done():
+                warm.cancel()
+            await asyncio.gather(warm, return_exceptions=True)
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
+            await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["shutdown_for", "shutdown_all"])
+async def test_pool_shutdown_propagates_caller_cancellation(action: str) -> None:
+    entered = asyncio.Event()
+    exiting = asyncio.Event()
+    release_startup = asyncio.Event()
+    release_exit = asyncio.Event()
+
+    async def initialize(generation: int) -> None:
+        entered.set()
+        await release_startup.wait()
+
+    async def leave(generation: int) -> None:
+        exiting.set()
+        await release_exit.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        sdk.on_initialize = initialize
+        sdk.on_exit = leave
+        pool = ServerMcpPool()
+        warm = asyncio.create_task(pool.list_tools("agent", _make_spec(recovery_config())))
+        cleanup = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            cleanup = asyncio.create_task(
+                pool.shutdown_for("agent") if action == "shutdown_for" else pool.shutdown_all()
+            )
+            await asyncio.wait_for(exiting.wait(), timeout=5)
+            cleanup.cancel()
+            release_exit.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(warm), timeout=5)
+            assert sdk.active == 0
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+        finally:
+            release_startup.set()
+            release_exit.set()
+            warm.cancel()
+            await asyncio.gather(warm, *([cleanup] if cleanup else []), return_exceptions=True)
+            await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["shutdown_for", "shutdown_all"])
+async def test_cancelled_shutdown_closes_connected_and_starting_servers(action: str) -> None:
+    initializing = asyncio.Event()
+    exiting = asyncio.Event()
+    release_exit = asyncio.Event()
+    never = asyncio.Event()
+    blocked_start: int | None = None
+
+    with controlled_mcp_lifecycle() as sdk:
+
+        async def initialize(generation: int) -> None:
+            if sdk.starts == blocked_start:
+                initializing.set()
+                await never.wait()
+
+        async def leave(generation: int) -> None:
+            if not exiting.is_set():
+                exiting.set()
+                await release_exit.wait()
+
+        sdk.on_initialize = initialize
+        pool = ServerMcpPool()
+        if action == "shutdown_all":
+            later = _make_spec(replace(recovery_config(), name="c"))
+            assert [entry.tool.name for entry in await pool.list_tools("later", later)] == ["echo"]
+        blocked_start = sdk.starts + 2
+        spec = _make_spec(recovery_config(), replace(recovery_config(), name="b"))
+        warm = asyncio.create_task(pool.list_tools("agent", spec))
+        cleanup = None
+        try:
+            await asyncio.wait_for(initializing.wait(), timeout=5)
+            servers = pool._entries["agent"].servers
+            while servers["recovery"].connection is None:
+                await asyncio.wait_for(asyncio.sleep(0), timeout=5)
+            assert servers["b"].connection is None
+            assert sdk.active == (3 if action == "shutdown_all" else 2)
+            sdk.on_exit = leave
+            cleanup = asyncio.create_task(
+                pool.shutdown_for("agent") if action == "shutdown_for" else pool.shutdown_all()
+            )
+            await asyncio.wait_for(exiting.wait(), timeout=5)
+            cleanup.cancel()
+            release_exit.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+            assert sdk.active == 0, "cancelled shutdown skipped a server"
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(warm), timeout=5)
+        finally:
+            never.set()
+            release_exit.set()
+            warm.cancel()
+            await asyncio.gather(warm, *([cleanup] if cleanup else []), return_exceptions=True)
+            await pool.shutdown_all()
