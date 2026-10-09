@@ -172,6 +172,8 @@ private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
 sessions. Conversation DELETE attempts adapter-state removal after shutdown.
 Runner cleanup is best effort. A successful response can leave state when the
 runner is unavailable or removal fails; it does not prove observed retirement.
+Startup and host maintenance can reclaim that state once the recorded server
+confirms the deletion, as described below.
 
 Prime's main terminal is eligible for native pane idle cleanup. By default,
 the runner checks every 60 seconds and closes the pane after one hour of
@@ -187,6 +189,14 @@ Startup and host maintenance stop orphaned Prime runtimes whose recorded owner
 is dead in the same process namespace and boot. A live terminal protects its
 runtime even after its runner exits. Recovery retains saved sessions and private
 configuration for resume. Unknown or legacy ownership records remain untouched.
+Maintenance removes a runtime directory only for a deleted conversation. The
+directory's `config.json` must name a conversation whose ID maps back to that
+directory, and the recorded server must answer that conversation's session
+request with Omnigent's `not_found` error. The directory must also pass the
+private-ownership checks. Its launch owner, owner record, and terminal must be
+absent or provably dead, and the runtime must stop with no owned process or
+socket left. An unreachable server, a rejected credential, any other response,
+or a missing or invalid record retains the directory.
 Cleanup sends Prime's public shutdown command to the qualified private
 supervisor socket. Omnigent clears transient ownership only after that socket
 and its owned processes stop. If ownership or shutdown cannot be proved, it

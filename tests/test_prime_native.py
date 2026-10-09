@@ -951,7 +951,8 @@ def test_maintenance_retains_runtime_when_deletion_is_unconfirmed(
 
 
 @pytest.mark.parametrize(
-    "identity", ["missing", "malformed", "no-session", "other-session", "symlink", "hardlink"]
+    "identity",
+    ["missing", "malformed", "no-session", "other-session", "symlink", "hardlink", "legacy-owner"],
 )
 def test_maintenance_retains_deleted_runtime_without_established_identity(
     tmp_path: Path, identity: str
@@ -968,6 +969,8 @@ def test_maintenance_retains_deleted_runtime_without_established_identity(
             config.write_text(json.dumps({**record, "sessionId": None}))
         elif identity == "other-session":
             config.write_text(json.dumps({**record, "sessionId": "conv_elsewhere"}))
+        elif identity == "legacy-owner":
+            (paths.root / "owner.pid").write_text("99999999\n")
         else:
             outside = tmp_path / "outside.json"
             outside.write_text(config.read_text())

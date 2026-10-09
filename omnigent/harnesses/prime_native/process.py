@@ -18,8 +18,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 import click
+import httpx
 import psutil
 
 from omnigent._platform import IS_WINDOWS, resolve_cli_binary
@@ -28,6 +30,7 @@ from omnigent.harnesses.prime_native.bridge import (
     KERNEL_PROCESS_NAMES_FILE,
     PRIME_NATIVE_CONFIG_ENV_VAR,
     PrimeRuntimePaths,
+    bridge_dir_for_session_id,
     bridge_roots,
     runtime_paths,
 )
@@ -855,6 +858,47 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     _remove_runtime_records(paths)
 
 
+def _conversation_deleted(paths: PrimeRuntimePaths) -> bool:
+    """Whether the server recorded for this runtime reports its conversation deleted."""
+    from omnigent.harnesses.pi_native.bridge import config_path
+
+    try:
+        config = json.loads(config_path(paths.root).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return False
+    if not isinstance(config, dict):
+        return False
+    session_id = config.get("sessionId")
+    server_url = config.get("serverUrl")
+    headers = config.get("authHeaders")
+    if (
+        not isinstance(session_id, str)
+        or not isinstance(server_url, str)
+        or not isinstance(headers, dict)
+        or not all(isinstance(value, str) for value in headers.values())
+        or bridge_dir_for_session_id(session_id) != paths.root
+    ):
+        return False
+    try:
+        with httpx.Client(
+            base_url=server_url, headers=headers, timeout=_SOCKET_IO_TIMEOUT_S
+        ) as client:
+            response = client.get(
+                f"/v1/sessions/{quote(session_id, safe='')}",
+                params={
+                    "include_items": "false",
+                    "include_liveness": "false",
+                    "include_usage": "false",
+                },
+            )
+        body = response.json() if response.status_code == 404 else None
+    except (httpx.HTTPError, ValueError):
+        return False
+    # Only Omnigent's own not-found error counts; another server may now own the port.
+    error = body.get("error") if isinstance(body, dict) else None
+    return isinstance(error, dict) and error.get("code") == "not_found"
+
+
 def stop_orphaned_runtimes() -> int:
     from omnigent.harnesses.claude_native.bridge import ensure_secure_dir
     from omnigent.inner.terminal import _process_alive as owner_process_alive
@@ -879,12 +923,19 @@ def stop_orphaned_runtimes() -> int:
                     reservation = _read_launch_reservation(paths)
                     if reservation is not None and _identity_alive(reservation.owner):
                         continue
+                    claimed = os.path.lexists(entry / owner_claim.OWNER_PID_FILENAME)
                     claim = owner_claim.read_owner_claim(entry)
-                    if reservation is None:
-                        if claim is None or not owner_claim.owner_is_gone(
-                            claim, process_alive=owner_process_alive
-                        ):
-                            continue
+                    if (
+                        reservation is None
+                        and claimed
+                        and (
+                            claim is None
+                            or not owner_claim.owner_is_gone(
+                                claim, process_alive=owner_process_alive
+                            )
+                        )
+                    ):
+                        continue
                     terminal_identity = _read_terminal_identity(paths)
                     terminal = (
                         _terminal_process(terminal_identity)
@@ -893,11 +944,16 @@ def stop_orphaned_runtimes() -> int:
                     )
                     if terminal is not None and _process_alive(terminal):
                         continue
+                    deleted = _conversation_deleted(paths)
+                    if reservation is None and not claimed and not deleted:
+                        continue
                     if reservation is not None:
                         _revoke_launch(paths, reservation)
                     _stop_prime_runtime(paths)
                     if reservation is not None:
                         _launch_reservation_path(paths).unlink()
+                    if deleted:
+                        shutil.rmtree(entry)
                     _ACTIVE_RUNTIMES.discard(paths)
                     stopped += 1
             except (OSError, RuntimeError, subprocess.SubprocessError):
