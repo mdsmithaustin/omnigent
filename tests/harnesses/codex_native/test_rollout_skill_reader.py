@@ -56,9 +56,15 @@ def _rollout(tmp_path: Path) -> tuple[Path, RolloutSkillReader]:
 
 def test_appended_chunks_are_read_incrementally(tmp_path: Path) -> None:
     path, reader = _rollout(tmp_path)
-    _append(path, [*_turn_rows("t1"), _skill_row("skill-a", "A")])
+    _append(path, _turn_rows("t1"))
+    skill_offset = path.stat().st_size
+    _append(path, [_skill_row("skill-a", "A")])
+    consumed_size = path.stat().st_size - skill_offset
     assert _ids(reader.read_turn_skills("t1", None)) == ["skill-a"]
 
+    with path.open("r+b") as stream:
+        stream.seek(skill_offset)
+        stream.write(b"!" * (consumed_size - 1) + b"\n")
     _append(path, [_reply_row("call-1"), _skill_row("skill-b", "B")])
     assert _ids(reader.read_turn_skills("t1", None)) == ["skill-a", "skill-b"]
 

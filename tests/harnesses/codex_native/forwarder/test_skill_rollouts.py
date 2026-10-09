@@ -300,7 +300,11 @@ async def test_rollout_skill_rejections_do_not_consume_identity_or_overtake_repl
     tmp_path: Path,
 ) -> None:
     original = _skill("Keep me across a rejected delivery.")
-    _rollout(tmp_path, [*_start("turn-1"), _response(original, "skill")])
+    path = _rollout(tmp_path, _start("turn-1"))
+    skill_offset = path.stat().st_size
+    with path.open("a") as stream:
+        stream.write(json.dumps(_response(original, "skill")) + "\n")
+    consumed_size = path.stat().st_size - skill_offset
 
     class RejectOnce(_RecordingClient):
         async def post(self, url, *, json, timeout=None):
@@ -319,10 +323,17 @@ async def test_rollout_skill_rejections_do_not_consume_identity_or_overtake_repl
     assert [message["item_data"]["content"][0]["text"] for message in _messages(client)] == [
         "$orchard"
     ]
+    with path.open("r+b") as stream:
+        stream.seek(skill_offset)
+        stream.write(b"!" * (consumed_size - 1) + b"\n")
+    later = _skill("Instructions appended before retry.")
+    with path.open("a") as stream:
+        stream.write(json.dumps(_response(later, "later-skill")) + "\n")
     await _complete(client, state, tmp_path, "turn-1", reply)
     assert [message["item_data"]["content"][0]["text"] for message in _messages(client)] == [
         "$orchard",
         original,
+        later,
         "READY",
     ]
 
