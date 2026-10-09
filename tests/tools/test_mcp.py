@@ -883,6 +883,18 @@ def test_is_connection_error_connection_reset() -> None:
     assert _is_connection_error(ConnectionResetError()) is True
 
 
+def test_is_connection_error_unwraps_transport_exception_group() -> None:
+    """
+    A reconnect during an outage raises the transport's task-group error.
+    It is a connection error only when every leaf is one.
+    """
+    connect_error = httpx.ConnectError("refused")
+    outage = ExceptionGroup("outage", [connect_error])  # noqa: F821
+    assert _is_connection_error(outage) is True
+    mixed = ExceptionGroup("mixed", [connect_error, ValueError("bad arguments")])  # noqa: F821
+    assert _is_connection_error(mixed) is False
+
+
 def test_is_connection_error_mcp_connection_closed() -> None:
     """
     McpError with CONNECTION_CLOSED code is classified as a

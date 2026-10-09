@@ -1596,6 +1596,9 @@ def _is_connection_error(exc: BaseException) -> bool:
     """
     if isinstance(exc, _CONNECTION_ERROR_TYPES):
         return True
+    # A reconnect during an outage surfaces the transport's task-group error.
+    if isinstance(exc, BaseExceptionGroup):  # noqa: F821 — Python >=3.12
+        return all(_is_connection_error(inner) for inner in exc.exceptions)
     if isinstance(exc, McpError):
         if exc.error.code == CONNECTION_CLOSED:
             return True
@@ -1742,9 +1745,9 @@ async def _call_tool_with_reconnect(
                 await conn._reconnect()
                 needs_reconnect = False
             session, lifecycle = conn._session, conn._lifecycle_task
-            assert session is not None and lifecycle is not None, (
-                "reconnect completed without a session"
-            )
+            if session is None or lifecycle is None:
+                # The replacement lifecycle ended before this attempt started.
+                raise McpError(ErrorData(code=CONNECTION_CLOSED, message="Connection closed"))
             conn._active_session_id = session_id
             # Scope the unhealthy-transport signal to this attempt:
             # bumping the serial invalidates recordings from any
