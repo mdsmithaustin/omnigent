@@ -268,12 +268,9 @@ transport without provider credentials. The ordinary drive's finalizer enumerate
 global process candidates and reads process environments. Do not run the drive
 when that inspection is prohibited.
 
-[Doctor mode](../.agents/skills/verify-prime-native/SKILL.md#doctor) runs isolated
-public metadata checks and returns before process discovery, reaping, shutdown,
-or runtime log copying. Native help uses the current Python interpreter with
-`python -m omnigent prime-native --help` in the selected checkout. Doctor success
-proves metadata prerequisites only. It does not qualify a native turn, provider
-login, daemon readiness, package completeness, or whole-descendant settlement.
+For isolated public metadata checks, follow
+[Doctor mode](../.agents/skills/verify-prime-native/SKILL.md#doctor) for commands,
+receipts, privacy limits, and the bounds of its prerequisite proof.
 
 ```sh
 uv sync --group dev

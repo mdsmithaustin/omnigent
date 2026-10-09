@@ -22,7 +22,7 @@ The helper starts a local Omnigent API server and drives `omnigent prime-native`
 
 Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that Prime loaded the extension and reached the model endpoint. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
 
-The default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. The helper prints its evidence directory. A nonzero exit or any `FAIL` record means the scenario failed. A missing native command is a failed prerequisite.
+The drive's default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. The helper prints its evidence directory. A nonzero exit or any `FAIL` record means the scenario failed. A missing native command is a failed prerequisite.
 
 ## Doctor
 
@@ -35,9 +35,18 @@ with `python -m omnigent` in the selected checkout. Doctor resolves an explicit
 `OMNIGENT_PRIME_PATH` fallback and global process-environment cleanup, so do not
 run the drive when that inspection is prohibited.
 
-Inspect `doctor.json` for each attempted metadata check and `manifest.json` for
-the final exit status. A failed command or timeout exits nonzero and retains
-Doctor scratch for diagnosis. Success removes that scratch. Missing receipts
+Each metadata command has a 30-second timeout and must exit zero. Require exact
+`0.9.6` from `prime-agent --version`, `model` in `prime-agent --help`,
+`List available models` in `prime-agent model list --help`, and `--server` in
+native help.
+
+Inspect the `checks` list in `doctor.json` for each attempted metadata check and
+`manifest.json` for the final exit status. Diagnostic text files retain at most
+32,768 characters from each of stdout and stderr, including partial timeout
+output. If writing that diagnostic fails, `output_write_error` records the write
+failure separately from the process `outcome`, and Doctor exits nonzero.
+A failed command or timeout exits nonzero and retains Doctor scratch for
+diagnosis. Success removes that scratch. Missing receipts
 cannot establish success. Direct metadata child timeout handling does not prove
 whole-descendant settlement. Doctor success proves metadata prerequisites only,
 not a native turn, provider login, daemon readiness, or package completeness.
@@ -46,7 +55,8 @@ not a native turn, provider login, daemon readiness, or package completeness.
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent --doctor
 ```
 
-Require the checkout path, Prime version, native CLI help, and model command support. The helper checks the actual binary. A nonzero exit means the instance is not ready for the mapped drive. Doctor success proves prerequisites only.
+Require the checkout path and metadata outcomes in the fresh receipts. The helper
+checks the actual binary. A nonzero exit fails Doctor.
 
 ## Drive
 
