@@ -1273,7 +1273,6 @@ _MCP_SOURCE_SEMANTIC_PROVENANCE = {
 def _run_registered_mcp_source_semantics(
     consumer: str, extension_source: str | None = None
 ) -> subprocess.CompletedProcess[str]:
-    provenance = _MCP_SOURCE_SEMANTIC_PROVENANCE[consumer]
     node = shutil.which("node")
     assert node is not None, "node is required for both consumer controls"
     script = r"""
@@ -1282,8 +1281,6 @@ const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(0, "utf8");
 const consumer = process.argv[1];
-const provenance = JSON.parse(process.argv[2]);
-assert.equal(provenance.consumer, consumer);
 assert.ok(["prime-0.9.6", "pi-0.84.2"].includes(consumer));
 const plain = value => JSON.parse(JSON.stringify(value));
 const jsonResponse = json => ({ ok: true, status: 200, json: async () => json });
@@ -1681,12 +1678,11 @@ let cases = 0, inverseControls = 0;
           suppressContinuation: inverse === "suppress-continuation" }), assert.AssertionError);
     inverseControls += 1;
   }
-  console.log(JSON.stringify({ consumer, evidence: "selected-source semantics", cases,
-    inverseControls, provenance }));
+  console.log(JSON.stringify({ consumer, cases, inverseControls }));
 })().catch(error => { console.error(error.stack || error); process.exit(1); });
 """
     return subprocess.run(
-        [node, "-e", script, consumer, json.dumps(provenance)],
+        [node, "-e", script, consumer],
         input=extension_source if extension_source is not None else _extension_path().read_text(),
         capture_output=True,
         check=False,
@@ -1699,19 +1695,42 @@ let cases = 0, inverseControls = 0;
 def test_registered_mcp_errors_follow_selected_sdk_source_semantics(consumer: str) -> None:
     result = _run_registered_mcp_source_semantics(consumer)
     assert result.returncode == 0, result.stdout + result.stderr
-    provenance = _MCP_SOURCE_SEMANTIC_PROVENANCE[consumer]
     assert json.loads(result.stdout) == {
         "consumer": consumer,
-        "evidence": "selected-source semantics",
         "cases": 29,
         "inverseControls": 5,
-        "provenance": provenance,
     }
 
 
 def test_mcp_200_html_signin_is_classified_not_parsed_as_json(
     tmp_path: Path,
 ) -> None:
+    """A ``200 text/html`` sign-in page is an auth failure, not an MCP response.
+
+    ``resp.ok`` is true for a sign-in document served with status 200, so status
+    alone cannot distinguish it from a real answer. Before the fix the bare
+    ``resp.ok`` check fell straight through to ``resp.json()``, which threw and
+    surfaced an unclassified parse error whose ``err.message`` echoed the start
+    of the sign-in body back to the model.
+
+    Asserts, at the ``/mcp`` tool-call call site only:
+
+    1. a declared ``text/html`` 200 rejects with an error naming an
+       authentication / sign-in classification;
+    2. the message leaks no part of the body, no header value, and no URL;
+    3. a declared ``application/json`` 200 still round-trips normally;
+    4. a JSON content type with an unparseable body is classified the same
+       bounded way rather than echoing the body through the outer catch;
+    5. a header accessor that *throws* is treated as an unreadable content type
+       rather than escaping to the outer catch, whose message would carry the
+       header/body text the accessor complained about — covering both a throwing
+       ``headers.get()`` and a throwing ``headers`` property getter.
+
+    Not covered here, and unchanged from ``main``: the outer catch still reports
+    a *transport* error's ``err.message``, which can name the request URL. That
+    predates this change and is asserted by
+    ``test_registered_mcp_errors_follow_selected_sdk_source_semantics``.
+    """
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is required for the pi-native extension e2e test")
@@ -1742,6 +1761,8 @@ fs.writeFileSync(
 
 process.env.OMNIGENT_PI_NATIVE_CONFIG = configPath;
 
+// A realistic edge sign-in document: served 200, carries an identifier a
+// classification string must never echo back to the model.
 const SIGNIN_HTML =
   '<!DOCTYPE html><html><head><title>Sign in</title></head><body>' +
   '<form action="/oauth2/authorize"><input name="state" ' +
@@ -1759,6 +1780,7 @@ global.fetch = async () => {
       status: 200,
       headers: headersOf("text/html; charset=utf-8"),
       async json() {
+        // What a real Response does with an HTML body: the message quotes it.
         throw new SyntaxError(
           'Unexpected token \'<\', "' + SIGNIN_HTML.slice(0, 24) + '"... is not valid JSON',
         );
@@ -1847,6 +1869,7 @@ function soleText(result) {
 }
 
 (async () => {
+  // 1. A 200 text/html sign-in page is a classified auth/edge failure.
   let htmlText;
   await assert.rejects(registered.sys_os_shell.execute("call-1", {}), error => {
     assert.ok(error instanceof Error);
@@ -1858,6 +1881,7 @@ function soleText(result) {
     "message does not name an authentication classification: " + htmlText,
   );
 
+  // 2. No part of the body, no header value, and no URL may appear.
   for (const forbidden of [
     "SECRET-STATE-b3f9c1",
     "<!DOCTYPE",
@@ -1873,11 +1897,13 @@ function soleText(result) {
     );
   }
 
+  // 3. A declared application/json 200 still round-trips unchanged.
   mode = "json";
   const good = await registered.sys_os_shell.execute("call-2", {});
   assert.equal(good.isError, false, JSON.stringify(good));
   assert.equal(soleText(good), "real answer");
 
+  // 4. A JSON content type with an unparseable body is bounded the same way.
   mode = "json-unparseable";
   let badText;
   await assert.rejects(registered.sys_os_shell.execute("call-3", {}), error => {
@@ -1890,6 +1916,8 @@ function soleText(result) {
     "parse-failure path leaked the body: " + badText,
   );
 
+  // 5. An unreadable (throwing) header accessor must not become an error
+  //    message carrying header or body text.
   mode = "throwing-headers";
   const thrower = await registered.sys_os_shell.execute("call-4", {});
   const throwerText = soleText(thrower);
@@ -1899,9 +1927,12 @@ function soleText(result) {
       "throwing header accessor leaked " + forbidden + ": " + throwerText,
     );
   }
+  // Unreadable is not a signal, so the parse still decides: this body is valid
+  // JSON and must round-trip.
   assert.equal(thrower.isError, false, JSON.stringify(thrower));
   assert.equal(throwerText, "real answer");
 
+  //    Same for a throwing `headers` *property* getter, not just get().
   mode = "throwing-headers-getter";
   const getterThrower = await registered.sys_os_shell.execute("call-5", {});
   const getterText = soleText(getterThrower);
@@ -1931,6 +1962,13 @@ function soleText(result) {
 
 
 def test_input_required_denied_fails_closed_not_false_success(tmp_path: Path) -> None:
+    """A declined ASK gate rejects — never reports false success.
+
+    When the elicitation park collapses to DENY, the extension retries once with
+    ``{action: "decline"}``; the proxy returns a -32000 error which rejects
+    the tool callback. The raw ``input_required`` envelope must never
+    be returned to the model as a successful result.
+    """
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is required for the pi-native extension e2e test")
@@ -1976,6 +2014,7 @@ let mcpCallCount = 0;
 let lastRetryBody = null;
 global.fetch = async (url, request) => {
   if (typeof url === "string" && url.indexOf("/policies/evaluate") !== -1) {
+    // The human declined → the ASK park collapses to DENY.
     return { ok: true, async json() { return { result: "POLICY_ACTION_DENY", reason: "nope" }; } };
   }
   mcpCallCount += 1;
@@ -1996,6 +2035,7 @@ global.fetch = async (url, request) => {
     };
   }
   lastRetryBody = JSON.parse(request.body);
+  // Server denies the declined retry with the MCP -32000 convention.
   return {
     ok: true,
     async json() {

@@ -2148,12 +2148,20 @@ async def test_cancelled_reconnect_drain_preserves_discovery(method: str) -> Non
             assert conn._active_session_id is None
             assert not conn._call_lock.locked()
             conn.config.retry = RetryPolicy(max_retries=0)
-            follower = asyncio.create_task(getattr(conn, method)("echo", {}))
-            await asyncio.sleep(0.01)
-            assert not follower.done()
-            assert [request[0] for request in sdk.requests] == [1]
-            release.set()
-            assert await asyncio.wait_for(follower, 2) == "generation-2"
+            reconnecting = asyncio.Event()
+            close_lifecycle = conn._close_lifecycle
+
+            async def observe_drain() -> None:
+                reconnecting.set()
+                await close_lifecycle()
+
+            with patch.object(conn, "_close_lifecycle", side_effect=observe_drain):
+                follower = asyncio.create_task(getattr(conn, method)("echo", {}))
+                await asyncio.wait_for(reconnecting.wait(), 2)
+                assert not follower.done()
+                assert [request[0] for request in sdk.requests] == [1]
+                release.set()
+                assert await asyncio.wait_for(follower, 2) == "generation-2"
             assert [request[0] for request in sdk.requests] == [1, 2]
             assert owner is not None and owner.done() and not owner.cancelled()
             assert sdk.starts == 2 and sdk.peak_active == 1
