@@ -306,10 +306,11 @@ class RolloutSkillReader:
     """
     Reads the skill-instruction rows Codex appends to one thread's rollout.
 
-    Each :meth:`read_turn_skills` call parses only the bytes appended since the
-    previous call, and the resolved rollout path is kept. Reading an earlier
-    stop row, an earlier turn, or a truncated or replaced file rescans the
-    affected range, so results equal a full parse of the file.
+    For an append-only rollout, successive reads of the same turn resume at
+    the first unconsumed line, and the resolved rollout path is kept. Reading
+    an earlier stop row or a previously indexed turn rescans that turn. File
+    truncation or replacement resets the scan; in-place edits to consumed
+    bytes are not detected.
 
     :param codex_home: The session's private ``CODEX_HOME``.
     :param thread_id: Codex thread id, e.g. ``"019e96aa-0be2-7343-8d3b-6f914d60936b"``.
