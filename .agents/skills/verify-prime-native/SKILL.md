@@ -26,17 +26,21 @@ The default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. Th
 
 ## Doctor
 
-Doctor checks prerequisites and skips the scenario drive. It is not read-only.
-`main()` always enters its finalizer, including after doctor or a failed prerequisite.
-The finalizer calls `reap_leaked_omnigent_processes` and `owned_prime_processes`.
-Both enumerate global process candidates and read process environments before
-attributing ownership. Matched processes can receive terminate and kill signals,
-and the helper removes its scratch directory.
+Doctor runs bounded public version and help commands in fresh private HOME,
+TMPDIR, application configuration, data, and Prime agent directories. It returns
+before runtime allocation and cleanup, without process discovery, reaping,
+shutdown, or runtime log copying. Native help uses the executing interpreter
+with `python -m omnigent` in the selected checkout. Doctor resolves an explicit
+`--prime-path` or the literal `prime-agent` command name. The drive retains its
+`OMNIGENT_PRIME_PATH` fallback and global process-environment cleanup, so do not
+run the drive when that inspection is prohibited.
 
-This existing cleanup limitation prevents verification under a restriction on
-global process-environment inspection. Under that restriction, do not run
-`verify.py`, including `--doctor`. Doctor success proves prerequisites only,
-not a read-only operation or a native turn.
+Inspect `doctor.json` for each attempted metadata check and `manifest.json` for
+the final exit status. A failed command or timeout exits nonzero and retains
+Doctor scratch for diagnosis. Success removes that scratch. Missing receipts
+cannot establish success. Direct metadata child timeout handling does not prove
+whole-descendant settlement. Doctor success proves metadata prerequisites only,
+not a native turn, provider login, daemon readiness, or package completeness.
 
 ```sh
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent --doctor
@@ -72,7 +76,7 @@ The helper deletes its owned scratch session through the public API while the se
 
 ## Helpers
 
-`scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` skips the drive but still runs the [unconditional finalizer](#doctor). `--expected WRONG` supplies a negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
+`scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` runs only the [metadata checks](#doctor). `--expected WRONG` supplies a drive negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
 
 `--inspect-seconds 120` retains the live session for two minutes after the assertions, then runs cleanup. The helper prints the exact conversation URL. The API server skips the bundled web UI. To inspect the conversation in a browser, run the repository's Vite development server with `OMNIGENT_URL` set to that API server's origin. Evidence and assertions remain the same.
 

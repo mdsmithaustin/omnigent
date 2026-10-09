@@ -22,7 +22,7 @@ Prime 0.9.6 binary. Deliberately missing-executable and controlled unsupported-v
 checks use separate isolated configuration, data, workspace, and server allocations.
 They do not require a working Prime binary at the selected path.
 
-- For positive prerequisites, require exact `0.9.6` from `prime-agent --version` and successful `omnigent prime-native --help`. A nonzero exit or missing expected output fails. These commands do not prove a turn. The helper's [doctor finalizer](../SKILL.md#doctor) performs global process-environment discovery even when the drive is skipped. Do not invoke the helper when that inspection is prohibited.
+- For positive prerequisites, require exact `0.9.6` from `prime-agent --version` and successful `omnigent prime-native --help`. A nonzero exit or missing expected output fails. These commands do not prove a turn. The helper's [Doctor mode](../SKILL.md#doctor) runs isolated metadata checks without runtime discovery or cleanup. Its ordinary drive still performs global process-environment discovery and must not run when that inspection is prohibited.
 - Run `prime-agent model list` with isolated Prime configuration. Require its known table columns when models exist. Distinguish Prime's recognized empty-catalog response from a failed command or malformed output.
 - Launch with a fixture provider and model. Read the session's model options and active model after extension readiness. Require the selected provider/model ID.
 - For the missing-executable case, set `OMNIGENT_PRIME_PATH` to a deliberately absent absolute path and use the public `omnigent prime-native --server <owned URL>` command. Require exit 1 and the exact missing-binary diagnostic below.

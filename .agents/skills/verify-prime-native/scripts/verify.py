@@ -10,6 +10,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,30 +27,113 @@ PONG = "PRIME_NATIVE_PONG"
 
 
 def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
-    results = {}
+    checks: list[dict[str, object]] = []
+    results: dict[str, object] = {
+        "checkout": str(REPO),
+        "interpreter": sys.executable,
+        "python_version": sys.version,
+        "prime_binary": str(Path(prime).resolve()),
+        "checks": checks,
+    }
     for name, argv, required in (
         ("prime-version", [prime, "--version"], "0.9.6"),
         ("prime-help", [prime, "--help"], "model"),
         ("prime-model-help", [prime, "model", "list", "--help"], "List available models"),
-        ("native-help", [str(REPO / ".venv/bin/omnigent"), "prime-native", "--help"], "--server"),
+        ("native-help", [sys.executable, "-m", "omnigent", "prime-native", "--help"], "--server"),
     ):
-        result = subprocess.run(
-            argv, env=env, cwd=REPO, capture_output=True, text=True, timeout=30
+        check: dict[str, object] = {"name": name, "argv": argv, "required": required}
+        checks.append(check)
+        try:
+            result = subprocess.run(
+                argv, env=env, cwd=REPO, capture_output=True, text=True, timeout=30
+            )
+            valid_output = (
+                result.stdout.strip() == required
+                if name == "prime-version"
+                else required in result.stdout
+            )
+            check["exit"] = result.returncode
+            check["outcome"] = (
+                "nonzero-exit"
+                if result.returncode
+                else "passed"
+                if valid_output
+                else "missing-marker"
+            )
+            if check["outcome"] != "passed":
+                raise RuntimeError(f"Doctor failed for {name}, {check['outcome']}")
+            (evidence / f"{name}.txt").write_text(result.stdout)
+        except subprocess.TimeoutExpired:
+            check["outcome"] = "timeout"
+            raise
+        except OSError:
+            check["outcome"] = "os-error"
+            raise
+        finally:
+            (evidence / "doctor.json").write_text(json.dumps(results, indent=2))
+    revision_argv = ["git", "rev-parse", "HEAD"]
+    revision_check: dict[str, object] = {"argv": revision_argv}
+    results["revision_check"] = revision_check
+    try:
+        results["revision"] = subprocess.check_output(
+            revision_argv, cwd=REPO, env=env, text=True, timeout=30
+        ).strip()
+        revision_check.update({"exit": 0, "outcome": "passed"})
+    except subprocess.CalledProcessError as exc:
+        revision_check.update({"exit": exc.returncode, "outcome": "nonzero-exit"})
+        raise
+    except subprocess.TimeoutExpired:
+        revision_check["outcome"] = "timeout"
+        raise
+    except OSError:
+        revision_check["outcome"] = "os-error"
+        raise
+    finally:
+        (evidence / "doctor.json").write_text(json.dumps(results, indent=2))
+
+
+def run_doctor(prime_path: str) -> int:
+    evidence = Path(tempfile.mkdtemp(prefix="prime-native-verify-", dir="/tmp"))
+    scratch = Path(tempfile.mkdtemp(prefix="prime-native-doctor-", dir="/tmp"))
+    status = 1
+    try:
+        env = {"PATH": os.defpath, "TERM": "xterm-256color", "BROWSER": "false"}
+        for key, directory in (
+            ("HOME", "home"),
+            ("TMPDIR", "tmp"),
+            ("OMNIGENT_CONFIG_HOME", "config"),
+            ("OMNIGENT_DATA_DIR", "data"),
+            ("PRIME_AGENT_CODING_AGENT_DIR", "prime"),
+            ("XDG_CONFIG_HOME", "xdg-config"),
+            ("XDG_DATA_HOME", "xdg-data"),
+            ("XDG_CACHE_HOME", "xdg-cache"),
+        ):
+            path = scratch / directory
+            path.mkdir()
+            env[key] = str(path)
+        prime = shutil.which(prime_path)
+        if prime is None:
+            raise RuntimeError("The requested Prime binary is unavailable")
+        doctor(prime, evidence, env)
+        shutil.rmtree(scratch)
+        status = 0
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        (evidence / "failure.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+        print(f"FAIL {exc}")
+    (evidence / "manifest.json").write_text(
+        json.dumps(
+            {
+                "exit": status,
+                "doctor_only": True,
+                "evidence": str(evidence),
+                "scratch": str(scratch),
+                "scratch_removed": not scratch.exists(),
+            },
+            indent=2,
         )
-        (evidence / f"{name}.txt").write_text(result.stdout + result.stderr)
-        valid_output = (
-            result.stdout.strip() == required
-            if name == "prime-version"
-            else required in result.stdout
-        )
-        if result.returncode or not valid_output:
-            raise RuntimeError(f"Doctor failed for {name}, exit {result.returncode}")
-        results[name] = {"argv": argv, "exit": result.returncode}
-    results["checkout"] = str(REPO)
-    results["revision"] = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
-    ).strip()
-    (evidence / "doctor.json").write_text(json.dumps(results, indent=2))
+    )
+    print(f"Evidence {evidence}")
+    return status
 
 
 def wait_for(check, description: str, timeout: float = 90):
@@ -437,14 +521,19 @@ def main() -> int:
     global REPO
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=REPO)
-    parser.add_argument(
-        "--prime-path", default=os.environ.get("OMNIGENT_PRIME_PATH", "prime-agent")
-    )
+    parser.add_argument("--prime-path")
     parser.add_argument("--doctor", action="store_true")
     parser.add_argument("--expected", default=PONG)
     parser.add_argument("--inspect-seconds", type=int, choices=(0, 60, 120), default=0)
     args = parser.parse_args()
     REPO = args.repo.resolve()
+    if args.doctor:
+        return run_doctor(args.prime_path or "prime-agent")
+    prime_path = (
+        args.prime_path
+        if args.prime_path is not None
+        else os.environ.get("OMNIGENT_PRIME_PATH", "prime-agent")
+    )
     evidence = Path(tempfile.mkdtemp(prefix="prime-native-verify-", dir="/tmp"))
     runtime = Path(tempfile.mkdtemp(prefix="prime-native-runtime-", dir="/tmp"))
     env = dict(os.environ)
@@ -461,7 +550,7 @@ def main() -> int:
         (runtime / name).mkdir()
     status = 1
     try:
-        prime = shutil.which(args.prime_path)
+        prime = shutil.which(prime_path)
         if prime is None:
             raise RuntimeError("The requested Prime binary is unavailable")
         doctor(prime, evidence, env)
