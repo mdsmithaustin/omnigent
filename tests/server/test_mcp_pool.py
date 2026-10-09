@@ -23,12 +23,14 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import pytest
 from mcp.types import Tool as McpToolDef
 
 from omnigent.server import mcp_pool as _mcp_pool_module
 from omnigent.server.mcp_pool import McpToolEntry, ServerMcpPool
 from omnigent.spec.types import AgentSpec, MCPServerConfig
+from tests.tools.test_mcp import controlled_mcp_lifecycle, recovery_config
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -544,3 +546,37 @@ async def test_lru_evicts_least_recently_used_at_capacity(
     )
 
     await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_retained_server_pool_connection_recovers_after_exhausted_replacement() -> None:
+    spec = _make_spec(recovery_config())
+    with controlled_mcp_lifecycle() as sdk:
+        pool = ServerMcpPool()
+        try:
+            assert (
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "before"})
+                == "generation-1"
+            )
+            connection = pool._entries["agent"].servers["recovery"].connection
+            sdk.online = False
+            with pytest.raises(httpx.ConnectError, match="server offline"):
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "outage"})
+            sdk.online = True
+            sdk.generation = 2
+            assert (
+                await pool.call_tool("agent", spec, "recovery", "echo", {"nonce": "after"})
+                == "generation-2"
+            )
+            assert pool._entries["agent"].servers["recovery"].connection is connection
+            assert [entry.tool.name for entry in await pool.list_tools("agent", spec)] == ["echo"]
+            assert sdk.requests == [
+                (1, "echo", {"nonce": "before"}),
+                (1, "echo", {"nonce": "outage"}),
+                (2, "echo", {"nonce": "after"}),
+            ]
+            assert sdk.starts == 4
+        finally:
+            await pool.shutdown_all()
+        assert sdk.active == 0
+        assert sdk.peak_active == 1

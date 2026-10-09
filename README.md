@@ -596,6 +596,10 @@ See the [policy guide](https://github.com/omnigent-ai/omnigent/blob/main/docs/PO
 ## Write your own agent
 
 For Prime Agent's terminal integration, see [Prime Native](docs/PRIME_NATIVE.md).
+The guide records the qualified regular HTTP MCP reconnect case, the earlier
+finite-wait qualification, and the [remaining roadmap](docs/PRIME_NATIVE.md#remaining-roadmap).
+For declared MCP recovery and retry limits, see the
+[agent specification](docs/AGENT_YAML_SPEC.md#mcp-recovery-and-retries).
 
 An agent is a short YAML file: your prompt, your tools — local Python
 functions, MCP servers, and sub-agents a supervisor can delegate to. You don't

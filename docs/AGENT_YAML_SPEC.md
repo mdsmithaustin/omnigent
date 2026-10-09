@@ -595,6 +595,54 @@ tools:
       Authorization: Bearer ${TOKEN}
 ```
 
+#### MCP recovery and retries
+
+After a connection initializes and discovers tools successfully, later calls
+can reconnect after a transport failure, even if an earlier call exhausted its
+replacement attempts. An empty discovered tool list counts as successful
+initialization. Internal teardown retains that recovery admission. Explicit
+`close()` revokes it, and calls then require another successful `connect()`.
+A connection that never initialized successfully does not implicitly retry
+initialization through a tool call. The ordinary-call circuit breaker still
+applies and can reject a call before recovery.
+
+Both ordinary calls and elicitation-response calls, or MRTR calls, use the
+current SDK session for every attempt. MRTR resends the original arguments,
+opaque `inputResponses`, and `requestState`, including an empty state. Inline
+elicitation callbacks use the current calling Omnigent session. Retries remain
+at-least-once. They cannot restore approval state lost by a restarted MCP server
+or guarantee exactly-once execution.
+
+On each connection, `connect()`, `close()`, and whole logical calls are
+serialized, including retries. Cancelling a startup waiter leaves shared
+readiness intact. A later eligible caller joins the pending startup before
+invoking a tool. Once teardown starts, a cancelled caller retains the lock until
+resource cleanup finishes, then raises cancellation. Cancellation before
+`close()` acquires the lock does not close the connection. Recovery adds no
+deadline beyond configured SDK and transport timing. A stalled transport exit
+can therefore delay cancellation and subsequent calls.
+
+The runner's session MCP endpoint returns HTTP 400 with code `-32700` for
+invalid JSON. Body-read failures return a sanitized HTTP 500 and propagate
+for server logging. Cancellation still propagates.
+The endpoint accepts one JSON object. Other valid JSON values return HTTP 200
+with code `-32600` and message `Invalid Request` in the existing partial error
+envelope. It does not implement batches or require full JSON-RPC framing.
+For `tools/call`, non-null `params` must be an object. Other values, including
+`false`, `0`, and `[]`, return HTTP 200 with code `-32602` and message
+`Invalid params`. Absent, null, and empty-object params retain their defaults.
+Schema-discovery failures return HTTP 200 with code `-32000` and a generic
+client message. The runner logs retain the cause.
+
+These connection rules apply to both
+[`RunnerMcpManager`](../omnigent/runner/mcp_manager.py) and
+[`ServerMcpPool`](../omnigent/server/mcp_pool.py). The runner's MRTR route forwards
+the existing `session_id` when it resends an elicitation response. Declarations
+and configuration syntax are unchanged. Prime Native's
+[qualification record](../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+covers one real regular HTTP case. Actual MRTR recovery and stdio restart remain
+outside that measured case.
+
 ### Python function tool
 
 ```yaml

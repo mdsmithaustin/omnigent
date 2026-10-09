@@ -79,6 +79,34 @@ PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scr
 
 Require exit zero, `VERIFIED final`, every required scenario marked `VERIFIED`, and an empty `fatal` list in `outcomes.json`. Inspect `artifact.json` for imported source paths and the exact runtime. Each scenario records its public actions and literal observations. Inspect those records, the terminal transcripts, model requests, tool results, native compaction entry, child side effect, `cleanup.json`, and `final-report.md`. Require no owned survivors, forced cleanup, or cleanup errors.
 
+The existing `mcp_tool` scenario runs three independent calls against one
+stateless HTTP endpoint. It records a generation-1 success, stops and reaps that
+child, and waits for a completed native outage error with no server invocation.
+Only then does it start generation 2 and require a fresh successful call.
+Compare the before and after witnesses with their phase captures. Each successful
+call must have one row in its generation ledger. Require exact native, public,
+Chat Completions continuation, and server result text with matching call IDs.
+For `mcp-outage-witness.json`, require matching native, public, and Chat Completions
+error text and call IDs, plus native `isError: true`. Require no outage invocation
+or outage row in either generation ledger. Public outputs need no error flag.
+The declared `call_id` argument supplies fixture correlation.
+It does not prove the SDK execute callback ID or the JSON-RPC wire request ID.
+
+Inspect `mcp-continuity.json`. The existing count-42 object must advance to 43
+with the same token, object ID, socket ID, open descriptor, kernel, and selected
+root. Final continuity attempts after a phase failure preserve that first failure.
+Inspect `mcp-fixture-cleanup.json` for every allocated generation, including
+partial starts. Require exited children, closed outputs, a refused endpoint, and
+empty errors. The model server must close and its thread must join.
+
+The phase catalog records show actual proxy listing and model advertisement.
+Explicit unavailable and restored readiness remain `NOTOBSERVED`, so original
+N19 remains partial. This case does not qualify stateful MCP sessions, stdio,
+MRTR or approval recovery, other providers, or all 31 requirements. Both the
+outer runtime scratch and the evidence directory remain retained. Their paths
+appear in `cleanup.json` and the printed report. Clean process settlement does
+not prove outer scratch removal.
+
 `reattach.json` keeps the run-wide process census under `raw` and the requested conversation's private root under `selected`. Require the selected before and after records to match, including the binding, native session ID, and TUI, supervisor, worker, and kernel process identities. Unrelated Prime helper churn in `raw` does not change this result. `cleanup.json` records the exact owned host registry and `omnigent host stop --server <owned URL> --daemon-only` invocation. Require successful session DELETE statuses, a successful qualified host stop, `forced_native_fallback: false`, an empty `final_owned_census`, no cleanup errors, and copied owned logs for diagnosis. The final census rechecks identities seen at launch as well as a fresh exact-root scan, so an initially observed process that becomes unlisted still blocks a clean result while alive.
 
 `source-before.json` and `source-after.json` independently inventory tracked and nonignored untracked regular files under `omnigent`, the probe drivers, and the environment package files. `source-integrity.json` must contain empty added, removed, and changed lists. A source drift, missing import origin, or finalization failure prevents `VERIFIED` even when every behavioral scenario passed. `launch-witnesses.json` records the actual child commands, working directories, checkout-selecting environment, and PIDs. Those records are separate from the probe process's import witnesses. `deployed-extension-identities.json` compares the live extension bytes with the packaged source. Require each recorded identity to match.
@@ -90,7 +118,9 @@ The final `manifest.json` hashes the retained evidence. `--production-ready` rec
 Run each negative control separately by adding one of these options to the same command:
 
 - `--expected-tool WRONG` must exit 1 at the literal Python memory-read mismatch.
-- `--expected-mcp WRONG` must exit 1 at the literal declared MCP-result mismatch.
+- `--expected-mcp WRONG` must exit 1 at `mcp tool result differs` after the real
+  first invocation validates its generation-bound envelope. It compares the
+  literal value field and still requires clean owned cleanup.
 - `--expected-side-effect present` must exit 1 because the denied write's marker is absent.
 
 Require the named mismatch in the failed scenario and zero owned survivors in each run. An earlier failure or a missing tool does not qualify the control. The default probe stops at the intended mismatch and still performs cleanup.
@@ -248,64 +278,80 @@ could precede mandatory finalization. Preserve the receipt as evidence for those
 bytes, not proof of the repaired contract. The earlier
 `provider-waits-ug3ppd91` run remains FAILED at pane idle cleanup.
 
+The later parent run `provider-waits-gkknmv6b` passed all five cases at revision
+`afe870ce93c9df8bccfa88be13bb54c39d64e5ae`. Its independent audit passed 2,616
+assertions over 309 child artifacts and 897 selected source files, with all 72
+recorded owned process identities absent. It used the same historical provider
+driver hash and shares the prompt, outer-scratch, and publication limits above.
+Earlier failed runs remain FAILED. These finite-wait receipts precede the MCP and extension repair. No finite-wait
+rerun on those changed bytes is claimed. Changes to the probe, imported
+application source, or admitted runtime require fresh qualification.
+
 The prompt and ownership repair at `ecf1bb4824a28913377109cefc3107f018fdb21a`
 has an independent scoped source verdict of PASS+NOTES and synthetic controls.
 Its provider SHA256 is
 `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
-PR6's migrated MCP caller, fixture settlement, publisher, and owner pin belong
-to the separate reviewed candidate identified below. Fresh live WAIT and MCP
-qualification on final integrated bytes remains pending. Changes to the probe, imported application
-source, or admitted runtime require fresh qualification. Full S01-S04 and the
-31-requirement program remain incomplete.
+This private PR6 composition combines accepted PR6
+`1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
+`63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
+Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
+Those results describe the old PR6 context. Fresh independent source and
+documentation review of this composition remains required.
 
-The current PR5 provider helper at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8`
-has SHA256 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-It rejects every present native-final error, including empty lists, empty
-objects, false, zero, and whitespace-only strings. Only missing, null, and exact
-empty-string errors are absent. A successful stop reason and matching literal
-reply remain required. Independent source and documentation review passed at
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That verdict covers its recorded
-context. Fresh independent review of the current Main composition remains pending.
+The provider helper SHA256 remains
+`c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
+At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
+`b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
+The repaired helper SHA256 is
+`043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
+Its fixture close fallback reaps the exact registered child even when identity
+metadata capture fails. The original failure remains sticky.
+`OWNER_SHA256` admits that exact provider helper. Every present native-final
+error rejects, including empty containers, false, zero, and whitespace-only
+strings. Only missing, null, and exact empty-string errors are absent.
+A successful stop reason and matching literal reply remain required.
 
-The preceding provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
-had SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
-It matched the accepted provider-only repair at
-`57293032d4fe2f53bd4c688a14cac4e9fd41e930`. Its source verdict does not cover
-the current final-error admission repair.
-The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
-was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
-Its independent source review passed 925 repository cases and seven independent
-checks. Those results do not qualify the current PR5 context or runtime.
-Current Main includes the bootstrap repair that registers `prime-native` in the
-CLI dispatcher. Preserve the earlier failed registry receipt as historical
-evidence. Fresh composition checks and independent source and documentation
-review remain required. Runtime qualification and base-CI remain separate gates.
+The composition preserves PR6's paired root rejection and task-boundary tests.
+Relayed tools and task operations without a live root binding return a paired
+error result. They do not consume root controls or mutate the root task list.
+PR5's historical standalone 20-case root context does not replace this contract.
+Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
+854 context cases and 69 controls. The parent failed 21 controls and passed 48.
+These historical counts are unchanged and are not fresh composition results.
 
-Before this PR5 repair, the separate private PR6 candidate
-`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the exact accepted
-`98309e7c5136c3801bfd227e79289f2d62ed7915` tree. The repaired PR5 provider
-bytes differ from that historical tree. This does not establish current whole
-PR5 and PR6 tree identity.
-Its MCP helper SHA256 is
+The actual PR5 merge has the reviewed `fd2b0b4bbaf52cecf7bc34129ef6804c0fdd14c3`
+tree. It brings Main's bootstrap, CRDB, CLI registry, and agent-name index
+repairs, the OAuth prerequisite correction, and two literal-readiness waits.
+The earlier registry failure and Linux empty-readiness failure remain historical.
+Linux misc CI passed at fd2. That result does not qualify this new composition
+or any native runtime. The imported registry fix requires a fresh scoped check.
+No actual MCP call, provider acceptance, or fresh live WAIT qualification is
+claimed. Full S01-S04 and the 31-requirement program remain incomplete.
+
+The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
+exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
+base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`. Its 925 repository cases
+and seven independent checks are historical evidence for that composition.
+Its provider SHA256 was
+`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`,
+and its MCP SHA256 was
 `1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
-That helper is absent from this PR5 checkout. PR6 remains a separate required
-integration and qualification stage. PR5 production root behavior retains its
-own historical 20-pass context; it does not include PR6's root-rejection repair.
-Fresh final-byte WAIT and MCP receipts remain required in their respective stages.
+The provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
+matched `57293032d4fe2f53bd4c688a14cac4e9fd41e930`. These historical
+identities do not establish current PR5 and PR6 whole-tree identity or runtime
+qualification.
 
 The preceding provider SHA256 was
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
 The paired historical MCP SHA256 was
 `9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
 Their independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that private source context only.
-
-Historical MCP source review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that source context only.
+Historical MCP review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
 returned PASS+NOTES for MCP SHA256
 `b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
-That private historical record does not establish MCP implementation or admission
-on PR5. The separate PR6 candidate requires final integration review and fresh
-live MCP qualification after any source or context change.
+Fresh final-byte WAIT and MCP receipts remain required after source or context
+changes.
 
 The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
 remains FAILED. All five seed cases have false completion records and retained
@@ -332,6 +378,12 @@ is still unverified. The durable public Prime 0.9.6 installation has version and
 hash checks, but no successful model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
+
+A later sanitized basic-receipt review records the actual basic response as
+FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
+known PID/socket absence do not prove normal/full settlement, a successful
+response, exhaustive descendants, credential-source comparison, removal, or
+future custody. A successful model-response baseline remains unverified.
 
 For a failed native reply, inspect `<operation>-native-failure.json` separately
 from `<operation>-native-predicates.json`. The latter records
@@ -404,6 +456,114 @@ paths redacted. Each traversal permits at most 32 directory levels, 10000
 visits, and 30 seconds. Capture also limits total source bytes to 64 MiB.
 Exhaustion is a sticky failure. Cooperative namespace ownership remains required.
 These bounds and witnesses do not exclude a hostile same-user syscall race.
+
+## Qualify regular HTTP MCP reconnect
+
+`scripts/mcp_probe.py` drives one declared regular HTTP MCP tool through the
+real Prime terminal, Omnigent session proxy, and configured xAI Grok 4.7 provider.
+It owns a disposable two-generation MCP fixture. It does not replace the model
+provider or call the fixture directly to simulate a native tool invocation.
+
+Run from the checkout to qualify with its documented optional runtime dependencies
+installed. Supply the admitted full Prime 0.9.6 macOS arm64 bundle and a kernel
+environment containing the published Python runtime. Pass the environment's
+`bin/python` entry without resolving its symlink. Supply saved xAI subscription
+OAuth credentials through `--auth-source`, as required by the finite-wait
+workflow, and keep evidence private. Do not copy
+credential contents or raw provider payloads into public reports.
+Use `--cooperative-cleanup` only when you can admit the controlled namespace
+precondition in the finite-wait workflow above. Omission exits 2 before allocation.
+The flag does not exclude hostile same-UID writers in the final check/syscall window.
+
+```sh
+PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
+```
+
+Use the printed receipt path directly. Fresh runs place `result.json`,
+`manifest.json`, and `completion.json` in one `provider-mcp-*` directory under
+`--evidence-parent`, without the historical `runner-mcp-*` child directory.
+Require exit zero and `completion.json` with `passed: true`. Compare its
+`result_sha256` and `manifest_sha256` with SHA256 of the retained result and
+manifest bytes. Require no failure or finalization errors and all eight required
+claims `VERIFIED` in `result.json`. The required claims are `actual_provider`, `declared_tool`, `generation_1_success`,
+`completed_outage_error`, `generation_2_independent_success`,
+`selected_root_continuity`, `kernel_and_memory_continuity`, and `owned_cleanup`.
+A missing claim, non-`VERIFIED` claim, or nonzero exit fails qualification.
+Require empty cleanup errors, no owned survivors, private sockets, or credential
+copies, and `forced_native_fallback: false`. Also require
+`credential_copies_absent: true` and `runtime_removed: true` in `cleanup.json`.
+Result and manifest `qualified` values are provisional. No raw `passed` field
+in a result or fixture receipt authorizes success. Missing completion, false
+completion, or either mismatched hash fails qualification.
+
+Inspect the retained sequence in order:
+
+1. Match the deployed declared schema, generation-1 fixture ledger, native tool
+   result, and provider continuation to the exact expected literal.
+2. Confirm the fixture stopped and the endpoint refused connections. Require a
+   completed native tool result with `isError: true` and the exact prefix
+   `Request failed on the runner; see the runner log for details: `.
+   Require no fixture invocation for the outage call.
+3. Require generation 2 to start only after that native error completed. Match
+   its unchanged endpoint and schema, fresh startup nonce, PID, and start time.
+4. Match a separate declared call to the generation-2 ledger, native result,
+   and provider continuation. Reusing the generation-1 literal fails the case.
+5. Compare selected root and kernel identities before and after recovery.
+   Require the existing memory object to advance from 41 to 42 with its original
+   token and open socket. Recreating the value or socket fails continuity.
+6. Inspect `fixture-cleanup.json`. Require both generation records with exited
+   processes, closed outputs, `endpoint_refused: true`, and empty errors.
+7. Match the fixture allocation ID to `runtime-removal.json` and
+   `runtime-owner.json`. Require removal, `closed: true`, and no owner errors.
+   Inspect `runtime-settlement.json` in that same evidence directory for clean
+   runtime settlement. Require unchanged source and deployed-extension evidence.
+
+Use `declared-schema.json`, `before-witness.json`, `outage-witness.json`,
+`outage-start.json`, `after-witness.json`, the generation startup and call
+records, `continuity.json`, kernel records, `fixture-cleanup.json`, and
+`cleanup.json`. `artifact.json`, `mcp-artifact.json`, the source inventories,
+and `manifest.json` bind the source and runtime used. `completion.json` binds
+that result and manifest to the completed owner lifetime. The selector
+observation is source-inferred eligibility, not a live registry census.
+
+The fixture supplies settlement only after every real generation is reaped,
+its PID/start identity is absent, all output handles are closed, and the endpoint
+refuses connections. Child output goes directly to files. The fixture owns no
+parent reader or capture thread. Exited child processes settle their internal
+threads and descriptors. Unexpected process pipes reject settlement.
+`fixture-cleanup.json` must be written before the allocation-bound
+`settled_fixture` value can authorize runtime removal. Startup, stop, close,
+endpoint, or receipt errors stay sticky and yield `failed_fixture`. A later
+successful check cannot erase an earlier failure. MCP rejects `no_fixture`,
+missing settlement, or settlement from another allocation. Failed or unknown
+settlement retains scratch and fails qualification, even when processes exited.
+
+The scratch owner is allocated before fallible MCP construction. Owner entry,
+partial construction, scenario failure, and owner exit remain guarded. The
+scenario returns an unpublished draft. Credential finalization, owner closure,
+and required receipts finish before publication commits `completion.json`.
+A later owner failure preserves the first scenario failure and records the
+finalization error. Failed committed cases require matching completion hashes
+with `passed: false`. Incomplete publication cannot authorize a committed case.
+Preserve retained scratch and failure evidence for diagnosis. Do not reinterpret
+those receipts as successful cleanup.
+
+The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run reports all eight
+required claims verified on the repaired working tree above `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`.
+Its hashes identify the executed bytes, not a subsequently created commit.
+The three earlier actual MCP receipts remain FAILED. This historical case
+qualifies regular HTTP native error transport and recovery on those bytes only.
+It predates allocation-bound settlement and completion publication. It cannot
+qualify the migrated owner contract. Historical independent source review returned
+PASS+NOTES for provider revision `ecf1bb4824a28913377109cefc3107f018fdb21a`
+and MCP revision `ad945096ed6da2c1ffe866a33841188f77770b4f`, with their older
+hashes recorded above. The preceding source admission is the separate cumulative
+review at `094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent combined-context
+and documentation review, and fresh live WAIT and MCP qualification on final
+integrated bytes, remain pending.
+The historical case does not qualify real MRTR callbacks or approval-state recovery, stdio, all servers or providers, or
+the whole N19 requirement. See [the acceptance record](../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+for the remaining matrix.
 
 ## Disposable daemon qualification
 
