@@ -1007,9 +1007,7 @@ def test_maintenance_skips_unavailable_server_for_rest_of_sweep(
         _write_dead_owner(retained[2])
         healthy = _retained_runtime("conv_online", healthy_url)
 
-        def get(
-            client: httpx.Client, url: str, *, params: dict[str, str]
-        ) -> httpx.Response:
+        def get(client: httpx.Client, url: str, *, params: dict[str, str]) -> httpx.Response:
             nonlocal attempts
             if str(client.base_url).rstrip("/") == failed_url and unavailable:
                 attempts += 1
