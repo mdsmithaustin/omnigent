@@ -20,7 +20,7 @@ python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
 
 It prints the upstream tag, the inventoried count, the pending SHAs, and `release_ready`. Ordinary feature PRs leave `main` pending, which is expected.
 
-Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch by rebasing onto `main` (or GitHub's "Update with rebase"), never by merging `main` into it.
+Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch with `git rebase origin/main`, never by merging `main` into it.
 
 ## Check the source
 
@@ -190,15 +190,15 @@ Each Git, generation, stamping, inventory, and verification command must exit ze
    git switch -c sync/v0.18.0 v0.18.0
    ```
 
-2. Replay the fork commits since the old tag in order with `git cherry-pick "v0.17.0..$old_main_sha"`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
+2. Replay the fork commits since the old tag in order with `git cherry-pick "v0.17.0..${old_main_sha}"`. `git rebase --onto v0.18.0 v0.17.0` on a copy of `main` is equivalent. Drop commits that upstream superseded and the old manifest-only commits.
 3. Resolve conflicts surgically and record their reasons. Regenerate OpenAPI with `uv run --no-sync python scripts/dump_openapi.py` if necessary.
 4. If upstream added migrations after the fork's, add a merge revision with `uv run --no-sync alembic -c omnigent/db/alembic.ini merge heads -m "merge upstream v0.18.0"`. `tests/db/test_migration_connections.py::test_single_alembic_head` must pass.
 5. Reset the manifest and commit it: pin the new upstream tag, commit SHA, release ID, and publication time from the upstream APIs, clear `addons`, set `payload_commit` to the tag commit, and set `version` to `0.18.0+mdsmithaustin.1`. Stamp the same version and normalize and check the lockfile as above. Commit those version and lockfile changes before running `python scripts/fork_release.py inventory --version 0.18.0+mdsmithaustin.1`, because inventory reads the version from committed `HEAD`. Review the generated reasons and commit the result so the replayed commits become the addons.
 6. Run `pre-commit run --all-files`, the changed addon tests, and `check-source`. Archive the old line and replace `main`:
 
    ```sh
-   git push origin "$old_main_sha:refs/heads/archive/main-v0.17.0"
-   git push --force-with-lease="main:$old_main_sha" origin sync/v0.18.0:main
+   git push origin "${old_main_sha}:refs/heads/archive/main-v0.17.0"
+   git push --force-with-lease="main:${old_main_sha}" origin sync/v0.18.0:main
    ```
 
 Releases then continue as `0.18.0+mdsmithaustin.N`. The archive branch and existing `fork/v0.17.0+mdsmithaustin.*` tags keep earlier certificates verifiable. Never move an existing fork tag.
