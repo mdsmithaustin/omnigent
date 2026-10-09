@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anyio
 import httpx
 import pytest
 from cachetools import TTLCache
@@ -1391,6 +1392,30 @@ async def test_empty_discovery_admits_recovery_without_inventing_tools(method: s
             assert sdk.requests[-1][0:2] == (2, "missing")
         finally:
             await conn.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [anyio.ClosedResourceError, anyio.BrokenResourceError])
+async def test_dead_transport_stream_reconnects(error: type[Exception]) -> None:
+    calls = 0
+
+    async def dead_stream_once(generation: int, callback: Any) -> CallToolResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise error()
+        return CallToolResult(content=[TextContent(type="text", text="recovered")])
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            await conn.connect()
+            sdk.on_call = dead_stream_once
+            assert await conn.call_tool("echo", {}) == "recovered"
+            assert sdk.starts == 2 and sdk.peak_active == 1
+        finally:
+            await conn.close()
+        assert sdk.active == 0
 
 
 @pytest.mark.asyncio
