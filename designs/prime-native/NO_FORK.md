@@ -191,8 +191,9 @@ and the runner error prefix. No fixture invocation fabricated the outage.
 Only after that error completed did generation 2 start at the same endpoint with
 the same schema, a distinct PID, and a fresh startup nonce. A separate declared
 call then returned the generation-2 literal in all three witnesses. The selected
-root and living kernel remained the same. The existing memory object advanced
-from 41 to 42 and retained its open socket. This does not prove a connected peer.
+root and living kernel remained the same. The seeded token matched, the count
+advanced from 41 to 42, and a socket descriptor remained open in the same kernel.
+These checks do not prove object or socket identity, or a connected peer.
 Cleanup recorded no errors, owned survivors, private sockets, credential copies,
 or forced fallback.
 
@@ -207,8 +208,8 @@ and `provider-mcp-94f7fnro` remain FAILED with their original reasons.
 
 Controlled source verification passed 261 focused cases, 46 extension cases,
 and six independent private cases. Five source mutations produced 16 expected
-failing cases. Pi 0.84.2 error-mapping checks use explicit source provenance with
-`sdk_execution: false`. They do not run the Pi CLI. The actual Prime probe above
+failing cases. Pi 0.84.2 error-mapping checks model selected SDK source semantics.
+They do not execute the SDK or run the Pi CLI. The actual Prime probe above
 qualifies the selected native error transport and recovery sequence.
 
 Real MRTR callbacks and opaque approval retries across restart, stdio restart,
@@ -223,7 +224,7 @@ The combined repair at `ecf1bb4824a28913377109cefc3107f018fdb21a` has an indepen
 scoped source verdict of PASS+NOTES and 143 passing synthetic tests. Its provider
 SHA256 is `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
 This source verdict does not qualify a live provider or complete the roadmap.
-This private PR6 composition combines accepted PR6
+The historical private PR6 composition combined accepted PR6
 `1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
 `63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
 Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
@@ -234,7 +235,7 @@ The provider helper SHA256 remains
 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
 At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
-The repaired helper SHA256 is
+The historical repaired MCP helper SHA256 was
 `043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
 Its fixture close fallback reaps the exact registered child even when identity
 metadata capture fails. The original failure remains sticky.
@@ -243,10 +244,9 @@ error rejects, including empty containers, false, zero, and whitespace-only
 strings. Only missing, null, and exact empty-string errors are absent.
 A successful stop reason and matching literal reply remain required.
 
-The composition preserves PR6's paired root rejection and task-boundary tests.
-Relayed tools and task operations without a live root binding return a paired
-error result. They do not consume root controls or mutate the root task list.
-PR5's historical standalone 20-case root context does not replace this contract.
+The current root rejection and task-error contract is documented in
+[Use declared resources](../../docs/PRIME_NATIVE.md#use-declared-resources).
+PR5's historical standalone 20-case root context does not replace that contract.
 Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
 854 context cases and 69 controls. The parent failed 21 controls and passed 48.
 These historical counts are unchanged and are not fresh composition results.
@@ -257,8 +257,9 @@ repairs, the OAuth prerequisite correction, and two literal-readiness waits.
 The earlier registry failure and Linux empty-readiness failure remain historical.
 Linux misc CI passed at fd2. That result does not qualify this new composition
 or any native runtime. The imported registry fix requires a fresh scoped check.
-No actual MCP call, provider acceptance, or fresh live WAIT qualification is
-claimed. Full S01-S04 and the 31-requirement program remain incomplete.
+These historical source reviews do not qualify actual MCP calls, provider
+acceptance, or live WAIT behavior on the current source. Full S01-S04 and the
+31-requirement program remain incomplete.
 
 Historical composition failures remain part of the evidence. One prior strict
 clean precheck failed before its owner proceeded. A broad CLI test selection

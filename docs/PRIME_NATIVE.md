@@ -124,6 +124,12 @@ advertises the discovered tools through the shared extension, and the relay
 executes them. Discovery failures appear in the server or runner logs. The
 native terminal still starts when an additive MCP server is unavailable.
 
+Relayed tool callbacks throw when dispatch returns an error or the live root
+binding is unavailable. The native SDK turns that exception into a completed
+error tool result. Local task operations also throw without a live root binding.
+Calls rejected for a missing binding do not consume root controls or mutate
+the root task list.
+
 After successful discovery, the retained MCP connection can recover on a later
 call even when an earlier call exhausted reconnect attempts. A failed first
 initialization does not enable that recovery. Prime receives a completed native
@@ -326,67 +332,10 @@ remain sticky, including failures after removal or during receipt and handle
 closure. See the [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
 for the command, required receipt fields, and retained-failure checks.
 
-This private PR6 composition combines accepted PR6
-`1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
-`63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
-Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
-Those results describe the old PR6 context. Fresh independent source and
-documentation review of this composition remains required.
-
-The provider helper SHA256 remains
-`c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
-`b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
-The repaired helper SHA256 is
-`043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
-Its fixture close fallback reaps the exact registered child even when identity
-metadata capture fails. The original failure remains sticky.
-`OWNER_SHA256` admits that exact provider helper. Every present native-final
-error rejects, including empty containers, false, zero, and whitespace-only
-strings. Only missing, null, and exact empty-string errors are absent.
-A successful stop reason and matching literal reply remain required.
-
-The composition preserves PR6's paired root rejection and task-boundary tests.
-Relayed tools and task operations without a live root binding return a paired
-error result. They do not consume root controls or mutate the root task list.
-PR5's historical standalone 20-case root context does not replace this contract.
-Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
-854 context cases and 69 controls. The parent failed 21 controls and passed 48.
-These historical counts are unchanged and are not fresh composition results.
-
-The actual PR5 merge has the reviewed `fd2b0b4bbaf52cecf7bc34129ef6804c0fdd14c3`
-tree. It brings Main's bootstrap, CRDB, CLI registry, and agent-name index
-repairs, the OAuth prerequisite correction, and two literal-readiness waits.
-The earlier registry failure and Linux empty-readiness failure remain historical.
-Linux misc CI passed at fd2. That result does not qualify this new composition
-or any native runtime. The imported registry fix requires a fresh scoped check.
-No actual MCP call, provider acceptance, or fresh live WAIT qualification is
-claimed. Full S01-S04 and the 31-requirement program remain incomplete.
-
-The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
-exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
-base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`. Its 925 repository cases
-and seven independent checks are historical evidence for that composition.
-Its provider SHA256 was
-`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`,
-and its MCP SHA256 was
-`1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
-The provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
-matched `57293032d4fe2f53bd4c688a14cac4e9fd41e930`. These historical
-identities do not establish current PR5 and PR6 whole-tree identity or runtime
-qualification.
-
-The preceding provider SHA256 was
-`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
-The paired historical MCP SHA256 was
-`9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
-Their independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that source context only.
-Historical MCP review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
-returned PASS+NOTES for MCP SHA256
-`b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
-Fresh final-byte WAIT and MCP receipts remain required after source or context
-changes.
+The [qualification record](../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion) owns the historical PR5 and PR6
+composition identities, helper hashes, and source-review counts. Those results
+do not qualify the current source. Fresh final-byte WAIT and MCP receipts remain
+required after source or context changes.
 
 The later audited `provider-waits-d_tb1jmg` run at
 `4248f5dafee18884c8d66caa2f1480f1c619f58e` also remains FAILED. All five native

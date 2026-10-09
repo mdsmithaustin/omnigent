@@ -90,15 +90,16 @@ These fields do not prove object or socket identity.
 The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run verified this bounded
 case on its recorded bytes. Earlier actual MCP failures remain FAILED.
 The owner-contract migration has completed independent scoped source review
-with PASS+NOTES for the exact provider and MCP hashes recorded in the workflow.
+with PASS+NOTES for the historical provider and MCP hashes in the
+[qualification record](../../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion).
 Fresh final-byte WAIT and MCP receipts remain pending. Historical evidence does
 not qualify the migrated helper.
 
 Real MRTR callbacks and opaque approval retries across restart, stdio restart,
 wider errors and cancellation timing, other server classes, and other providers
 remain unqualified. See [MCP recovery and retries](../../../../docs/AGENT_YAML_SPEC.md#mcp-recovery-and-retries)
-for the shared connection contract. The real HTTP proof does not turn controlled
-Pi 0.84.2 source-semantic checks with `sdk_execution: false` into Pi CLI execution.
+for the shared connection contract. See the [qualification record](../../../../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+for the limits of the controlled Pi source-semantic checks.
 
 ## Gotchas
 
