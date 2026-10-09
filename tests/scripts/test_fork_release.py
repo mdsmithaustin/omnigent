@@ -460,6 +460,55 @@ def test_complete_policy_tail_and_ignored_build_output_pass(release):
 
 
 @pytest.mark.parametrize(
+    "case", ["add", "update", "delete", "executable", "rename", "symlink", "submodule"]
+)
+def test_push_gate_config_is_policy_tooling_with_safe_modes(release, case):
+    root = release["root"]
+    path = root / ".no-mistakes.yaml"
+    path.write_text("ci:\n  revalidate_repairs: true\n")
+    commit(root, "restore push gate policy")
+    if case == "update":
+        path.write_text("ci:\n  revalidate_repairs: false\n")
+    elif case == "delete":
+        path.unlink()
+    elif case == "executable":
+        path.chmod(0o755)
+    elif case == "rename":
+        command(root, "git", "mv", ".no-mistakes.yaml", "undeclared.yaml")
+    elif case == "symlink":
+        path.unlink()
+        path.symlink_to("runtime.py")
+    elif case == "submodule":
+        path.unlink()
+        path.mkdir()
+        command(
+            root,
+            "git",
+            "update-index",
+            "--cacheinfo",
+            "160000," + release["base"] + ",.no-mistakes.yaml",
+        )
+    release["source"] = (
+        command(root, "git", "rev-parse", "HEAD")
+        if case == "add"
+        else commit(root, "change push gate policy")
+    )
+    result = check(release)
+    if case in {"rename", "symlink", "submodule"}:
+        assert result.returncode == 1
+        assert (
+            "undeclared policy-tail path: undeclared.yaml"
+            if case == "rename"
+            else "unsafe policy-tail mode: .no-mistakes.yaml"
+        ) in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        receipt = json.loads(result.stdout)
+        assert receipt["source_commit"] == release["source"]
+        assert receipt["pin"]["payload_commit"] == release["payload"]
+
+
+@pytest.mark.parametrize(
     "case", ["extra", "omitted", "duplicate", "abbreviated", "allowlist", "profile", "version"]
 )
 def test_invalid_inventory_is_rejected(release, case):

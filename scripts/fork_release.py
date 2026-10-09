@@ -25,6 +25,7 @@ MANIFEST = ".github/fork-release.json"
 POLICY_PATHS = frozenset(
     {
         MANIFEST,
+        ".no-mistakes.yaml",
         "scripts/fork_release.py",
         "scripts/build_fork_release.sh",
         ".github/workflows/fork-release.yml",
