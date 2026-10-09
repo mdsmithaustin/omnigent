@@ -10,7 +10,6 @@ worktree picker (branch prefill / start-in-existing-worktree).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -34,6 +33,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.host_store import HostStore
 from tests.server.helpers import websocket_scope as _websocket_scope
+from tests.server.mock_host import close_mock_host
 
 # Same liveness-race flake mitigation as test_hosts_filesystem: the
 # mock-WS host can be deregistered under parallel CI load, yielding a
@@ -108,15 +108,12 @@ async def wt_setup(
         await asyncio.sleep(0.01)
 
     replies: dict[str, dict[str, Any]] = {}
-    stop_drain = asyncio.Event()
 
     async def _drain() -> None:
         """Drain outbound WS frames and feed back the configured reply."""
-        while not stop_drain.is_set():
-            try:
-                output = await comm.receive_output(timeout=0.5)
-            except asyncio.TimeoutError:
-                continue
+        while True:
+            # A receive timeout would cancel the tunnel app while the host idles.
+            output = await comm.receive_output(timeout=None)
             if output.get("type") != "websocket.send":
                 continue
             text = output.get("text")
@@ -147,19 +144,7 @@ async def wt_setup(
     try:
         yield app, registry, comm, replies
     finally:
-        stop_drain.set()
-        try:
-            await asyncio.wait_for(drain_task, timeout=1.0)
-        except asyncio.TimeoutError:
-            drain_task.cancel()
-        # Send an explicit disconnect so the tunnel endpoint's finally-block
-        # calls host_store.set_offline() and registry.deregister() before
-        # this fixture returns. Without this, those calls happen whenever the
-        # comm is GC'd — potentially during the next test's setup window.
-        # Swallow CancelledError: the asgiref communicator may already be done
-        # if the event loop cancelled its internal future during teardown.
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await comm.send_input({"type": "websocket.disconnect", "code": 1000})
+        await close_mock_host(comm, drain_task)
 
 
 @pytest.mark.parametrize("legacy_provider", [False, True])
