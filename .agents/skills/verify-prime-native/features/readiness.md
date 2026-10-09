@@ -48,8 +48,7 @@ ports in the recorded receipts below are historical evidence only.
 
 First create this checkout's development environment using the maintained
 [development setup](../../../../CONTRIBUTING.md#development-setup).
-Its commands are `uv python install`, `uv venv --python "$(cat .python-version)"`,
-and `uv sync --extra all --group dev`. A nonzero setup exit fails the prerequisite.
+A nonzero setup exit fails the prerequisite.
 Run the block from that checkout's root with Bash, Python, curl, and native macOS
 `/usr/sbin/lsof` available. This Mac's installed `lsof` 4.91 help and
 `/usr/share/man/man8/lsof.8` document the options below. Require support for

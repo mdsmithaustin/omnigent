@@ -323,29 +323,9 @@ has a sticky `unrelated_user_process_identity_changed` failure with unknown
 cause. Preserve these allocations and historical receipts. Fresh MCP execution
 on the repaired source has not run.
 
-The configured private basic-response attempt at
-`4248f5dafee18884c8d66caa2f1480f1c619f58e` used the preceding provider hash
-`45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c` and failed.
-Its expected `OK` reply was absent, and its native final reported `agent_lifecycle_failure` despite public CLI exit
-zero. Settlement failed and the daemon remained retained. That attempt did not
-establish a successful basic response. The installation's version and hash
-checks did not establish a model-response baseline. Neither this result nor
-the WAIT failures establish an authentication, provider, kernel, or installation
-cause. Preserve the retained allocations and private receipts.
-
-A later sanitized basic-receipt review records the actual basic response as
-FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
-known PID/socket absence do not prove normal/full settlement, a successful
-response, exhaustive descendants, credential-source comparison, removal, or
-future custody. That failed attempt did not establish a model-response baseline.
-
-After the operator reported normal xAI login, a later direct Prime 0.9.6 print
-request returned exactly `OK` followed by a newline and exited zero. It requested `xai/grok-4.7`
-and thinking `off`. Active provider, model, thinking, and effort were not
-independently observed. The requested settings do not establish a credential class.
-This direct CLI baseline does not qualify Omnigent terminal and HTTP responses,
-installed-source equivalence, authentic resource Source and budgets, or full
-descendant settlement. Earlier failed receipts remain failed.
+The [qualification record](../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion) owns the basic-response
+observations and their limits, including the later direct Prime CLI response.
+That response does not qualify the Omnigent bridge or lifecycle.
 
 For a failed native reply, inspect `<operation>-native-failure.json` separately
 from `<operation>-native-predicates.json`. The latter records
