@@ -2324,6 +2324,14 @@ module.exports = function (pi) {
   pi.on("model_select", async (event, ctx) => {
     if (!admitsContext(ctx)) return;
     rememberContext(ctx);
+    // Mirror a model switch made inside the Pi TUI (the ``/model`` command or
+    // Ctrl+P cycling) back to Omnigent so the web picker reflects it. Skip
+    // ``restore`` — that is Pi re-applying the session's saved model at
+    // startup, not a user switch, and posting it could clobber a pending
+    // web-side override. The server dedups against ``reported_model``, so a
+    // web-initiated switch (which already persisted the value before queuing
+    // the inbox ``model_change``) round-trips here as a no-op. prime-native
+    // mirrors ``restore`` too.
     const source =
       event && typeof event.source === "string" ? event.source : "";
     if (source === "restore" && !primeNative) return;
@@ -2387,6 +2395,8 @@ module.exports = function (pi) {
     if (!admitsContext(ctx)) return;
     const loop = primeNative ? activePrimeLoop : null;
     if (primeNative) activePrimeLoop = null;
+    // Reuse the agent_start response_id so the web client matches the idle
+    // edge and clears the "streaming" status, unblocking queued follow-ups.
     const endResponseId =
       turnStatusResponseId ?? `pi-${Date.now()}-${++sequence}`;
     turnStatusResponseId = null;
@@ -2428,6 +2438,7 @@ module.exports = function (pi) {
       setOmnigentStatus(config, ctx, status);
       await observe({ type: "external_session_status", data: { status, response_id: endResponseId } });
     } else {
+      // Manual compact aborts the turn first; its own completion publishes idle.
       if (compacting) return;
       await postEvent(config, {
         type: "external_session_status",
