@@ -7669,14 +7669,9 @@ def test_forwarder_logs_rejected_external_item(
     assert "failed to post Codex conversation item: status=400 body=bad payload" in caplog.text
 
 
-def test_forwarder_marks_codex_skill_user_message_as_meta(tmp_path: Path) -> None:
+def test_forwarder_preserves_pasted_skill_as_user_message(tmp_path: Path) -> None:
     """
-    Codex ``<skill>`` user messages are hidden durable context.
-
-    Codex persists skill bodies as user messages wrapped in
-    ``<skill>...</skill>``. The forwarder must preserve that message
-    for Omnigent resume/history replay while tagging it ``is_meta`` so UI
-    clients can hide it.
+    User-message notifications remain visible even when they contain skill markup.
     """
     posted: list[dict[str, Any]] = []
 
@@ -7752,7 +7747,7 @@ def test_forwarder_marks_codex_skill_user_message_as_meta(tmp_path: Path) -> Non
     normal_data = posted[0]["data"]["item_data"]
     skill_data = posted[1]["data"]["item_data"]
     assert "is_meta" not in normal_data
-    assert skill_data["is_meta"] is True
+    assert "is_meta" not in skill_data
     assert skill_data["content"][0]["text"].startswith("<skill>")
 
 

@@ -6163,13 +6163,6 @@ async def _post_user_message(
         "role": "user",
         "content": content,
     }
-    if _is_codex_skill_wrapper(text):
-        item_data["is_meta"] = True
-        _logger.debug(
-            "Marked Codex skill wrapper as meta for session=%s source_id=%s",
-            session_id,
-            _source_id(params, item),
-        )
     return await _post_external_item(
         client,
         session_id,
@@ -8196,11 +8189,6 @@ def _user_message_has_file_content(item: _JsonObject) -> bool:
         if isinstance(block_type, str) and block_type and block_type != "text":
             return True
     return False
-
-
-def _is_codex_skill_wrapper(text: str) -> bool:
-    stripped = text.strip()
-    return stripped.startswith("<skill>") and stripped.endswith("</skill>")
 
 
 def _json_string(value: _JsonObject) -> str | None:
