@@ -264,9 +264,16 @@ bounded passing cases and retain failures as separate evidence.
 
 The project skill drives a real Prime binary, Omnigent server, host, runner,
 and terminal. A local model endpoint returns a fixed reply to prove message
-transport without provider credentials. Its [unconditional finalizer](../.agents/skills/verify-prime-native/SKILL.md#doctor)
-enumerates global process candidates and reads process environments, including
-with `--doctor`. Do not run this helper when that inspection is prohibited.
+transport without provider credentials. The ordinary drive's finalizer enumerates
+global process candidates and reads process environments. Do not run the drive
+when that inspection is prohibited.
+
+[Doctor mode](../.agents/skills/verify-prime-native/SKILL.md#doctor) runs isolated
+public metadata checks and returns before process discovery, reaping, shutdown,
+or runtime log copying. Native help uses the current Python interpreter with
+`python -m omnigent prime-native --help` in the selected checkout. Doctor success
+proves metadata prerequisites only. It does not qualify a native turn, provider
+login, daemon readiness, package completeness, or whole-descendant settlement.
 
 ```sh
 uv sync --group dev
