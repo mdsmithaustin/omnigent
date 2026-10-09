@@ -1355,6 +1355,39 @@ async def test_new_call_recovers_after_exhausted_replacement(method: str) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ending", ["lifecycle_ends", "explicit_close"])
+async def test_replacement_lifecycle_ending_before_attempt_is_not_an_assertion(
+    ending: str,
+) -> None:
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config())
+        try:
+            await conn.connect()
+            sdk.generation = 2
+            reconnect = conn._reconnect
+            reconnects = 0
+
+            async def reconnect_then_end() -> None:
+                nonlocal reconnects
+                await reconnect()
+                reconnects += 1
+                if reconnects == 1:
+                    await (conn.close() if ending == "explicit_close" else conn._close_lifecycle())
+                    assert conn._session is None
+
+            conn._reconnect = reconnect_then_end  # type: ignore[method-assign]
+            if ending == "explicit_close":
+                with pytest.raises(RuntimeError, match="connection is closed"):
+                    await conn.call_tool("echo", {})
+            else:
+                assert await conn.call_tool("echo", {}) == "generation-2"
+                assert reconnects == 2
+        finally:
+            await conn.close()
+        assert sdk.active == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["call_tool", "call_tool_with_elicitation"])
 @pytest.mark.parametrize("history", ["never", "failed_initial", "closed"])
 async def test_recovery_admission_requires_successful_discovery(method: str, history: str) -> None:
