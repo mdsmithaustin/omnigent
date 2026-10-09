@@ -43,6 +43,7 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
     ):
         check: dict[str, object] = {"name": name, "argv": argv, "required": required}
         checks.append(check)
+        output = None
         try:
             result = subprocess.run(
                 argv, env=env, cwd=REPO, capture_output=True, text=True, timeout=30
@@ -60,7 +61,7 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
                 if valid_output
                 else "missing-marker"
             )
-            (evidence / f"{name}.txt").write_text(result.stdout[:32768] + result.stderr[:32768])
+            output = result.stdout[:32768] + result.stderr[:32768]
             if check["outcome"] != "passed":
                 raise RuntimeError(f"Doctor failed for {name}, {check['outcome']}")
         except subprocess.TimeoutExpired as exc:
@@ -69,13 +70,19 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
                 (value.decode(errors="replace") if isinstance(value, bytes) else value or "")[:32768]
                 for value in (exc.stdout, exc.stderr)
             )
-            (evidence / f"{name}.txt").write_text(output)
             raise
         except OSError:
             check["outcome"] = "os-error"
             raise
         finally:
-            (evidence / "doctor.json").write_text(json.dumps(results, indent=2))
+            try:
+                if output is not None:
+                    (evidence / f"{name}.txt").write_text(output)
+            except OSError as exc:
+                check["output_write_error"] = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                (evidence / "doctor.json").write_text(json.dumps(results, indent=2))
     revision_argv = ["git", "rev-parse", "HEAD"]
     revision_check: dict[str, object] = {"argv": revision_argv}
     results["revision_check"] = revision_check

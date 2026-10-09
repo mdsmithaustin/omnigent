@@ -214,6 +214,50 @@ def test_receipt_write_failure_cannot_report_success(helper, monkeypatch):
     assert "receipt write failure" in (evidence / "failure.txt").read_text()
 
 
+@pytest.mark.parametrize(
+    "name,index",
+    [("prime-version", 0), ("prime-help", 1), ("prime-model-help", 2), ("native-help", 3)],
+)
+@pytest.mark.parametrize("outcome", ["passed", "nonzero-exit", "missing-marker", "timeout"])
+def test_diagnostic_write_failure_preserves_process_outcome(
+    helper, monkeypatch, name, index, outcome
+):
+    original_run = helper.subprocess.run
+    original_write = Path.write_text
+
+    def run(argv, **kwargs):
+        result = original_run(argv, **kwargs)
+        if len(helper.calls) != index + 1:
+            return result
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(argv, 30, b"public output", b"public diagnostic")
+        if outcome == "nonzero-exit":
+            return subprocess.CompletedProcess(argv, 7, result.stdout, "public diagnostic")
+        if outcome == "missing-marker":
+            return subprocess.CompletedProcess(argv, 0, "unexpected public output", "")
+        return result
+
+    def write(path, *args, **kwargs):
+        if path.name == f"{name}.txt":
+            raise OSError("fixture diagnostic write failure")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(helper.subprocess, "run", run)
+    monkeypatch.setattr(Path, "write_text", write)
+    assert helper.main() == 1
+    evidence = helper.allocations[0]
+    receipt = json.loads((evidence / "doctor.json").read_text())
+    check = receipt["checks"][index]
+    assert check["name"] == name
+    assert check["outcome"] == outcome
+    assert check["output_write_error"] == "OSError: fixture diagnostic write failure"
+    if outcome != "timeout":
+        assert check["exit"] == (7 if outcome == "nonzero-exit" else 0)
+    assert json.loads((evidence / "manifest.json").read_text())["exit"] == 1
+    assert helper.allocations[1].is_dir()
+    assert "diagnostic write failure" in (evidence / "failure.txt").read_text()
+
+
 def test_real_metadata_child_timeout_fails_safely(helper, monkeypatch, tmp_path):
     child = tmp_path / "slow-prime"
     child.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(5)\n")
