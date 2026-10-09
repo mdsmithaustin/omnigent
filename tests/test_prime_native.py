@@ -960,11 +960,21 @@ def test_maintenance_retains_runtime_when_deletion_is_unconfirmed(
     ],
 )
 def test_maintenance_checks_other_sessions_after_http_response(
+    monkeypatch: pytest.MonkeyPatch,
     response: tuple[int, object],
 ) -> None:
     with _sessions_server({"/v1/sessions/conv_kept": response}) as server_url:
         retained = _retained_runtime("conv_kept", server_url)
         deleted = _retained_runtime("conv_deleted", server_url)
+        original_iterdir = Path.iterdir
+
+        def iterdir(directory: Path) -> Iterator[Path]:
+            entries = list(original_iterdir(directory))
+            if directory == retained.root.parent:
+                entries.sort(key=lambda entry: entry == deleted.root)
+            return iter(entries)
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
         assert bridge.prune_orphaned_bridge_dirs() == 1
         assert not deleted.root.exists()
         assert (retained.session_dir / "saved.jsonl").read_text() == "saved transcript"

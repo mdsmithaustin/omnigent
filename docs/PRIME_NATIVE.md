@@ -189,13 +189,16 @@ Startup and host maintenance stop orphaned Prime runtimes whose recorded owner
 is dead in the same process namespace and boot. A live terminal protects its
 runtime even after its runner exits. Recovery retains saved sessions and private
 configuration for resume. Unknown or legacy ownership records remain untouched.
-Maintenance removes a runtime directory only for a deleted conversation. The
-directory's `config.json` must name a conversation whose ID maps back to that
+Maintenance removes a runtime directory when the server reports its conversation
+as deleted. The server reports a conversation the recorded credentials can no
+longer access the same way as a deleted one, so revoked access also reclaims that
+runtime's saved native session. The conversation itself remains on the server.
+The directory's `config.json` must name a conversation whose ID maps back to that
 directory, and the recorded server must answer that conversation's session
 request with Omnigent's `not_found` error. The directory must also pass the
 private-ownership checks. Its launch owner, owner record, and terminal must be
 absent or provably dead, and the runtime must stop with no owned process or
-socket left. An unreachable server, a rejected credential, any other response,
+socket left. An unreachable server, an authentication failure, any other response,
 or a missing or invalid record retains the directory.
 Cleanup sends Prime's public shutdown command to the qualified private
 supervisor socket. Omnigent clears transient ownership only after that socket
