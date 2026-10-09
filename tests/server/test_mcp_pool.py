@@ -700,8 +700,12 @@ async def test_cancelled_shutdown_closes_connected_and_starting_servers(action: 
         try:
             await asyncio.wait_for(initializing.wait(), timeout=5)
             servers = pool._entries["agent"].servers
-            while servers["recovery"].connection is None:
-                await asyncio.wait_for(asyncio.sleep(0), timeout=5)
+
+            async def recovery_published() -> None:
+                while servers["recovery"].connection is None:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(recovery_published(), timeout=5)
             assert servers["b"].connection is None
             assert sdk.active == (3 if action == "shutdown_all" else 2)
             sdk.on_exit = leave

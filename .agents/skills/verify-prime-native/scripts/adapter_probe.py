@@ -3957,7 +3957,9 @@ def main() -> int:
     args = parser().parse_args()
     if args.serve_mcp:
         if args.mcp_port is None or args.mcp_calls is None or args.mcp_generation_config is None:
-            raise SystemExit("--serve-mcp requires --mcp-port and --mcp-calls")
+            raise SystemExit(
+                "--serve-mcp requires --mcp-port, --mcp-calls and --mcp-generation-config"
+            )
         return serve_mcp(args.mcp_port, args.mcp_calls, args.mcp_generation_config)
     if args.prime_path is None or args.kernel_python is None:
         raise SystemExit("--prime-path and --kernel-python are required")
