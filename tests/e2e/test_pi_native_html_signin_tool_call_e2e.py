@@ -58,10 +58,12 @@ pytestmark = pytest.mark.skipif(
 # tests/e2e/<this file> -> parents[2] is the worktree root; the Node subprocess
 # runs from there so it resolves the same checkout's extension file.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
 # A registered Omnigent tool the extension will expose via pi.registerTool. Its
 # execute() round-trips through POST /v1/sessions/{id}/mcp -- the boundary the
 # bug lives at.
 _TOOL_NAME = "sys_os_shell"
+
 # Secret markers seeded into the sign-in document. A body-quoting error message
 # would surface them; a correct classification quotes nothing.
 _CSRF_SECRET = "CSRF-SECRET-abc123"
@@ -137,6 +139,14 @@ def _drive_tool_call(
     response_body: str = _SIGNIN_HTML,
     content_type: str = "text/html; charset=utf-8",
 ) -> _CallbackOutcome:
+    """Load the real extension under Node, fault the /mcp fetch, dispatch a tool.
+
+    The Node scenario stubs ``globalThis.fetch`` with the supplied response,
+    mocks the Pi registration API, then invokes the registered tool's
+    ``execute`` callback.
+
+    :returns: The callback's returned tool result or thrown error details.
+    """
     script = tmp_path / "drive_html_signin.mjs"
     script.write_text(
         textwrap.dedent(
