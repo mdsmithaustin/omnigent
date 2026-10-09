@@ -121,7 +121,7 @@ uv pip install --python /tmp/omnigent-fork-install/bin/python dist/*.whl
 /tmp/omnigent-fork-install/bin/omnigent --version
 ```
 
-The CLI must print `0.17.0+mdsmithaustin.3`. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
+The CLI must print `0.17.0+mdsmithaustin.4`. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
 
 Install future fork updates from their verified fork assets. `omni upgrade` for a wheel installation uses package-index releases or prints an index installation command. `omni upgrade --nightly` selects upstream GitHub tags. Those channels can replace the fork addons. This release process does not change the runtime updater.
 
