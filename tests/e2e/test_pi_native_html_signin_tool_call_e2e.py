@@ -1,4 +1,4 @@
-"""Exercise the shipped Pi extension's registered MCP callback under Node.
+"""pi-native: a 200 text/html sign-in page is consumed as a JSON tool-call result.
 
 The journey
 -----------
@@ -11,9 +11,35 @@ answers that route with an HTTP ``200`` **sign-in document** (``text/html``)
 instead of the runner's JSON envelope -- a common proxy behaviour, not a
 Databricks-specific one.
 
-A synthetic HTTP 200 HTML sign-in response must make the callback throw a
-bounded authentication classification without response body text. A valid
-MCP JSON response must return the successful tool result.
+Observed before the fix (the bug)
+--------------------------------
+``postMcpToolsCall`` in
+``omnigent/resources/pi_native/omnigent_pi_native_extension.js`` checked only
+``resp.ok`` and then called ``resp.json()``. A ``200 text/html`` satisfies
+``resp.ok``, so ``resp.json()`` throws a ``SyntaxError`` whose message quotes a
+prefix of the response body. The throw is caught by the enclosing ``catch``,
+which returns the raw error message verbatim as the tool result:
+
+    Omnigent tool call failed: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+
+Two defects, both reproduced by this test before the fix:
+
+1. **Body text leaks into the tool result.** ``<!DOCTYPE`` (and, with a
+   differently-ordered document, the sign-in page's CSRF/``state``/tenant
+   values) reaches the tool result the model receives. A sign-in document's
+   body must never reach a tool result.
+2. **The failure is unactionable.** "not valid JSON" tells neither the user nor
+   the agent that the remedy is to re-authenticate.
+
+Expected / the fail -> pass contract
+------------------------------------
+A JSON consumer at that boundary must accept a response only when status,
+declared content type, and parseability all agree. A ``200`` whose content type
+is not JSON must be classified as an authentication / sign-in failure and
+thrown as a bounded error that names no body, header, or URL. This test asserts
+that expected contract, so it **fails before the fix** (the tool result quotes
+the body -- ``<!DOCTYPE`` -- and names no
+authentication classification) and **passes after the fix**.
 
 The runner generates the extension and config through ``write_extension_files``.
 The fixture stubs HTTP and the Pi registration API, then calls ``execute``
@@ -159,6 +185,9 @@ def _drive_tool_call(
             const responseBody = process.env.PI_NATIVE_RESPONSE_BODY;
             const contentType = process.env.PI_NATIVE_CONTENT_TYPE;
 
+            // The authenticating edge answers /mcp with a 200 text/html sign-in
+            // page. Every other route returns benign JSON so an unrelated call
+            // can't pollute the observation.
             globalThis.fetch = async (url) => {
               if (String(url).endsWith("/mcp")) {
                 return new Response(responseBody, {
@@ -226,7 +255,20 @@ def _drive_tool_call(
 
 
 def test_html_signin_at_mcp_boundary_is_a_bounded_auth_error(tmp_path: Path) -> None:
-    """A synthetic HTML response throws the bounded classification directly."""
+    """A 200 text/html sign-in page must become a bounded auth error, not a
+    body-quoting parse error.
+
+    Journey: bridged tool ``execute`` -> POST /mcp -> proxy answers 200
+    text/html sign-in page -> the callback throws a bounded error.
+
+    Durable contract (fails before the fix, passes after the fix):
+
+    * the thrown error quotes NO response body -- none of ``<!DOCTYPE`` /
+      ``<html`` / ``<form`` / the CSRF / ``state`` secrets appear (defect 1);
+    * the thrown error classifies the failure as authentication / sign-in and
+      names re-authentication as the remedy (defect 2);
+    * the callback rejects with an ``Error`` instead of returning false success.
+    """
     extension_path, config_path = _prepare_bridge(tmp_path)
     outcome = _drive_tool_call(tmp_path, extension_path=extension_path, config_path=config_path)
 

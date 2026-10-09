@@ -597,8 +597,65 @@ async def test_prewarm_registers_without_connecting(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancels_in_flight_schema_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """shutdown() cancels on-demand connect tasks that never completed.
+
+    Otherwise the runner would leak background tasks holding refs to
+    half-opened MCP transports.
+    """
+    started = asyncio.Event()
+    never_release = asyncio.Event()  # intentionally never set
+
+    class _HangingConn:
+        """Connection whose connect() never completes."""
+
+        def __init__(self, *, config: MCPServerConfig, cwd: Any = None, **_kwargs: Any) -> None:
+            """Capture config (unused)."""
+            self._config = config
+
+        async def connect(self) -> list[McpToolDef]:
+            """Signal start, then wait forever (until cancelled)."""
+            started.set()
+            await never_release.wait()
+            return []  # pragma: no cover — cancelled before reaching
+
+        async def close(self) -> None:
+            """No-op."""
+
+        async def call_tool(self, name: str, arguments: dict[str, Any], **_kw: Any) -> str:
+            """Unused."""
+            return ""
+
+    monkeypatch.setattr(_mcp_manager_module, "McpServerConnection", _HangingConn)
+
+    spec = _make_spec(_make_config("hangs"))
+    manager = RunnerMcpManager()
+    schemas_task = asyncio.create_task(manager.schemas_for(spec))
+    await started.wait()
+    # Capture the shared-server connect task ref before shutdown clears it.
+    server_hash = compute_server_hash(spec.mcp_servers[0])
+    connect_task = manager._servers[server_hash].connect_task
+    assert connect_task is not None and not connect_task.done(), (
+        "connect task must be in flight before shutdown"
+    )
+
+    await manager.shutdown()
+    # Give the cancellation a tick to propagate.
+    await asyncio.sleep(0.01)
+
+    assert connect_task.cancelled() or connect_task.done(), (
+        "shutdown must cancel (or otherwise finalize) the in-flight connect task"
+    )
+    schemas_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await schemas_task
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["initialize", "discover"])
-async def test_shutdown_cancels_in_flight_schema_connect(stage: str) -> None:
+async def test_shutdown_closes_in_flight_schema_lifecycle(stage: str) -> None:
     """shutdown() cancels on-demand connect tasks that never completed.
 
     Otherwise the runner would leak background tasks holding refs to

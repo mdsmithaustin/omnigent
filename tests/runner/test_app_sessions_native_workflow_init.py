@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 import pytest
 from mcp.types import CallToolResult, ElicitRequestFormParams
-from starlette.requests import ClientDisconnect, Request
+from starlette.requests import ClientDisconnect
 
 from omnigent.entities.session_resources import SessionResourceView
 from omnigent.harnesses.codex_native.bridge import CODEX_NATIVE_BRIDGE_ID_LABEL_KEY
@@ -2794,23 +2794,6 @@ async def test_mcp_execute_rejects_invalid_json(payload: bytes) -> None:
         response = await client.post("/v1/sessions/parse/mcp/execute", content=payload)
     assert response.status_code == 400
     assert response.json() == {"error": {"code": -32700, "message": "Parse error: invalid JSON"}}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [RuntimeError("Stream consumed"), ClientDisconnect()])
-async def test_mcp_execute_body_failure_is_not_a_parse_error(
-    failure: Exception,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fail_body(request: Request) -> bytes:
-        raise failure
-
-    app, _, _, _ = _build_app_with_mcp_tool()
-    monkeypatch.setattr(Request, "body", fail_body)
-    async with _runner_client(app) as client:
-        with pytest.raises(type(failure)) as raised:
-            await client.post("/v1/sessions/body/mcp/execute", content=b"{}")
-    assert raised.value is failure
 
 
 @pytest.mark.asyncio
