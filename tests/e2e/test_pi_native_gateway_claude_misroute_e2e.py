@@ -103,6 +103,7 @@ def _routing_warning_present(items: list[dict[str, Any]]) -> bool:
     for item in items:
         code = str(item.get("code") or "")
         message = str(item.get("message") or "")
+        # The raw misroute failure is NOT the routing warning under test.
         if "404 status code" in message and code != "pi_credentials_unresolved":
             continue
         low = message.lower()
@@ -190,7 +191,7 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
 
     child = pexpect.spawn(
         str(omnigent_bin),
-        ["pi", "--server", ""],
+        ["pi", "--server", ""],  # auto-spawn a local server + runner
         cwd=str(_REPO_ROOT),
         env=env,
         encoding="utf-8",
@@ -206,6 +207,7 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
         assert match, f"could not parse Web UI url: {web_url!r}"
         server, conv = match.group(1), match.group(2)
 
+        # Poll the session for the routing warning the fix must surface.
         deadline = time.monotonic() + 60
         items: list[dict[str, Any]] = []
         warned = False
@@ -218,13 +220,15 @@ def test_pi_native_openai_only_gateway_claude_model_fails_loud(
             if not turn_sent:
                 with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
                     child.expect(_CLAUDE_MODEL, timeout=3)
-                    time.sleep(8)
+                    time.sleep(8)  # let prompt_toolkit's input loop go live before typing
                     child.send("Reply with exactly the single word: PONG")
                     time.sleep(1)
                     child.send("\r")
                     turn_sent = True
             time.sleep(3)
 
+        # Diagnostic context for a failure: what the gateway actually saw and
+        # what items the session recorded.
         posted_models = [r.get("model") for r in gateway_requests if r.get("method") == "POST"]
         item_summ = [
             {"type": it.get("type"), "code": it.get("code"), "message": it.get("message")}

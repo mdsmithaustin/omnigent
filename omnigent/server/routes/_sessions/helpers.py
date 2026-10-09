@@ -2488,6 +2488,35 @@ def _persist_external_model_options(
     conv: Conversation,
     body: SessionEventInput,
 ) -> None:
+    """
+    Record the model catalog a native harness's extension reported.
+
+    Sourced from the harness's live model registry (pi-native:
+    ``ctx.modelRegistry.getAvailable()``), so it reflects the models the
+    harness actually loaded no matter how it authenticated — an
+    Omnigent-configured provider OR the harness's own ``/login``. This is why
+    the pi picker populates even in the ``/login`` path, where no
+    ``models.json`` is written into the bridge dir for a file-read to find.
+
+    Gated to pi-native and prime-native sessions: only :func:`_fetch_model_options` *serves*
+    this cache for them, so accepting a push from any other session would
+    just leave a stray cache entry alive until teardown. Reject at ingest to
+    keep the contract explicit.
+
+    Stores into :data:`_pushed_model_options_cache` (which a browser reload
+    does NOT clear — the extension pushes on session start, and prime-native
+    also re-pushes on each model change) and publishes
+    ``session.model_options`` so open clients re-read the snapshot. An empty
+    list evicts the entry rather than caching nothing.
+
+    :param session_id: Session/conversation identifier, e.g.
+        ``"conv_abc123"``.
+    :param conv: Conversation row whose labels identify the wrapper.
+    :param body: External model-options event body. ``data.models`` must be a
+        list; entries without a nonempty string id and duplicate ids are ignored.
+    :raises OmnigentError: If the session is not pi-native or prime-native, or
+        ``data.models`` is missing or is not a list.
+    """
     native_agent = _native_coding_agent_for_session(conv)
     if conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY) != _PI_NATIVE_WRAPPER_LABEL_VALUE and (
         native_agent is None or native_agent.harness != "prime-native"
@@ -6435,6 +6464,34 @@ async def _proxy_get_session_resources_to_runner(
 
 
 def _native_coding_agent_for_session(conv: Conversation) -> NativeCodingAgent | None:
+    """
+    Resolve native terminal metadata for a session, by wrapper label OR harness.
+
+    Two independent signals identify a native session, because native message
+    handling must NOT be coupled to the terminal-first presentation labels:
+
+    * the ``omnigent.wrapper`` presentation label — set for the built-in
+      terminal-first wrapper sessions (``omnigent claude`` / ``omnigent
+      codex``); resolved directly and cheaply here (short-circuits the harness
+      load below); and
+    * the bound agent's RESOLVED harness — for a CUSTOM agent that declares a
+      native harness (e.g. a user ``polly`` orchestrator with
+      ``executor.harness: codex-native``) but is intentionally CHAT-first, so
+      it carries no wrapper label. Its runner still runs a native transcript
+      forwarder (the single writer for the conversation), so its web messages
+      must take the same native single-writer path — else the inbound user
+      message is persisted AP-side AND mirrored by the forwarder, landing
+      twice. Resolved via :func:`_resolve_harness` (honors a per-session
+      ``harness_override``), independent of the presentation labels; SDK
+      harnesses resolve to ``None``.
+
+    With a ``harness_override``, a session whose label or override is prime-native
+    resolves by its effective harness instead.
+
+    :param conv: Conversation row for the target session.
+    :returns: The :class:`NativeCodingAgent` for the session's harness, or
+        ``None`` when it is not a native terminal harness.
+    """
     wrapper = conv.labels.get(_CLAUDE_NATIVE_WRAPPER_LABEL_KEY)
     native_agent = native_coding_agent_for_wrapper_label(wrapper)
     if native_agent is not None:
@@ -7275,6 +7332,32 @@ async def _resolve_skill_invocation_via_runner(
     *,
     allow_native: bool,
 ) -> tuple[str, bool]:
+    """
+    Resolve a skill's hidden ``<skill>`` meta text on the bound runner.
+
+    Skill content is runner-owned: the runner reads the ``SKILL.md``
+    body on its own filesystem, so the embedded ``<path>`` is
+    valid where the harness executes. Auxiliary files remain available
+    through skill tools; see ``docs/SKILL_COMMANDS.md``. Wraps
+    ``POST /v1/sessions/{id}/skills/resolve``.
+
+    With ``allow_native``, a native ``/name`` or ``$name`` invocation from the
+    runner is returned instead.
+
+    :param session_id: Session/conversation identifier,
+        e.g. ``"conv_abc123"``.
+    :param skill_name: Exact skill name to resolve, e.g.
+        ``"code-review"``.
+    :param arguments: Raw argument string typed after the slash
+        command, e.g. ``"review this plan"``. Empty when none.
+    :param runner_client: HTTP client pointed at the bound runner.
+    :param allow_native: ``True`` to accept a native invocation from the runner.
+    :returns: ``(text, is_native)``: the hidden ``<skill>`` meta text for a
+        single ``input_text`` block, or the native invocation when ``is_native``.
+    :raises OmnigentError: If the skill is not exposed for the session
+        (the runner 404s with the available list), or the runner is
+        unreachable / errors while resolving.
+    """
     try:
         resp = await runner_client.post(
             f"/v1/sessions/{session_id}/skills/resolve",
@@ -7506,6 +7589,8 @@ async def _dispatch_skill_slash_command_to_runner(
         "agent_id": conv.agent_id,
         "model": agent.name,
         "has_mcp_servers": has_mcp_servers,
+        # Live-renderer hint: the runner drops ``browser_*`` schemas for
+        # the turn when no renderer is subscribed to the session stream.
         "browser_renderer_available": session_stream.has_subscribers(session_id),
         "persisted_item_id": item_id if native else context_id,
         "command_admission": {"item_id": item_id, "fingerprint": fingerprint},
@@ -7517,10 +7602,19 @@ async def _dispatch_skill_slash_command_to_runner(
     )
     if effective_override is not None:
         runner_body["model_override"] = effective_override
+    # Per-session brain-harness override — create-time only, so no
+    # per-event value exists; the persisted column is the source. The
+    # "auto" sentinel is resolved to a concrete harness at first-message
+    # time and never forwarded verbatim.
     if conv.harness_override is not None and conv.harness_override != "auto":
         runner_body["harness_override"] = conv.harness_override
     accepted = False
     try:
+        # Mirror the plain-message path's title seeding: a session whose FIRST
+        # message is a skill invocation (web landing composer, REPL) would
+        # otherwise keep a NULL title and the sidebar falls back to the
+        # conversation id. Titled from the typed command ("/debate kafka…"),
+        # NOT the hidden meta item — that's the full SKILL.md instruction blob.
         command_text = f"/{skill_name} {arguments}" if arguments else f"/{skill_name}"
         await _seed_missing_title(
             conv, [{"type": "input_text", "text": command_text}], conversation_store

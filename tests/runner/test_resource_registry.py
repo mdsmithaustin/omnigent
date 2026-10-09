@@ -282,6 +282,7 @@ async def test_terminal_resource_role_moves_on_transfer(
         Register a fake terminal instead of starting tmux.
 
         :param conversation_id: Owning session id, e.g. ``"conv_old"``.
+        :param terminal_name: Terminal name, e.g. ``"worker"``.
         :param session_key: Terminal session key, e.g. ``"main"``.
         :param spec: Terminal spec passed by the caller.
         :param kwargs: Additional launch kwargs.

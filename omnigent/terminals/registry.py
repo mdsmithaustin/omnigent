@@ -144,6 +144,9 @@ class TerminalRegistry:
             ``None`` keeps links relative.
         """
         self._conversation_link_base_url = conversation_link_base_url
+        # Two-level dict: conversation_id -> (name, key) -> instance.
+        # Per-conversation maps make ``cleanup_conversation`` cheap
+        # (one pop) and ``list_for_conversation`` direct.
         self._by_conversation: dict[str, dict[tuple[str, str], TerminalInstance]] = {}
         self._failed_launches: dict[str, list[TerminalListEntry]] = {}
         self._launch_locks: dict[tuple[str, str, str], _LaunchLockEntry] = {}
@@ -273,6 +276,11 @@ class TerminalRegistry:
                         conversation_id, terminal_name, session_key, expected=existing
                     )
 
+            # Lock-free section: ``create_terminal_instance`` and
+            # ``launch`` may take real time (tmux spawn). Holding the
+            # registry lock across them would serialize all conversations'
+            # terminal spawns globally. Instead we re-check after the
+            # spawn completes.
             parent_environment = None
             environment_spec = spec.os_env if isinstance(spec.os_env, OSEnvSpec) else parent_os_env
             if (
@@ -316,14 +324,23 @@ class TerminalRegistry:
 
                 with self._lock:
                     slot = self._by_conversation.setdefault(conversation_id, {})
+                    # Re-check: another concurrent launch for the same key may
+                    # have raced ours. Take the second-arrival policy: close
+                    # ours and return the racer's. Avoids two live tmux
+                    # sessions for the same key.
                     racer = slot.get(key)
                     if racer is not None and (racer.running or terminal_name == "prime-native"):
+                        # Close ours outside the lock; racer wins.
                         instance_to_close: TerminalInstance | None = created.instance
                         winning_instance = racer
                     else:
                         slot[key] = created.instance
                         instance_to_close = None
                         winning_instance = created.instance
+                        # Allocate a per-instance lock alongside the
+                        # registration. Tools fetch it via
+                        # :meth:`get_instance_lock` to serialize concurrent
+                        # tmux ops on this instance.
                         self._instance_locks[(conversation_id, terminal_name, session_key)] = (
                             threading.Lock()
                         )
@@ -556,7 +573,13 @@ class TerminalRegistry:
             else:
                 slot.pop(key)
                 if not slot:
+                    # Drop the empty per-conversation dict so memory
+                    # doesn't grow with stale conversation ids.
                     self._by_conversation.pop(conversation_id, None)
+                # Drop the per-instance lock too so subsequent
+                # ``get_instance_lock`` calls return ``None`` for this
+                # closed instance (callers surface a "not running"
+                # error to the LLM).
                 self._instance_locks.pop((conversation_id, terminal_name, session_key), None)
         try:
             if terminal_name == "prime-native":
@@ -680,6 +703,8 @@ class TerminalRegistry:
             try:
                 await self.close(conversation_id, name, key, expected=instance)
             except Exception:
+                # We're in a workflow finally block; raising here would
+                # mask the original workflow result. Log and move on.
                 logger.exception(
                     "cleanup_conversation: close failed for %s:%s in conv %s",
                     name,

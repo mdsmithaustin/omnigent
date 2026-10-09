@@ -57,7 +57,10 @@ export type { SkillCommandDelivery } from "./skillCommandDelivery";
 export interface PostEventResponse {
   nativeStop?: { outcome: "verified" | "unknown" | "failed"; detail: string };
   delivery?: SkillCommandDelivery;
-  /** For skill commands, true only when the runner accepted responsibility. */
+  /**
+   * True for item-typed events (persisted); false for interrupt / approval.
+   * For skill commands, true only when the runner accepted responsibility.
+   */
   queued: boolean;
   /**
    * Store-assigned conversation item id for item-typed events.
