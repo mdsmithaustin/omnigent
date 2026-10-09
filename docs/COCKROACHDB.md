@@ -52,8 +52,8 @@ a new empty database.
 
 Existing CRDB databases created by a supported Omnigent release use normal
 Alembic upgrades for subsequent migrations. Startup retries SQLSTATE `40001`
-failures up to three times, using a fresh connection and the last durable
-Alembic revision. Other errors and retry exhaustion still fail startup.
+failures up to three times, using a restored or replacement connection and the
+last durable Alembic revision. Other errors and retry exhaustion still fail startup.
 Migrations that commit before their revision is recorded must support resuming
 from their partially published schema and data.
 

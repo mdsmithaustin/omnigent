@@ -303,6 +303,24 @@ def _repair_and_verify_crdb_model_indexes(engine: Engine, version: Version) -> N
         )
 
 
+def _verify_crdb_model_columns(engine: Engine) -> None:
+    from omnigent.db.db_models import ConversationBase, OmnigentBase
+
+    inspector = inspect(engine)
+    missing_columns = [
+        f"{table.name}.{column}"
+        for base in (OmnigentBase, ConversationBase)
+        for table in base.metadata.tables.values()
+        for column in {c.name for c in table.columns}
+        - {c["name"] for c in inspector.get_columns(table.name)}
+    ]
+    if missing_columns:
+        raise RuntimeError(
+            "CockroachDB schema bootstrap has missing columns: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+
 def _finish_crdb_bootstrap(engine: Engine, version: Version) -> None:
     """Remove the bootstrap marker after the Alembic revision is durable."""
     if _CRDB_BOOTSTRAP_MARKER_TABLE not in inspect(engine).get_table_names():
@@ -350,19 +368,7 @@ def _initialize_or_verify_crdb_schema(engine: Engine, db_uri: str) -> None:
                     "CockroachDB schema bootstrap did not create expected tables: "
                     + ", ".join(sorted(missing))
                 )
-            inspector = inspect(engine)
-            missing_columns = [
-                f"{table.name}.{column}"
-                for base in (OmnigentBase, ConversationBase)
-                for table in base.metadata.tables.values()
-                for column in set(table.columns.keys())
-                - {c["name"] for c in inspector.get_columns(table.name)}
-            ]
-            if missing_columns:
-                raise RuntimeError(
-                    "CockroachDB schema bootstrap has missing columns: "
-                    + ", ".join(sorted(missing_columns))
-                )
+            _verify_crdb_model_columns(engine)
             _repair_and_verify_crdb_model_indexes(engine, version)
             config = _build_alembic_config(db_uri)
             with engine.connect() as connection:
