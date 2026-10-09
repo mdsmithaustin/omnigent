@@ -1601,6 +1601,97 @@ async def test_public_lifecycle_serializes_recovery_and_callback_context(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["initialize", "discover"])
+async def test_cancelled_connect_closes_its_startup_on_the_lifecycle_task(stage: str) -> None:
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def stall(generation: int) -> None:
+        if generation == 1:
+            started.set()
+            await never.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        setattr(sdk, f"on_{stage}", stall)
+        conn = McpServerConnection(config=recovery_config())
+        connect = asyncio.create_task(conn.connect())
+        try:
+            await asyncio.wait_for(started.wait(), 2)
+            connect.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(connect, 2)
+            assert sdk.active == 0, "cancelled connect left its lifecycle running"
+            assert [owner.cancelled() for owner in sdk.owners] == [True]
+            sdk.generation = 2
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-2"
+            assert sdk.starts == 2 and sdk.peak_active == 1
+        finally:
+            never.set()
+            await asyncio.gather(connect, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["starting", "idle", "call_tool", "call_tool_with_elicitation"])
+async def test_close_is_bounded_and_fails_in_flight_work(state: str) -> None:
+    parked = asyncio.Event()
+    never = asyncio.Event()
+    approval_cancelled = asyncio.Event()
+    params = ElicitRequestFormParams(message="Approve?", requestedSchema={"type": "object"})
+
+    async def pending_approval(session_id: str, received: Any) -> ElicitResult:
+        parked.set()
+        try:
+            await never.wait()
+        except asyncio.CancelledError:
+            approval_cancelled.set()
+            raise
+        return ElicitResult(action="decline")
+
+    async def elicit(generation: int, handler: Any) -> CallToolResult:
+        await handler(None, params)
+        return CallToolResult(content=[TextContent(type="text", text="approved")])
+
+    async def unanswered_initialize(generation: int) -> None:
+        parked.set()
+        await never.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        conn = McpServerConnection(config=recovery_config(), elicitation_callback=pending_approval)
+        work = None
+        try:
+            if state == "starting":
+                sdk.on_initialize = unanswered_initialize
+                work = asyncio.create_task(conn.connect())
+            else:
+                await conn.connect()
+                if state != "idle":
+                    sdk.on_call = elicit
+                    work = asyncio.create_task(getattr(conn, state)("echo", {}, session_id="s"))
+            if work is not None:
+                await asyncio.wait_for(parked.wait(), 2)
+            await asyncio.wait_for(conn.close(), 2)
+            assert sdk.active == 0
+            if work is not None:
+                with pytest.raises(RuntimeError, match="connection is closed"):
+                    await asyncio.wait_for(work, 2)
+            if state.startswith("call_tool"):
+                await asyncio.wait_for(approval_cancelled.wait(), 2)
+            sdk.on_initialize = None
+            sdk.on_call = None
+            assert [tool.name for tool in await conn.connect()] == ["echo"]
+            assert await conn.call_tool("echo", {}) == "generation-1"
+        finally:
+            never.set()
+            if work is not None:
+                await asyncio.gather(work, return_exceptions=True)
+            await conn.close()
+        assert sdk.active == 0 and sdk.peak_active == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("empty_discovery", [False, True])
 async def test_cancelled_connect_waiters_share_owned_startup(empty_discovery: bool) -> None:
     started = asyncio.Event()

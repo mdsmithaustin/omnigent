@@ -20,7 +20,7 @@ Covers the non-trivial logic in the AP-server-side MCP connection pool:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -661,6 +661,64 @@ async def test_pool_shutdown_propagates_caller_cancellation(action: str) -> None
             assert all(owner is not None and owner.done() for owner in sdk.owners)
         finally:
             release_startup.set()
+            release_exit.set()
+            warm.cancel()
+            await asyncio.gather(warm, *([cleanup] if cleanup else []), return_exceptions=True)
+            await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["shutdown_for", "shutdown_all"])
+async def test_cancelled_shutdown_closes_connected_and_starting_servers(action: str) -> None:
+    initializing = asyncio.Event()
+    exiting = asyncio.Event()
+    release_exit = asyncio.Event()
+    never = asyncio.Event()
+    blocked_start: int | None = None
+
+    with controlled_mcp_lifecycle() as sdk:
+
+        async def initialize(generation: int) -> None:
+            if sdk.starts == blocked_start:
+                initializing.set()
+                await never.wait()
+
+        async def leave(generation: int) -> None:
+            if not exiting.is_set():
+                exiting.set()
+                await release_exit.wait()
+
+        sdk.on_initialize = initialize
+        pool = ServerMcpPool()
+        if action == "shutdown_all":
+            later = _make_spec(replace(recovery_config(), name="c"))
+            assert [entry.tool.name for entry in await pool.list_tools("later", later)] == ["echo"]
+        blocked_start = sdk.starts + 2
+        spec = _make_spec(recovery_config(), replace(recovery_config(), name="b"))
+        warm = asyncio.create_task(pool.list_tools("agent", spec))
+        cleanup = None
+        try:
+            await asyncio.wait_for(initializing.wait(), timeout=5)
+            servers = pool._entries["agent"].servers
+            while servers["recovery"].connection is None:
+                await asyncio.wait_for(asyncio.sleep(0), timeout=5)
+            assert servers["b"].connection is None
+            assert sdk.active == (3 if action == "shutdown_all" else 2)
+            sdk.on_exit = leave
+            cleanup = asyncio.create_task(
+                pool.shutdown_for("agent") if action == "shutdown_for" else pool.shutdown_all()
+            )
+            await asyncio.wait_for(exiting.wait(), timeout=5)
+            cleanup.cancel()
+            release_exit.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(cleanup), timeout=5)
+            assert sdk.active == 0, "cancelled shutdown skipped a server"
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(warm), timeout=5)
+        finally:
+            never.set()
             release_exit.set()
             warm.cancel()
             await asyncio.gather(warm, *([cleanup] if cleanup else []), return_exceptions=True)
