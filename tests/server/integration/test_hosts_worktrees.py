@@ -10,7 +10,6 @@ worktree picker (branch prefill / start-in-existing-worktree).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -34,6 +33,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.host_store import HostStore
 from tests.server.helpers import websocket_scope as _websocket_scope
+from tests.server.mock_host import close_mock_host
 
 # Same liveness-race flake mitigation as test_hosts_filesystem: the
 # mock-WS host can be deregistered under parallel CI load, yielding a
@@ -143,13 +143,7 @@ async def wt_setup(
     try:
         yield app, registry, comm, replies
     finally:
-        drain_task.cancel()
-        try:
-            with contextlib.suppress(asyncio.CancelledError):
-                await drain_task
-        finally:
-            await comm.send_input({"type": "websocket.disconnect", "code": 1000})
-            await comm.wait(timeout=5.0)
+        await close_mock_host(comm, drain_task)
 
 
 async def test_list_worktrees_survives_idle_mock_host(

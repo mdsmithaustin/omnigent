@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
 from typing import Any
 
 import pytest
@@ -35,6 +34,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.host_store import HostStore
 from tests.server.helpers import websocket_scope as _websocket_scope
+from tests.server.mock_host import close_mock_host
 
 # Same liveness-race flake guard as test_hosts_filesystem.py: the mock
 # WS host can be starved + deregistered under parallel CI load. Tests
@@ -166,13 +166,7 @@ async def mkdir_setup(
     try:
         yield app, registry, comm, replies, drain_task
     finally:
-        drain_task.cancel()
-        try:
-            with suppress(asyncio.CancelledError):
-                await drain_task
-        finally:
-            await comm.send_input({"type": "websocket.disconnect", "code": 1000})
-            await comm.wait(timeout=5.0)
+        await close_mock_host(comm, drain_task)
 
 
 # ── Happy path ──────────────────────────────────────────
