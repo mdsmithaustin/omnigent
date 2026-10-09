@@ -509,8 +509,8 @@ Inspect the retained sequence in order:
 4. Match a separate declared call to the generation-2 ledger, native result,
    and provider continuation. Reusing the generation-1 literal fails the case.
 5. Compare selected root and kernel identities before and after recovery.
-   Require the existing memory object to advance from 41 to 42 with its original
-   token and open socket. Recreating the value or socket fails continuity.
+   Require the seeded token, a count advancing from 41 to 42, and an open socket
+   in the same kernel. These fields do not prove object or socket identity.
 6. Inspect `fixture-cleanup.json`. Require both generation records with exited
    processes, closed outputs, `endpoint_refused: true`, and empty errors.
 7. Match the fixture allocation ID to `runtime-removal.json` and

@@ -84,8 +84,9 @@ finish before completion publication. The workflow below lists the exact fields.
 Follow [the MCP workflow](../SKILL.md#qualify-regular-http-mcp-reconnect) to compare
 schema, fixture, native, and provider witnesses. Require the completed native
 outage error before generation 2 starts, then a separate declared call with the
-new server PID and nonce. Require the same selected root and kernel object,
-with the count advancing from 41 to 42 and the original socket still open.
+new server PID and nonce. Require the same selected root and kernel identity,
+with the seeded token, the count advancing from 41 to 42, and an open socket.
+These fields do not prove object or socket identity.
 The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` run verified this bounded
 case on its recorded bytes. Earlier actual MCP failures remain FAILED.
 The owner-contract migration has completed independent scoped source review

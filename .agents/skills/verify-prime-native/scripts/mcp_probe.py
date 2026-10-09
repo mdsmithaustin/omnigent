@@ -928,7 +928,7 @@ class _McpRun(owner._OwnedRun):
         self.claim(
             "kernel_and_memory_continuity",
             "VERIFIED",
-            "same_owned_kernel_and_live_object",
+            "same_owned_kernel_and_memory_state",
             "kernel-seed.json",
             "kernel-read.json",
             "memory-read.json",
