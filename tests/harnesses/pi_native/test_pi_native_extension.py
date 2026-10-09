@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_prime_native_task_error_boundary import SDK_SOURCE_SEMANTICS
+
 
 def test_delivery_cap_drops_followup_without_failed_session_status(
     tmp_path: Path,
@@ -1190,12 +1192,11 @@ require(extensionPath)(pi);
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def _run_registered_mcp_source_semantics(
-    consumer: str, extension_source: str | None = None
-) -> subprocess.CompletedProcess[str]:
+def _run_registered_mcp_source_semantics(consumer: str) -> subprocess.CompletedProcess[str]:
     node = shutil.which("node")
     assert node is not None, "node is required for both consumer controls"
-    script = r"""
+    script = (
+        r"""
 const assert = require("assert").strict;
 const fs = require("fs");
 const vm = require("vm");
@@ -1255,79 +1256,9 @@ function bridge(prime = false, configured = true) {
     response: fn => { respond = fn; }, policyResponse: fn => { verdict = fn; } };
 }
 
-async function primeExecute(prepared) {
-  const updates = [];
-  let accepting = true;
-  try {
-    const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args,
-      undefined, update => { if (accepting) updates.push(Promise.resolve(update)); });
-    accepting = false;
-    await Promise.all(updates);
-    return { result, isError: false };
-  } catch (error) {
-    accepting = false;
-    await Promise.all(updates).catch(() => {});
-    return { result: { content: [{ type: "text", text: error instanceof Error
-      ? error.message : String(error) }],
-      details: {} }, isError: true };
-  }
-}
-async function primeFinalize(prepared, executed, after) {
-  let { result, isError } = executed;
-  const patch = await after({ toolCall: prepared.toolCall, args: prepared.args, result, isError });
-  if (patch) {
-    result = { content: patch.content ?? result.content, details: patch.details ?? result.details,
-      terminate: patch.terminate ?? result.terminate };
-    isError = patch.isError ?? isError;
-  }
-  return { toolCall: prepared.toolCall, result, isError };
-}
-function primeMessage(finalized) {
-  return { role: "toolResult", toolCallId: finalized.toolCall.id,
-    toolName: finalized.toolCall.name,
-    content: finalized.result.content, details: finalized.result.details,
-      isError: finalized.isError };
-}
-async function piExecute(prepared) {
-  const updateEvents = [];
-  let acceptingUpdates = true;
-  try {
-    const result = await prepared.tool.execute(prepared.toolCall.id, prepared.args, undefined,
-      update => { if (acceptingUpdates) updateEvents.push(Promise.resolve(update)); });
-    acceptingUpdates = false;
-    await Promise.all(updateEvents);
-    return { result, isError: false };
-  } catch (error) {
-    acceptingUpdates = false;
-    await Promise.all(updateEvents);
-    return { result: { content: [{ type: "text", text: error instanceof Error
-      ? error.message : String(error) }],
-      details: {} }, isError: true };
-  } finally { acceptingUpdates = false; }
-}
-async function piFinalize(prepared, executed, after) {
-  let result = executed.result;
-  let isError = executed.isError;
-  const afterResult = await after({ toolCall: prepared.toolCall, args: prepared.args, result,
-    isError });
-  if (afterResult) {
-    result = { ...result, content: afterResult.content ?? result.content,
-      details: afterResult.details ?? result.details, usage: afterResult.usage ?? result.usage,
-      terminate: afterResult.terminate ?? result.terminate };
-    isError = afterResult.isError ?? isError;
-  }
-  return { toolCall: prepared.toolCall, result, isError };
-}
-function piMessage(finalized) {
-  return { role: "toolResult", toolCallId: finalized.toolCall.id,
-    toolName: finalized.toolCall.name,
-    content: finalized.result.content ?? [], details: finalized.result.details,
-    usage: finalized.result.usage, isError: finalized.isError };
-}
-const sdk = consumer.startsWith("prime")
-  ? { execute: primeExecute, finalize: primeFinalize, message: primeMessage }
-  : { execute: piExecute, finalize: piFinalize, message: piMessage };
-
+"""
+        + SDK_SOURCE_SEMANTICS
+        + r"""
 async function consumeLoop(b, calls, expected, options = {}) {
   const history = [], observations = [];
   let turns = 0;
@@ -1601,9 +1532,10 @@ let cases = 0, inverseControls = 0;
   console.log(JSON.stringify({ consumer, cases, inverseControls }));
 })().catch(error => { console.error(error.stack || error); process.exit(1); });
 """
+    )
     return subprocess.run(
         [node, "-e", script, consumer],
-        input=extension_source if extension_source is not None else _extension_path().read_text(),
+        input=_extension_path().read_text(),
         capture_output=True,
         check=False,
         text=True,
