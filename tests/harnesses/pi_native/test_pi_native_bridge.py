@@ -248,6 +248,28 @@ def test_write_extension_files_defaults_tools_to_empty(tmp_path: Path) -> None:
     assert payload["tools"] == []
 
 
+def test_write_extension_files_merges_extra_config(tmp_path: Path) -> None:
+    """``extra_config`` adds top-level keys; omitting it leaves the config unchanged."""
+    kwargs = {
+        "session_id": "conv_abc",
+        "server_url": "http://omnigent.test",
+        "conversation_url": "http://omnigent.test/c/conv_abc",
+    }
+    _ext, plain = pi_native_bridge.write_extension_files(tmp_path / "plain", **kwargs)
+    _ext, extra = pi_native_bridge.write_extension_files(
+        tmp_path / "extra", **kwargs, extra_config={"primeControlsDir": "/controls"}
+    )
+
+    plain_payload = json.loads(plain.read_text(encoding="utf-8"))
+    extra_payload = json.loads(extra.read_text(encoding="utf-8"))
+    assert "primeControlsDir" not in plain_payload
+    assert extra_payload["primeControlsDir"] == "/controls"
+    del extra_payload["primeControlsDir"]
+    extra_payload["bridgeDir"] = plain_payload["bridgeDir"]
+    extra_payload["inboxDir"] = plain_payload["inboxDir"]
+    assert extra_payload == plain_payload
+
+
 def test_refresh_config_auth_headers_replaces_only_auth(tmp_path: Path) -> None:
     """Refreshing the bearer rewrites only ``authHeaders``, leaving the rest.
 
