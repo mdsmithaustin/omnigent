@@ -376,8 +376,12 @@ class ServerMcpPool:
         """
         if entry.prewarm_task is not None and not entry.prewarm_task.done():
             entry.prewarm_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await entry.prewarm_task
+            except asyncio.CancelledError:
+                caller = asyncio.current_task()
+                if caller is not None and caller.cancelling():
+                    raise
         for server in entry.servers.values():
             if server.connection is not None:
                 try:

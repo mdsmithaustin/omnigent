@@ -962,8 +962,11 @@ class McpServerConnection:
         if self._close_event is not None:
             self._close_event.set()
         task = self._lifecycle_task
+        ready = self._ready_future
         cancelled = None
         if task is not None:
+            if ready is not None and not ready.done():
+                task.cancel()
             while not task.done():
                 try:
                     await asyncio.shield(task)
@@ -975,7 +978,6 @@ class McpServerConnection:
                     break
             with suppress(asyncio.CancelledError, Exception):
                 task.result()
-        ready = self._ready_future
         if ready is not None and ready.done() and not ready.cancelled():
             ready.exception()
         self._lifecycle_task = None

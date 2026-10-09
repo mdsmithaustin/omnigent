@@ -1923,26 +1923,38 @@ async def test_cancelled_drain_retains_lock_until_owner_exit(operation: str) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("prior_success", [False, True])
-async def test_close_drains_cancelled_waiter_and_observes_detached_startup_error(
+@pytest.mark.parametrize("stage", ["initialize", "discover"])
+@pytest.mark.parametrize("cancel_close", [False, True])
+async def test_close_interrupts_detached_startup(
     prior_success: bool,
+    stage: str,
+    cancel_close: bool,
 ) -> None:
     started = asyncio.Event()
-    release = asyncio.Event()
+    exiting = asyncio.Event()
+    release_startup = asyncio.Event()
+    release_exit = asyncio.Event()
     loop = asyncio.get_running_loop()
     errors: list[dict[str, Any]] = []
     previous_handler = loop.get_exception_handler()
     loop.set_exception_handler(lambda loop, context: errors.append(context))
 
-    async def fail_startup(generation: int) -> None:
+    async def startup(generation: int) -> None:
         started.set()
-        await release.wait()
-        raise ValueError("detached startup failure")
+        await release_startup.wait()
+
+    async def leave(generation: int) -> None:
+        if generation == 2:
+            exiting.set()
+            await release_exit.wait()
 
     with controlled_mcp_lifecycle() as sdk:
         conn = McpServerConnection(config=recovery_config())
         snapshot = await conn.connect() if prior_success else None
         sdk.generation = 2
-        sdk.on_initialize = fail_startup
+        clear_discovery_cache()
+        setattr(sdk, f"on_{stage}", startup)
+        sdk.on_exit = leave
         first = asyncio.create_task(
             conn.call_tool("echo", {}) if prior_success else conn.connect()
         )
@@ -1955,15 +1967,17 @@ async def test_close_drains_cancelled_waiter_and_observes_detached_startup_error
                 await first
             assert conn._discovered_tools is snapshot
             close = asyncio.create_task(conn.close())
-            await asyncio.sleep(0)
-            assert not close.done()
-            close.cancel()
-            await asyncio.sleep(0)
-            assert not close.done() and conn._call_lock.locked()
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(close, 2)
-            assert owner is not None and owner.done() and not owner.cancelled()
+            await asyncio.wait_for(exiting.wait(), 2)
+            assert conn._call_lock.locked() and not close.done()
+            if cancel_close:
+                close.cancel()
+            release_exit.set()
+            if cancel_close:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(asyncio.shield(close), 2)
+            else:
+                await asyncio.wait_for(asyncio.shield(close), 2)
+            assert owner is not None and owner.cancelled()
             assert sdk.active == 0 and sdk.starts == (2 if prior_success else 1)
             assert conn._lifecycle_task is conn._ready_future is conn._close_event is None
             assert conn._session is conn._discovered_tools is None
@@ -1971,11 +1985,13 @@ async def test_close_drains_cancelled_waiter_and_observes_detached_startup_error
             gc.collect()
             await asyncio.sleep(0)
             assert errors == []
-            sdk.on_initialize = None
+            setattr(sdk, f"on_{stage}", None)
+            sdk.on_exit = None
             assert [tool.name for tool in await conn.connect()] == ["echo"]
             assert await conn.call_tool("echo", {}) == "generation-2"
         finally:
-            release.set()
+            release_startup.set()
+            release_exit.set()
             await asyncio.gather(first, *([close] if close else []), return_exceptions=True)
             await conn.close()
             loop.set_exception_handler(previous_handler)
