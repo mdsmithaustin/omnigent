@@ -1,7 +1,7 @@
 """The fork's agent-name index sits after za3b4c5d6e7f and repairs either mm1 state."""
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -31,18 +31,64 @@ def _revision(conn: sa.Connection) -> str:
 
 
 @pytest.fixture
-def migration(tmp_path: Path, _worker_db_uri: str) -> Iterator[tuple[sa.Connection, Config]]:
+def migration(tmp_path: Path, _worker_db_uri: str) -> Generator[tuple[sa.Connection, Config]]:
     uri = _worker_db_uri or f"sqlite:///{tmp_path / 'upgrade.db'}"
     engine = sa.create_engine(uri)
     config = _build_alembic_config(uri)
     try:
         with engine.connect() as conn:
             config.attributes["connection"] = conn
-            if _worker_db_uri:
-                command.downgrade(config, "ll1a2b3c4d5e")
-            yield conn, config
-            if _worker_db_uri:
-                command.upgrade(config, "head")
+            try:
+                if _worker_db_uri:
+                    command.downgrade(config, "ll1a2b3c4d5e")
+                yield conn, config
+            finally:
+                if _worker_db_uri:
+                    conn.rollback()
+                    command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("termination", ["complete", "close", "error"])
+def test_migration_fixture_restores_shared_database(tmp_path: Path, termination: str) -> None:
+    uri = f"sqlite:///{tmp_path / 'shared.db'}"
+    command.upgrade(_build_alembic_config(uri), "head")
+    fixture = migration.__wrapped__(tmp_path, uri)
+    try:
+        conn, config = next(fixture)
+        assert _revision(conn) == "ll1a2b3c4d5e"
+        conn.rollback()
+        command.upgrade(config, "mm1a2b3c4d5e")
+        conn.execute(
+            sa.insert(SqlAgent),
+            {
+                "workspace_id": 0,
+                "id": "2" * 32,
+                "created_at": 1,
+                "name": "uncommitted",
+                "bundle_location": "test/bundle",
+                "version": 1,
+                "kind": 2,
+            },
+        )
+        if termination == "complete":
+            with pytest.raises(StopIteration):
+                next(fixture)
+        elif termination == "close":
+            fixture.close()
+        else:
+            with pytest.raises(RuntimeError, match="interrupted migration"):
+                fixture.throw(RuntimeError("interrupted migration"))
+    finally:
+        fixture.close()
+    engine = sa.create_engine(uri)
+    try:
+        with engine.connect() as conn:
+            assert _revision(conn) == "fork2a3b4c5d"
+            assert "conversation_native_sources" in sa.inspect(conn).get_table_names()
+            assert conn.execute(sa.select(SqlAgent.id)).scalars().all() == []
+            assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
     finally:
         engine.dispose()
 
