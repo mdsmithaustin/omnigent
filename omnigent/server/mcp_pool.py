@@ -354,7 +354,11 @@ class ServerMcpPool:
         """
         try:
             conn = McpServerConnection(config=server.config)
-            tools = await conn.connect()
+            try:
+                tools = await conn.connect()
+            except asyncio.CancelledError:
+                await conn.close()
+                raise
             server.connection = conn
             server.tools = list(tools)
             server.error = None
@@ -372,6 +376,8 @@ class ServerMcpPool:
         """
         if entry.prewarm_task is not None and not entry.prewarm_task.done():
             entry.prewarm_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await entry.prewarm_task
         for server in entry.servers.values():
             if server.connection is not None:
                 try:

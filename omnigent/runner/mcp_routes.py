@@ -111,10 +111,7 @@ def register_mcp_routes(
         if isinstance(request, _BodyRequest):
             body = await request.json()
         else:
-            try:
-                raw_body = await request.body()
-            except ValueError as exc:
-                raise RuntimeError("MCP request body read failed") from exc
+            raw_body = await request.body()
             try:
                 body = json.loads(raw_body)
             except ValueError:

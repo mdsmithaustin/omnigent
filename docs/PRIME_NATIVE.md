@@ -132,6 +132,12 @@ the connection after the server returns. The existing ordinary-call circuit brea
 still applies. See [MCP recovery and retries](AGENT_YAML_SPEC.md#mcp-recovery-and-retries)
 for serialized calls, startup cancellation, teardown timing, and MRTR limits.
 
+Prime Native's
+[qualification record](../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
+covers one real regular HTTP case. Actual MRTR recovery and stdio restart remain
+outside that measured case. The [remaining roadmap](#remaining-roadmap) also
+records the earlier finite-wait qualification.
+
 Bundled skills use `load_skill` and `read_skill_file`. A Python resource delivered
 by those tools can execute in Prime's native `ipython` kernel. Configure resources
 in an [agent specification](AGENT_YAML_SPEC.md) and start a session with that

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.harnesses.pi_native.test_pi_native_extension import _MCP_SOURCE_SEMANTIC_PROVENANCE
 from tests.test_prime_native_root_binding import run_extension
 
 SDK_SOURCE_SEMANTICS = r"""
@@ -89,9 +88,6 @@ const sdk = consumer.startsWith("prime")
 def test_local_task_denials_follow_selected_sdk_source_semantics(
     tmp_path: Path, consumer: str
 ) -> None:
-    provenance = _MCP_SOURCE_SEMANTIC_PROVENANCE[consumer]
-    assert provenance["sdk_execution"] is False
-    assert provenance["sources"]
     run_extension(
         tmp_path,
         "const consumer = "

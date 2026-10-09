@@ -580,3 +580,45 @@ async def test_retained_server_pool_connection_recovers_after_exhausted_replacem
             await pool.shutdown_all()
         assert sdk.active == 0
         assert sdk.peak_active == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "shutdown_for", "shutdown_all"])
+async def test_cancelled_prewarm_closes_owned_lifecycle(action: str) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize(generation: int) -> None:
+        entered.set()
+        await release.wait()
+
+    with controlled_mcp_lifecycle() as sdk:
+        sdk.on_initialize = initialize
+        pool = ServerMcpPool()
+        warm = asyncio.create_task(pool.list_tools("agent", _make_spec(recovery_config())))
+        cleanup = None
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            assert sdk.active == 1
+            if action == "cancel":
+                warm.cancel()
+            elif action == "shutdown_for":
+                cleanup = asyncio.create_task(pool.shutdown_for("agent"))
+            else:
+                cleanup = asyncio.create_task(pool.shutdown_all())
+            await asyncio.sleep(0)
+            release.set()
+            if cleanup is not None:
+                await asyncio.wait_for(cleanup, timeout=5)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(warm, timeout=5)
+            assert sdk.active == 0
+            assert all(owner is not None and owner.done() for owner in sdk.owners)
+        finally:
+            release.set()
+            if not warm.done():
+                warm.cancel()
+            await asyncio.gather(warm, return_exceptions=True)
+            if cleanup is not None:
+                await asyncio.gather(cleanup, return_exceptions=True)
+            await pool.shutdown_all()

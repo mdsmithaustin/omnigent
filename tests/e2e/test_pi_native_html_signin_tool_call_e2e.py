@@ -1,5 +1,16 @@
 """Exercise the shipped Pi extension's registered MCP callback under Node.
 
+The journey
+-----------
+A user runs a pi-native session (``omnigent pi``) on a topology with an
+authenticating edge (a reverse proxy or an IdP) in front of the Omnigent
+server. The Pi agent calls a bridged Omnigent tool, which the extension
+dispatches by POSTing a JSON-RPC ``tools/call`` to
+``POST /v1/sessions/{id}/mcp``. When the caller's auth has lapsed, the proxy
+answers that route with an HTTP ``200`` **sign-in document** (``text/html``)
+instead of the runner's JSON envelope -- a common proxy behaviour, not a
+Databricks-specific one.
+
 A synthetic HTTP 200 HTML sign-in response must make the callback throw a
 bounded authentication classification without response body text. A valid
 MCP JSON response must return the successful tool result.
@@ -8,6 +19,17 @@ The runner generates the extension and config through ``write_extension_files``.
 The fixture stubs HTTP and the Pi registration API, then calls ``execute``
 directly. It observes callback return or throw, not an SDK tool-result journal.
 Pi and Prime SDK error conversion has separate selected-source tests.
+
+Fidelity
+--------
+This drives the REAL shipped extension: it is generated exactly as the runner
+generates it (``omnigent.harnesses.pi_native.bridge.write_extension_files``,
+with a bridged tool in ``config.tools``) and loaded under Node the way Pi loads
+it. Only the network boundary is faulted -- ``globalThis.fetch`` answers the
+``/mcp`` route with the reported ``200 text/html`` sign-in page (the reported
+trigger). The Pi agent's own entry point is exercised: the model-invoked
+``pi.registerTool({... execute})`` callback the bridge registers for each
+Omnigent tool.
 
 Usage::
 
@@ -33,11 +55,21 @@ pytestmark = pytest.mark.skipif(
     reason="node is required to execute the pi-native extension",
 )
 
+# tests/e2e/<this file> -> parents[2] is the worktree root; the Node subprocess
+# runs from there so it resolves the same checkout's extension file.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+# A registered Omnigent tool the extension will expose via pi.registerTool. Its
+# execute() round-trips through POST /v1/sessions/{id}/mcp -- the boundary the
+# bug lives at.
 _TOOL_NAME = "sys_os_shell"
+# Secret markers seeded into the sign-in document. A body-quoting error message
+# would surface them; a correct classification quotes nothing.
 _CSRF_SECRET = "CSRF-SECRET-abc123"
 _STATE_SECRET = "STATE-SECRET-tenant-acme-xyz"
 
+# The proxy/IdP sign-in page returned with HTTP 200 + text/html. Leading
+# ``<!DOCTYPE`` is always within even a short SyntaxError body-prefix window, so
+# a leak is detectable regardless of the undici/V8 prefix length.
 _SIGNIN_HTML = (
     "<!DOCTYPE html><html><head><title>Sign in</title>"
     f'<meta name="csrf-token" content="{_CSRF_SECRET}">'
@@ -46,6 +78,8 @@ _SIGNIN_HTML = (
     "<button>Sign in</button></form>Please sign in to continue.</body></html>"
 )
 
+# Body / HTML markers that must never appear in a tool result handed to the
+# model.
 _BODY_MARKERS = ("<!DOCTYPE", "<html", "<head", "<form", "<input", _CSRF_SECRET, _STATE_SECRET)
 
 
@@ -65,6 +99,14 @@ _CallbackOutcome = _Returned | _Thrown
 
 
 def _prepare_bridge(tmp_path: Path) -> tuple[Path, Path]:
+    """Generate the real pi-native extension + config, with a bridged tool.
+
+    Uses the same helper the runner uses for native Pi sessions, so the test
+    covers the generated config, the shipped extension source, and the
+    ``pi.registerTool`` execute path together.
+
+    :returns: ``(extension_path, config_path)``.
+    """
     bridge_dir = tmp_path / "bridge"
     bridge_dir.mkdir()
     extension_path, config_path = pi_native_bridge.write_extension_files(

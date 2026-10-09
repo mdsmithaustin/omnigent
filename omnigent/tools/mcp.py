@@ -519,6 +519,9 @@ class McpServerConnection:
     elicitation_callback: Callable[[str, ElicitRequestParams], Awaitable[ElicitResult]] | None = (
         field(default=None, repr=False)
     )
+    # Guards concurrent tool calls so ``_active_session_id`` is
+    # safe to read in the elicitation handler (which runs on the
+    # SDK's receive-loop task, not the caller's task).
     _call_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     # Session id for the in-flight tool call, set under
     # ``_call_lock`` so only one call is active at a time.
@@ -610,6 +613,10 @@ class McpServerConnection:
     async def call_tool(
         self,
         name: str,
+        # Values are Any because MCP tool arguments are JSON
+        # objects with heterogeneous value types (str, int,
+        # bool, nested dicts, etc.). Matches the MCP SDK's
+        # own ClientSession.call_tool() signature.
         arguments: dict[str, Any],
         session_id: str | None = None,
     ) -> str:
@@ -664,11 +671,17 @@ class McpServerConnection:
         self,
         session: ClientSession,
         name: str,
-        arguments: dict[str, Any],
+        arguments: dict[str, Any],  # JSON values — see call_tool
         session_id: str | None = None,
     ) -> str:
         """
         Send a single ``tools/call`` request to the MCP session.
+
+        The caller holds :attr:`_call_lock` and sets
+        :attr:`_active_session_id` for the duration of the call so
+        the inline elicitation handler knows which session to
+        surface the approval on. The lock serializes concurrent
+        calls from different sessions on the same shared connection.
 
         When the MCP server returns an ``InputRequiredResult``
         (MRTR pattern, ``resultType == "input_required"``), raises
@@ -687,6 +700,7 @@ class McpServerConnection:
         """
         result = await session.call_tool(name=name, arguments=arguments)
 
+        # ── MRTR: detect InputRequiredResult ─────────────────────────
         extras = getattr(result, "model_extra", {}) or {}
         if extras.get("resultType") == "input_required":
             raise McpElicitationRequired(
@@ -759,6 +773,9 @@ class McpServerConnection:
                     ),
                     CallToolResult,
                 )
+                # Multi-round MRTR: the server may return another
+                # InputRequiredResult on the retry. Raise so the Omnigent server
+                # can surface the next elicitation round.
                 extras = getattr(result, "model_extra", {}) or {}
                 if extras.get("resultType") == "input_required":
                     raise McpElicitationRequired(
@@ -812,10 +829,24 @@ class McpServerConnection:
         ToolManager's ``EventLoopThread.run`` schedules
         ``connect()`` and ``close()`` as separate tasks.
 
+        Failure modes are routed through ``_ready_future``:
+
+        - If teardown fails *before* ready is set, the
+          exception is propagated to the caller of
+          :meth:`connect` (or :meth:`_reconnect`) so they see
+          a real error rather than a silently-wedged
+          connection.
+        - If a steady-state failure occurs *after* ready, it
+          is logged here — a mid-flight teardown error
+          shouldn't crash the workflow.
         """
         try:
             async with AsyncExitStack() as stack:
                 read_stream, write_stream = await self._open_transport(stack)
+                # Session-level read timeout applies to initialize(),
+                # list_tools(), and any call_tool() that doesn't pass
+                # its own per-call timeout. Falls back to the MCP SDK
+                # default (no timeout) when config.timeout is None.
                 session_timeout = (
                     timedelta(seconds=self.config.timeout)
                     if self.config.timeout is not None
@@ -834,10 +865,13 @@ class McpServerConnection:
                 await stack.enter_async_context(session)
                 await session.initialize()
                 self._session = session
+                # Fresh transport — drop any unhealthy-transport
+                # signal recorded on the previous connection.
                 self._transport_error = None
                 discovered = await self._discover_or_use_cache()
                 self._discovered_tools = discovered
                 ready.set_result(discovered)
+                # Hold transport + session open until close() signals.
                 # All call_tool() invocations during this window run
                 # on sibling tasks, but they only send/receive on
                 # already-open anyio streams — that does not touch
@@ -870,6 +904,9 @@ class McpServerConnection:
         If the cache is fresh, returns cached definitions without
         calling ``tools/list``. Otherwise performs a live
         ``tools/list`` call and updates the cache.
+
+        Must be called after session initialization so that
+        ``self._session`` is live.
 
         :returns: List of MCP tool definitions.
         """
@@ -1655,12 +1692,22 @@ async def _call_tool_with_reconnect(
                 assert ready is not None
                 if not ready.done():
                     await asyncio.shield(ready)
+            # Reconnect first when the previous attempt broke the
+            # session. Inside the try so a reconnect that fails on a
+            # still-recovering network is itself classified and
+            # retried on the next attempt instead of aborting the
+            # whole call.
             if needs_reconnect or conn._session is None:
                 await conn._reconnect()
                 needs_reconnect = False
             session = conn._session
             assert session is not None, "reconnect completed without a session"
             conn._active_session_id = session_id
+            # Scope the unhealthy-transport signal to this attempt:
+            # bumping the serial invalidates recordings from any
+            # still-lingering response stream of a previous timed-out
+            # call, and the fresh slot only accepts failures from
+            # responses opened during this attempt.
             conn._call_serial += 1
             conn._transport_error = None
             try:
@@ -1672,6 +1719,7 @@ async def _call_tool_with_reconnect(
                 raise
             last_exc = exc
             needs_reconnect = True
+            # Last attempt — don't reconnect, just raise.
             if attempt + 1 >= total_tries:
                 break
             delay = _backoff_delay(attempt, retry)
@@ -1698,6 +1746,7 @@ async def _call_tool_with_reconnect(
             )
             await _sleep(delay)
 
+    # All attempts exhausted — re-raise the last connection error.
     assert last_exc is not None
     raise last_exc
 

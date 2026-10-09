@@ -638,10 +638,8 @@ These connection rules apply to both
 [`RunnerMcpManager`](../omnigent/runner/mcp_manager.py) and
 [`ServerMcpPool`](../omnigent/server/mcp_pool.py). The runner's MRTR route forwards
 the existing `session_id` when it resends an elicitation response. Declarations
-and configuration syntax are unchanged. Prime Native's
-[qualification record](../designs/prime-native/NO_FORK.md#regular-http-mcp-reconnect-qualification)
-covers one real regular HTTP case. Actual MRTR recovery and stdio restart remain
-outside that measured case.
+and configuration syntax are unchanged. See [Prime Native](PRIME_NATIVE.md)
+for adapter qualification and limits.
 
 ### Python function tool
 

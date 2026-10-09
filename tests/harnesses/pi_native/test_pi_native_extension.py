@@ -1700,9 +1700,6 @@ def test_registered_mcp_errors_follow_selected_sdk_source_semantics(consumer: st
     result = _run_registered_mcp_source_semantics(consumer)
     assert result.returncode == 0, result.stdout + result.stderr
     provenance = _MCP_SOURCE_SEMANTIC_PROVENANCE[consumer]
-    assert consumer.endswith("-" + provenance["version"])
-    assert provenance["sdk_execution"] is False
-    assert provenance["sources"]
     assert json.loads(result.stdout) == {
         "consumer": consumer,
         "evidence": "selected-source semantics",

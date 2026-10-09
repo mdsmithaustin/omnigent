@@ -2864,7 +2864,7 @@ async def test_mcp_execute_preserves_empty_call_params(body: dict[str, Any]) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "failure_type", [ValueError, OSError, RuntimeError, ClientDisconnect, asyncio.CancelledError]
+    "failure_type", [OSError, RuntimeError, ClientDisconnect, asyncio.CancelledError]
 )
 async def test_mcp_execute_asgi_receive_failure(failure_type: type[BaseException]) -> None:
     app, manager, _, _ = _build_app_with_mcp_tool()
@@ -2896,8 +2896,7 @@ async def test_mcp_execute_asgi_receive_failure(failure_type: type[BaseException
         "client": ("127.0.0.1", 1234),
         "server": ("test", 80),
     }
-    expected_type = RuntimeError if failure_type is ValueError else failure_type
-    with pytest.raises(expected_type) as raised:
+    with pytest.raises(failure_type) as raised:
         await app(scope, receive, send)
     assert reads == 1
     if failure_type is asyncio.CancelledError:
@@ -2909,10 +2908,7 @@ async def test_mcp_execute_asgi_receive_failure(failure_type: type[BaseException
         assert (
             b"".join(message.get("body", b"") for message in messages) == b"Internal Server Error"
         )
-        if failure_type is ValueError:
-            assert str(raised.value) == "MCP request body read failed"
-            assert raised.value.__cause__ is failure
-        elif failure_type is ClientDisconnect:
+        if failure_type is ClientDisconnect:
             assert str(raised.value) == ""
         else:
             assert raised.value is failure
