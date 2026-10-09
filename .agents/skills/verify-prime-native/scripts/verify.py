@@ -67,7 +67,9 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
         except subprocess.TimeoutExpired as exc:
             check["outcome"] = "timeout"
             output = "".join(
-                (value.decode(errors="replace") if isinstance(value, bytes) else value or "")[:32768]
+                (value.decode(errors="replace") if isinstance(value, bytes) else value or "")[
+                    :32768
+                ]
                 for value in (exc.stdout, exc.stderr)
             )
             raise
