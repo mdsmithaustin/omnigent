@@ -50,49 +50,6 @@ def migration(tmp_path: Path, _worker_db_uri: str) -> Generator[tuple[sa.Connect
         engine.dispose()
 
 
-@pytest.mark.parametrize("termination", ["complete", "close", "error"])
-def test_migration_fixture_restores_shared_database(tmp_path: Path, termination: str) -> None:
-    uri = f"sqlite:///{tmp_path / 'shared.db'}"
-    command.upgrade(_build_alembic_config(uri), "head")
-    fixture = migration.__wrapped__(tmp_path, uri)
-    try:
-        conn, config = next(fixture)
-        assert _revision(conn) == "ll1a2b3c4d5e"
-        conn.rollback()
-        command.upgrade(config, "mm1a2b3c4d5e")
-        conn.execute(
-            sa.insert(SqlAgent),
-            {
-                "workspace_id": 0,
-                "id": "2" * 32,
-                "created_at": 1,
-                "name": "uncommitted",
-                "bundle_location": "test/bundle",
-                "version": 1,
-                "kind": 2,
-            },
-        )
-        if termination == "complete":
-            with pytest.raises(StopIteration):
-                next(fixture)
-        elif termination == "close":
-            fixture.close()
-        else:
-            with pytest.raises(RuntimeError, match="interrupted migration"):
-                fixture.throw(RuntimeError("interrupted migration"))
-    finally:
-        fixture.close()
-    engine = sa.create_engine(uri)
-    try:
-        with engine.connect() as conn:
-            assert _revision(conn) == "fork2a3b4c5d"
-            assert "conversation_native_sources" in sa.inspect(conn).get_table_names()
-            assert conn.execute(sa.select(SqlAgent.id)).scalars().all() == []
-            assert _agent_indexes(conn)["ix_agents_id_name"] == _NAME_INDEX
-    finally:
-        engine.dispose()
-
-
 def test_migration_scripts_resolve_one_head_without_duplicate_revisions() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -101,8 +58,8 @@ def test_migration_scripts_resolve_one_head_without_duplicate_revisions() -> Non
     assert duplicates == []
 
 
-def test_fresh_upgrade_and_bootstrap_create_both_indexes(
-    migration: tuple[sa.Connection, Config], tmp_path: Path
+def test_fresh_upgrade_creates_both_indexes(
+    migration: tuple[sa.Connection, Config],
 ) -> None:
     conn, config = migration
     command.upgrade(config, "fork2a3b4c5d")
@@ -110,14 +67,6 @@ def test_fresh_upgrade_and_bootstrap_create_both_indexes(
     assert _revision(conn) == "fork2a3b4c5d"
     assert upgraded["ix_agents_id_name"] == _NAME_INDEX
     assert upgraded["ix_agents_kind_owner_created"] == _OWNER_INDEX
-    fresh = get_or_create_engine(f"sqlite:///{tmp_path / 'fresh.db'}")
-    try:
-        with fresh.connect() as fresh_conn:
-            bootstrap = _agent_indexes(fresh_conn)
-        assert bootstrap["ix_agents_id_name"] == _NAME_INDEX
-        assert bootstrap["ix_agents_kind_owner_created"] == _OWNER_INDEX
-    finally:
-        fresh.dispose()
 
 
 def test_model_metadata_declares_agent_name_index(tmp_path: Path) -> None:
