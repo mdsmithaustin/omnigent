@@ -168,7 +168,7 @@ def executor_bridge_dir() -> Path:
 
 
 def prune_orphaned_bridge_dirs() -> int:
-    """Count recovered orphan runtimes; only a deleted conversation's state is removed."""
+    """Count recovered orphan runtimes under docs/PRIME_NATIVE.md's cleanup policy."""
     from omnigent.harnesses.prime_native.process import stop_orphaned_runtimes
 
     return stop_orphaned_runtimes()

@@ -11,7 +11,7 @@ Users can detach their terminal and return to their Prime session. Explicit stop
 - Exiting the required TUI shuts down its private daemon and workers.
 - Interrupt stops the active turn and permits a subsequent turn.
 - Explicit stop tears down the owned daemon and workers.
-- Startup and maintenance stop dead-owner runtimes while preserving saved sessions and private configuration.
+- Startup and maintenance follow the [runtime cleanup policy](../../../../docs/PRIME_NATIVE.md#state-and-compatibility).
 - A live terminal protects its runtime after the launch owner exits.
 - A worker restart must not claim that Python memory survived.
 
@@ -28,7 +28,7 @@ Preconditions are a session created by this run and its isolated Prime daemon en
 - Interrupt a bounded active turn through the Omnigent control. Require an interrupted outcome and a successful subsequent reply.
 - Stop the owned session. Inspect its daemon status and owned process IDs. Require no surviving worker or kernel. Preserve evidence after removing scratch state.
 - Stop while terminal creation is in progress. Require HTTP 503, retained launch ownership, and no idle status. Retry after launch settles and require owned process and socket absence.
-- For orphan recovery, terminate only the isolated session's wrapper and terminal without normal shutdown. Run startup or host maintenance. Require no owned daemon or worker, retained saved sessions and configuration, and zero recoveries on a second sweep. Repeat with the terminal alive and require its runtime to survive.
+- For orphan recovery, keep the conversation accessible through the recorded server and credentials. Terminate only the isolated session's wrapper and terminal without normal shutdown. Run startup or host maintenance. Require no owned daemon or worker, retained saved sessions and configuration, and zero recoveries on a second sweep. Repeat with the terminal alive and require its runtime to survive.
 
 ## Gotchas
 

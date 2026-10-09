@@ -172,8 +172,8 @@ private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
 sessions. Conversation DELETE attempts adapter-state removal after shutdown.
 Runner cleanup is best effort. A successful response can leave state when the
 runner is unavailable or removal fails; it does not prove observed retirement.
-Startup and host maintenance can reclaim that state once the recorded server
-confirms the deletion, as described below.
+Startup and host maintenance can reclaim that state under the cleanup policy
+below.
 
 Prime's main terminal is eligible for native pane idle cleanup. By default,
 the runner checks every 60 seconds and closes the pane after one hour of
@@ -187,8 +187,9 @@ Detaching preserves the living kernel only while the runtime remains alive.
 
 Startup and host maintenance stop orphaned Prime runtimes whose recorded owner
 is dead in the same process namespace and boot. A live terminal protects its
-runtime even after its runner exits. Recovery retains saved sessions and private
-configuration for resume. Unknown or legacy ownership records remain untouched.
+runtime even after its runner exits. Recovery normally retains saved sessions and
+private configuration for resume, subject to the removal rule below. Unknown or
+legacy ownership records remain untouched.
 Maintenance removes a runtime directory when the server reports its conversation
 as deleted. The server reports a conversation the recorded credentials can no
 longer access the same way as a deleted one, so revoked access also reclaims that
@@ -200,6 +201,8 @@ private-ownership checks. Its launch owner, owner record, and terminal must be
 absent or provably dead, and the runtime must stop with no owned process or
 socket left. An unreachable server, an authentication failure, any other response,
 or a missing or invalid record retains the directory.
+After a connection error or timeout, the sweep skips further session checks for
+that server URL and retries on the next sweep.
 Cleanup sends Prime's public shutdown command to the qualified private
 supervisor socket. Omnigent clears transient ownership only after that socket
 and its owned processes stop. If ownership or shutdown cannot be proved, it
