@@ -779,11 +779,16 @@ def live_initial_process_records(initial: list[dict[str, object]]) -> list[dict[
                 continue
             if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
                 continue
+            try:
+                argv = process.cmdline()
+            except psutil.AccessDenied:
+                # A live setuid or exiting owned process keeps its verified identity.
+                argv = []
             retained.append(
                 {
                     "pid": pid,
                     "started": started,
-                    "argv": process.cmdline(),
+                    "argv": argv,
                     "ownership": f"initial_{record.get('ownership', 'unknown')}",
                 }
             )

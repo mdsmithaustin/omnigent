@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -359,8 +359,12 @@ def _name_matches_alias(name: str, aliases: set[str]) -> bool:
     )
 
 
-def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
+def _owned_processes(
+    paths: PrimeRuntimePaths, known: Set[_ProcessIdentity] = frozenset()
+) -> list[psutil.Process]:
     processes: dict[int, psutil.Process] = {}
+    verified: set[_ProcessIdentity] = set()
+    unreadable: list[tuple[psutil.Process, BaseException]] = []
     kernel_process_names = _read_kernel_process_names(paths)
     prime_process_names = _read_prime_process_names(paths)
     claim = owner_claim.read_owner_claim(paths.root)
@@ -380,6 +384,7 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
             }:
                 continue
             if process.environ().get("PRIME_AGENT_CODING_AGENT_DIR") == str(paths.agent_dir):
+                verified.add(_ProcessIdentity(process.pid, process.create_time()))
                 if claim is not None and process.pid == claim.pid:
                     continue
                 for owned in (process, *process.children(recursive=True)):
@@ -387,16 +392,36 @@ def _owned_processes(paths: PrimeRuntimePaths) -> list[psutil.Process]:
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
         except (psutil.AccessDenied, OSError, SystemError) as exc:
-            for attempt in range(3):
-                if not _process_alive(process):
-                    break
-                if attempt < 2:
-                    time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
-            else:
-                raise RuntimeError(
-                    "Prime process ownership could not be observed; runtime retained."
-                ) from exc
+            unreadable.append((process, exc))
+    # Setuid helpers and exiting processes hide argv and environment on macOS.
+    for process, exc in unreadable:
+        if process.pid in processes:
+            continue
+        if _owned_by_lineage(process, verified | set(known)):
+            processes[process.pid] = process
+            continue
+        for attempt in range(3):
+            if not _process_alive(process):
+                break
+            if attempt < 2:
+                time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
+        else:
+            raise RuntimeError(
+                "Prime process ownership could not be observed; runtime retained."
+            ) from exc
     return list(processes.values())
+
+
+def _owned_by_lineage(process: psutil.Process, owned: set[_ProcessIdentity]) -> bool:
+    if not owned:
+        return False
+    try:
+        return any(
+            _ProcessIdentity(candidate.pid, candidate.create_time()) in owned
+            for candidate in (process, *process.parents())
+        )
+    except (psutil.Error, OSError, SystemError):
+        return False
 
 
 def _process_identity(process: psutil.Process) -> _ProcessIdentity | None:
@@ -410,8 +435,10 @@ def _process_identity(process: psutil.Process) -> _ProcessIdentity | None:
         ) from exc
 
 
-def _owned_process_identities(paths: PrimeRuntimePaths) -> set[_ProcessIdentity]:
-    identities = (_process_identity(process) for process in _owned_processes(paths))
+def _owned_process_identities(
+    paths: PrimeRuntimePaths, known: Set[_ProcessIdentity] = frozenset()
+) -> set[_ProcessIdentity]:
+    identities = (_process_identity(process) for process in _owned_processes(paths, known))
     return {identity for identity in identities if identity is not None}
 
 
@@ -769,7 +796,7 @@ def _send_shutdown(
 def _wait_for_runtime_absence(paths: PrimeRuntimePaths, captured: set[_ProcessIdentity]) -> None:
     deadline = time.monotonic() + _SHUTDOWN_SETTLE_TIMEOUT_S
     while True:
-        fresh = _owned_process_identities(paths)
+        fresh = _owned_process_identities(paths, captured)
         observed = captured | fresh
         survivors = [identity for identity in observed if _identity_alive(identity)]
         live_sockets = _live_sockets(paths)

@@ -10,7 +10,11 @@ The adapter uses Prime 0.9.6 and the shared Pi extension inbox, message conversi
 
 Scoped shutdown uses the published supervisor command on the conversation's
 qualified private socket. Omnigent retains owner records and saved history when
-the socket or process state cannot prove shutdown. It does not use Prime's
+the socket or process state cannot prove shutdown. macOS hides the arguments
+and environment of setuid helpers and exiting processes. Cleanup treats such a
+process as owned when its identity or an ancestor's identity was verified for
+this runtime, and waits for it to exit. Without that lineage, a live unreadable
+process still retains the runtime. Scoped shutdown does not use Prime's
 root-wide CLI shutdown, whose admission lease can block another Prime startup
 even when daemon discovery uses a private temporary directory. Native Windows
 launch is rejected because the published default named pipe is shared.
@@ -231,8 +235,8 @@ Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
 Those results describe the old PR6 context. Fresh independent source and
 documentation review of this composition remains required.
 
-The provider helper SHA256 remains
-`c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
+The provider helper SHA256 is
+`4f33ceadf77a9765eae8569d4599961684a871288f97c63e766b27bf9d6f5100`.
 At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
 The historical repaired MCP helper SHA256 was

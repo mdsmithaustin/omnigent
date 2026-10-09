@@ -1537,6 +1537,13 @@ def _reply_verdict(
     }
 
 
+def process_exe(process: psutil.Process) -> str | None:
+    try:
+        return process.exe()
+    except (psutil.Error, OSError):
+        return None
+
+
 def identity_alive(identity: ProcessIdentity) -> bool:
     try:
         process = psutil.Process(identity.pid)
@@ -2164,6 +2171,7 @@ class _OwnedRun:
         self._retired_trees: dict[Path, _RetiredOwnedTree] = {}
         self.terminal_sockets: set[Path] = set()
         self.census_errors: set[str] = set()
+        self.unowned_unreadable: dict[tuple[int, float], dict] = {}
         self.observations: list[Observation] = []
         self.quiet = False
         self.contaminated = False
@@ -2206,6 +2214,7 @@ class _OwnedRun:
                 "url": self.url,
                 "session_id": self.session_id,
                 "owners": list(self.owners.values()),
+                "unowned_unreadable": list(self.unowned_unreadable.values()),
                 "foreground_host": self.foreground_host_state(),
                 "bridge_roots": sorted(map(str, self.bridge_roots)),
                 "updated": time.time(),
@@ -2461,6 +2470,7 @@ class _OwnedRun:
             except (psutil.Error, OSError) as exc:
                 self.census_errors.add(f"owned_descendants_unreadable {pid} {type(exc).__name__}")
         records = []
+        unreadable = []
         for process in psutil.process_iter():
             if process.pid == os.getpid():
                 continue
@@ -2469,8 +2479,12 @@ class _OwnedRun:
                 if process.uids().real != os.getuid():
                     continue
                 started = process.create_time()
-                argv = process.cmdline()
-                env = process.environ()
+                try:
+                    argv = process.cmdline()
+                    env = process.environ()
+                except psutil.AccessDenied:
+                    unreadable.append((process, started))
+                    continue
                 agent = env.get("PRIME_AGENT_CODING_AGENT_DIR", "")
                 exact = env.get("OMNIGENT_DATA_DIR") == str(self.runtime / "data")
                 exact = exact or bool(agent and Path(agent).resolve().is_relative_to(self.runtime))
@@ -2497,8 +2511,23 @@ class _OwnedRun:
             except (psutil.Error, OSError) as exc:
                 if owned or any(pid == process.pid for pid, _ in captured):
                     self.census_errors.add(
-                        f"owned_identity_unreadable {process.pid} {type(exc).__name__}"
+                        f"owned_identity_unreadable {process.pid} {type(exc).__name__} "
+                        f"exe={process_exe(process)}"
                     )
+        # macOS hides setuid and exiting processes; only an owned ancestor can own them.
+        owned_keys = captured | set(self.owners)
+        for process, started in unreadable:
+            try:
+                record = self.census_unreadable(process, started, owned_keys)
+                if record is not None and process.status() != psutil.STATUS_ZOMBIE:
+                    records.append(record)
+            except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+            except (psutil.Error, OSError) as exc:
+                self.census_errors.add(
+                    f"owned_identity_unreadable {process.pid} {type(exc).__name__} "
+                    f"exe={process_exe(process)}"
+                )
         prior = live_initial_process_records(list(self.owners.values()))
         for record in prior:
             if "process_error" in record:
@@ -2507,6 +2536,30 @@ class _OwnedRun:
         return list(
             {(record["pid"], record["started"]): record for record in records + prior}.values()
         )
+
+    def census_unreadable(
+        self, process: psutil.Process, started: float, owned_keys: set[tuple[int, float]]
+    ) -> dict | None:
+        key = (process.pid, started)
+        owned = key in owned_keys or any(
+            (parent.pid, parent.create_time()) in owned_keys for parent in process.parents()
+        )
+        if not owned:
+            self.unowned_unreadable[key] = {
+                "pid": process.pid,
+                "started": started,
+                "exe": process_exe(process),
+            }
+            return None
+        record = self.owners.get(key) or {
+            "pid": process.pid,
+            "started": started,
+            "argv": [],
+            "exe": process_exe(process),
+            "ownership": "owned_descendant_unreadable",
+        }
+        self.owners[key] = record
+        return record
 
     def owned_paths(self, session_id: str):
         from omnigent.harnesses.prime_native import bridge
@@ -3166,23 +3219,41 @@ class _OwnedRun:
                     selected[process.pid] = process
                     for child in process.children(recursive=True):
                         selected[child.pid] = child
-            except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
                 continue
         identities = []
         workers = []
         for process in selected.values():
             try:
-                identity = ProcessIdentity(
-                    process.pid, process.create_time(), tuple(process.cmdline())
-                )
+                started = process.create_time()
+                if process.uids().real != os.getuid():
+                    raise RuntimeError(
+                        f"selected_descendant_foreign_uid {process.pid} {process_exe(process)}"
+                    )
+                try:
+                    identity = ProcessIdentity(process.pid, started, tuple(process.cmdline()))
+                    env = process.environ()
+                except psutil.AccessDenied:
+                    identity, env = ProcessIdentity(process.pid, started, ()), None
                 record = expected.get(process.pid)
                 if (
                     record is None
                     or identity.started != record["started"]
                     or identity.argv != tuple(record["argv"])
                 ):
-                    raise RuntimeError("selected_descendant_identity_not_in_owned_census")
-                env = process.environ()
+                    # A qualified root started or replaced this descendant after the census.
+                    self.owners.setdefault(
+                        (process.pid, started),
+                        {
+                            "pid": process.pid,
+                            "started": started,
+                            "argv": list(identity.argv),
+                            "exe": process_exe(process),
+                            "ownership": "selected_descendant",
+                        },
+                    )
+                if env is None:
+                    continue
                 raw_agent = env.get("PRIME_AGENT_CODING_AGENT_DIR")
                 raw_config = env.get("OMNIGENT_EXTENSION_NATIVE_CONFIG")
                 if (
@@ -5128,6 +5199,7 @@ class _OwnedRun:
             {
                 "driver_sha256": sha256(Path(__file__)),
                 "owners": list(self.owners.values()),
+                "unowned_unreadable": list(self.unowned_unreadable.values()),
                 "foreground_host": self.foreground_host_state(),
                 "api_pid": self.server.pid if self.server else None,
                 "receipt": result.receipt.name,
