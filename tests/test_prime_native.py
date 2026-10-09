@@ -20,6 +20,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import click
+import httpx
 import pytest
 
 from omnigent.harnesses.prime_native import bridge, process
@@ -948,6 +949,79 @@ def test_maintenance_retains_runtime_when_deletion_is_unconfirmed(
     if response == "unreachable":
         assert bridge.prune_orphaned_bridge_dirs() == 0
     assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (401, {"error": {"code": "unauthorized"}}),
+        (500, {"error": {"code": "internal"}}),
+        (404, {"detail": "Not Found"}),
+    ],
+)
+def test_maintenance_checks_other_sessions_after_http_response(
+    response: tuple[int, object],
+) -> None:
+    with _sessions_server({"/v1/sessions/conv_kept": response}) as server_url:
+        retained = _retained_runtime("conv_kept", server_url)
+        deleted = _retained_runtime("conv_deleted", server_url)
+        assert bridge.prune_orphaned_bridge_dirs() == 1
+        assert not deleted.root.exists()
+        assert (retained.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.WriteTimeout,
+        httpx.PoolTimeout,
+    ],
+)
+def test_maintenance_skips_unavailable_server_for_rest_of_sweep(
+    monkeypatch: pytest.MonkeyPatch, failure: type[httpx.RequestError]
+) -> None:
+    original_get = httpx.Client.get
+    attempts = 0
+    unavailable = True
+    with _sessions_server({}) as failed_url, _sessions_server({}) as healthy_url:
+        retained = [
+            _retained_runtime("conv_offline_one", failed_url),
+            _retained_runtime("conv_offline_two", failed_url + "/"),
+            _retained_runtime(
+                "conv_offline_owner", failed_url, headers={"Authorization": "Bearer other"}
+            ),
+        ]
+        _write_dead_owner(retained[2])
+        healthy = _retained_runtime("conv_online", healthy_url)
+
+        def get(
+            client: httpx.Client, url: str, *, params: dict[str, str]
+        ) -> httpx.Response:
+            nonlocal attempts
+            if str(client.base_url).rstrip("/") == failed_url and unavailable:
+                attempts += 1
+                raise failure("server unavailable")
+            return original_get(client, url, params=params)
+
+        monkeypatch.setattr(httpx.Client, "get", get)
+        assert bridge.prune_orphaned_bridge_dirs() == 2
+        assert attempts == 1
+        assert not healthy.root.exists()
+        assert not (retained[2].root / "owner.pid").exists()
+        for paths in retained:
+            assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert attempts == 2
+
+        unavailable = False
+        assert bridge.prune_orphaned_bridge_dirs() == 2
+        assert not retained[0].root.exists()
+        assert not retained[1].root.exists()
+        assert (retained[2].session_dir / "saved.jsonl").read_text() == "saved transcript"
 
 
 @pytest.mark.parametrize(

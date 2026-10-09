@@ -858,7 +858,7 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     _remove_runtime_records(paths)
 
 
-def _conversation_deleted(paths: PrimeRuntimePaths) -> bool:
+def _conversation_deleted(paths: PrimeRuntimePaths, unavailable_servers: set[str]) -> bool:
     """Whether the server recorded for this runtime reports its conversation deleted."""
     from omnigent.harnesses.pi_native.bridge import config_path
 
@@ -879,6 +879,9 @@ def _conversation_deleted(paths: PrimeRuntimePaths) -> bool:
         or bridge_dir_for_session_id(session_id) != paths.root
     ):
         return False
+    server_url = server_url.rstrip("/")
+    if server_url in unavailable_servers:
+        return False
     try:
         with httpx.Client(
             base_url=server_url, headers=headers, timeout=_SOCKET_IO_TIMEOUT_S
@@ -892,6 +895,9 @@ def _conversation_deleted(paths: PrimeRuntimePaths) -> bool:
                 },
             )
         body = response.json() if response.status_code == 404 else None
+    except (httpx.ConnectError, httpx.TimeoutException):
+        unavailable_servers.add(server_url)
+        return False
     except (httpx.HTTPError, ValueError):
         return False
     # Only Omnigent's own not-found error counts; another server may now own the port.
@@ -904,6 +910,7 @@ def stop_orphaned_runtimes() -> int:
     from omnigent.inner.terminal import _process_alive as owner_process_alive
 
     stopped = 0
+    unavailable_servers: set[str] = set()
     for root in bridge_roots():
         try:
             root.lstat()
@@ -944,7 +951,7 @@ def stop_orphaned_runtimes() -> int:
                     )
                     if terminal is not None and _process_alive(terminal):
                         continue
-                    deleted = _conversation_deleted(paths)
+                    deleted = _conversation_deleted(paths, unavailable_servers)
                     if reservation is None and not claimed and not deleted:
                         continue
                     if reservation is not None:
