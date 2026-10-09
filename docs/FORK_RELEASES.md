@@ -2,7 +2,7 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-`0.17.0+mdsmithaustin.3` means upstream `0.17.0` plus fork addon revision `3`. The GitHub release tag is `fork/v0.17.0+mdsmithaustin.3`. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.3` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
+`0.17.0+mdsmithaustin.4` means upstream `0.17.0` plus fork addon revision `4`. The GitHub release tag is `fork/v0.17.0+mdsmithaustin.4`. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.4` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
 
 Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
@@ -31,11 +31,11 @@ Run these commands from the repository root. Any nonzero exit means the check fa
 ```sh
 source_sha=$(git rev-parse HEAD)
 python scripts/fork_release.py check-source --source-sha "$source_sha"
-uv run --no-sync python scripts/update_versions.py check --expect '0.17.0+mdsmithaustin.3'
+uv run --no-sync python scripts/update_versions.py check --expect '0.17.0+mdsmithaustin.4'
 uv lock --check
 ```
 
-`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command prints `0.17.0+mdsmithaustin.3`. The lock check must exit zero without changing the lockfile.
+`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command prints `0.17.0+mdsmithaustin.4`. The lock check must exit zero without changing the lockfile.
 
 The verifier reads `.github/fork-release.json` from the exact source commit. It requires the published stable upstream release ID, publication timestamp, and current peeled tag SHA to match. A failed or unavailable lookup fails the check.
 
