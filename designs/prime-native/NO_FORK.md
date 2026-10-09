@@ -156,7 +156,67 @@ report cleanup success with retained outer scratch, and could publish a passing
 result before later mandatory finalization failed. The historical receipt and
 its audit do not qualify the repaired contract. Genuine native `waiting`,
 status-only protection during complete output silence, one-hour and indefinite
-waits, and MCP reconnect remain unqualified.
+waits remain unqualified. Historical MCP evidence has the separate bounded
+qualification below.
+
+The parent finite-wait run `provider-waits-gkknmv6b` passed five cases on revision
+`afe870ce93c9df8bccfa88be13bb54c39d64e5ae` with the same provider driver hash.
+It shares the prompt, outer-scratch, and publication limits above.
+The independent receipt audit passed 2,616 assertions over 309 child artifacts
+and 897 selected source files. All 72 recorded owned process identities were
+absent. The runner positive tool lasted 60.007 seconds with 37.432 quiet seconds.
+The pane positive tool lasted 300.004 seconds with 280.224 quiet seconds.
+Both idle controls expired, and pane idle actually reaped. The fresh wrong-memory
+control failed only at `memory_read_mismatch`. Every cleanup was verified.
+Earlier indexed failed runs, including `wy9dvn9_`, remain FAILED. The parent
+also passed 55 registry and reaper tests. These parent results do not qualify
+the later MCP and extension changes. No finite-wait rerun on those changed bytes
+is claimed. Gateway retry behavior, daemon recovery, global exclusivity, and
+descendant guarantees remain separate gaps.
+
+## Regular HTTP MCP reconnect qualification
+
+The retained `provider-mcp-nhuedn43/runner-mcp-gimauabc` probe reports
+`passed: true` and all eight required claims `VERIFIED`. It used configured xAI
+credentials and Grok 4.7 with published Prime 0.9.6 build `e260085d` on macOS
+arm64. This is one declared regular HTTP MCP case, measured on the MCP working
+tree above `afe870ce93c9df8bccfa88be13bb54c39d64e5ae`. The receipt's source hashes
+identify the repaired connection, runner route, extension, and probe. The HEAD
+alone does not identify those uncommitted bytes or establish a final commit run.
+
+Generation 1 returned the declared tool's exact literal in the fixture ledger,
+native result, and provider continuation. The probe stopped the server and
+confirmed connection refusal. The next native call completed with `isError: true`
+and the runner error prefix. No fixture invocation fabricated the outage.
+Only after that error completed did generation 2 start at the same endpoint with
+the same schema, a distinct PID, and a fresh startup nonce. A separate declared
+call then returned the generation-2 literal in all three witnesses. The selected
+root and living kernel remained the same. The seeded token matched, the count
+advanced from 41 to 42, and a socket descriptor remained open in the same kernel.
+These checks do not prove object or socket identity, or a connected peer.
+Cleanup recorded no errors, owned survivors, private sockets, credential copies,
+or forced fallback.
+
+The [MCP verification workflow](../../.agents/skills/verify-prime-native/SKILL.md#qualify-regular-http-mcp-reconnect)
+provides the repeat command and required receipts. Evidence remains private.
+This historical result predates explicit fixture settlement and completion
+publication. It does not qualify the migrated MCP driver or current outer
+scratch removal. Fresh WAIT and MCP receipts must identify the final integrated
+bytes before either repaired contract can be qualified.
+The three earlier actual runs `provider-mcp-p6dnmwnf`, `provider-mcp-kt9j16e_`,
+and `provider-mcp-94f7fnro` remain FAILED with their original reasons.
+
+Controlled source verification passed 261 focused cases, 46 extension cases,
+and six independent private cases. Five source mutations produced 16 expected
+failing cases. Pi 0.84.2 error-mapping checks model selected SDK source semantics.
+They do not execute the SDK or run the Pi CLI. The actual Prime probe above
+qualifies the selected native error transport and recovery sequence.
+
+Real MRTR callbacks and opaque approval retries across restart, stdio restart,
+wider errors, cancellation and deadline behavior, other server classes, and
+other providers remain unqualified. Connection retries remain at-least-once and
+cannot reconstruct lost server approval state. This result does not complete N19.
+
 
 ## Provider probe ownership and completion
 
@@ -164,59 +224,77 @@ The combined repair at `ecf1bb4824a28913377109cefc3107f018fdb21a` has an indepen
 scoped source verdict of PASS+NOTES and 143 passing synthetic tests. Its provider
 SHA256 is `e6615c5e9bd099e2d0e8fba19d291f58f435b4eb70a01fbd3c3d1223a1ff799a`.
 This source verdict does not qualify a live provider or complete the roadmap.
-PR6 has a separate reviewed candidate for its MCP constructor, fixture
-settlement, publisher, readers, and owner pin, identified below. Fresh live WAIT
-and MCP receipts are required on the final integrated bytes. Independent review
-of these maintained documentation changes also remains required.
+The historical private PR6 composition combined accepted PR6
+`1f5a8e4d6fb678a5ed65bc1021a3d018695e03a2` with the actual PR5 merge
+`63b3d78f14fd23f68b651c989eb0a0e0fd8b2c19`. The accepted PR6 review returned
+Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
+Those results describe the old PR6 context. Fresh independent source and
+documentation review of this composition remains required.
 
-The current PR5 provider helper at `d5ef54f03ffea18116ab6757cc89a17dde5d41f8`
-has SHA256 `c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
-It rejects every present native-final error, including empty lists, empty
-objects, false, zero, and whitespace-only strings. Only missing, null, and exact
-empty-string errors are absent. A successful stop reason and matching literal
-reply remain required. Independent source and documentation review passed at
-`e1aa5176782d2cce6d50ad9e2115977339143a5c`. That verdict covers its recorded
-context. Fresh independent review of the current Main composition remains pending.
+The provider helper SHA256 remains
+`c80b409a1511c48bd2d6f7048bc1d02d3136e4c177197a662ad98110c2f99db2`.
+At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
+`b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
+The historical repaired MCP helper SHA256 was
+`043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
+Its fixture close fallback reaps the exact registered child even when identity
+metadata capture fails. The original failure remains sticky.
+`OWNER_SHA256` admits that exact provider helper. Every present native-final
+error rejects, including empty containers, false, zero, and whitespace-only
+strings. Only missing, null, and exact empty-string errors are absent.
+A successful stop reason and matching literal reply remain required.
 
-The preceding provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
-had SHA256 `c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`.
-It matched the accepted provider-only repair at
-`57293032d4fe2f53bd4c688a14cac4e9fd41e930`. Its source verdict does not cover
-the current final-error admission repair.
-The accepted documentation at `98309e7c5136c3801bfd227e79289f2d62ed7915`
-was reviewed against effective PR6 base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`.
-Its independent source review passed 925 repository cases and seven independent
-checks. Those results do not qualify the current PR5 context or runtime.
-Current Main includes the bootstrap repair that registers `prime-native` in the
-CLI dispatcher. Preserve the earlier failed registry receipt as historical
-evidence. Fresh composition checks and independent source and documentation
-review remain required. Runtime qualification and base-CI remain separate gates.
+The current root rejection and task-error contract is documented in
+[Use declared resources](../../docs/PRIME_NATIVE.md#use-declared-resources).
+PR5's historical standalone 20-case root context does not replace that contract.
+Its earlier source review at `e1aa5176782d2cce6d50ad9e2115977339143a5c` passed
+854 context cases and 69 controls. The parent failed 21 controls and passed 48.
+These historical counts are unchanged and are not fresh composition results.
 
-Before this PR5 repair, the separate private PR6 candidate
-`cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the exact accepted
-`98309e7c5136c3801bfd227e79289f2d62ed7915` tree. The repaired PR5 provider
-bytes differ from that historical tree. This does not establish current whole
-PR5 and PR6 tree identity.
-Its MCP helper SHA256 is
+The actual PR5 merge has the reviewed `fd2b0b4bbaf52cecf7bc34129ef6804c0fdd14c3`
+tree. It brings Main's bootstrap, CRDB, CLI registry, and agent-name index
+repairs, the OAuth prerequisite correction, and two literal-readiness waits.
+The earlier registry failure and Linux empty-readiness failure remain historical.
+Linux misc CI passed at fd2. That result does not qualify this new composition
+or any native runtime. The imported registry fix requires a fresh scoped check.
+These historical source reviews do not qualify actual MCP calls, provider
+acceptance, or live WAIT behavior on the current source. Full S01-S04 and the
+31-requirement program remain incomplete.
+
+Historical composition failures remain part of the evidence. One prior strict
+clean precheck failed before its owner proceeded. A broad CLI test selection
+started API/server, host, and zygote processes outside that unit's scope and
+reported 442 passes and three failures. Reported reaping did not prove exhaustive
+cleanup. The recorder failure, index.lock failure, initial timing gap, Android
+no-op wrappers, and five CRDB backend skips remain historical limitations.
+The later stopped PR6 attempt lost precheck terminal metadata and its process
+diagnostic raised a Python SyntaxError. Neither attempt supplies this
+composition's verification or changes any runtime acceptance status.
+
+The prior PR6 candidate `cb11a4ed94a15427e7cd0a37e3847de0da0169a1` had the
+exact reviewed `98309e7c5136c3801bfd227e79289f2d62ed7915` tree against
+base `c0b3173d5a0a874255d9bef35c9e0c4fb895b77d`. Its 925 repository cases
+and seven independent checks are historical evidence for that composition.
+Its provider SHA256 was
+`c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3`,
+and its MCP SHA256 was
 `1a55d312be7c8317c898f89ff9ec37001f04a78d937b0f2e839713c7486fb435`.
-That helper is absent from this PR5 checkout. PR6 remains a separate required
-integration and qualification stage. PR5 production root behavior retains its
-own historical 20-pass context; it does not include PR6's root-rejection repair.
-Fresh final-byte WAIT and MCP receipts remain required in their respective stages.
+The provider-only port at `a5d0703a57882800a3a0b36dc925a090b4546451`
+matched `57293032d4fe2f53bd4c688a14cac4e9fd41e930`. These historical
+identities do not establish current PR5 and PR6 whole-tree identity or runtime
+qualification.
 
 The preceding provider SHA256 was
 `45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c`.
 The paired historical MCP SHA256 was
 `9f47ad394e923dc6ae13c92907b81d6830a289bd4d36a7a0d2df12637fe966b4`.
 Their independent cumulative review at
-`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that private source context only.
-
-Historical MCP source review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777` covers that source context only.
+Historical MCP review at `ad945096ed6da2c1ffe866a33841188f77770b4f`
 returned PASS+NOTES for MCP SHA256
 `b03472857f5cf666e026093ee664a6e58cff0858603e0e05a04bb1c24f7b7832`.
-That private historical record does not establish MCP implementation or admission
-on PR5. The separate PR6 candidate requires final integration review and fresh
-live MCP qualification after any source or context change.
+Fresh final-byte WAIT and MCP receipts remain required after source or context
+changes.
 
 The WAIT run on private candidate `ff54be490045cbff6f4c476f4cd16ceddd6569f0`
 remains FAILED. All five seed cases have false completion records and retained
@@ -243,6 +321,12 @@ is still unverified. The durable public Prime 0.9.6 installation has version and
 hash checks, but no successful model-response baseline. Neither this result nor
 the WAIT failures establish an authentication, provider, kernel, or installation
 cause. Preserve the retained allocations and private receipts.
+
+A later sanitized basic-receipt review records the actual basic response as
+FAILED with `xai_no_usable_credential` and unknown cause. Finite shutdown and
+known PID/socket absence do not prove normal/full settlement, a successful
+response, exhaustive descendants, credential-source comparison, removal, or
+future custody. A successful model-response baseline remains unverified.
 
 For the current rejected entry, inspect `<operation>-native-failure.json`.
 `<operation>-native-predicates.json` marks earlier predicates as `previous_poll`.
@@ -305,8 +389,17 @@ requires an allocation-bound `_ExternalSettlement`. Provider-only cases use
 `no_fixture`. Fixture callers must record all generations, processes, readers,
 handles, threads, and endpoints closed before supplying `settled_fixture` with
 retained evidence. Failure or uncertainty requires `failed_fixture` with errors.
-The actual PR6 branch still needs independent review of its integrated fixture
-lifecycle proof. Historical private MCP review does not admit that branch.
+The migrated MCP fixture reaps every real generation, verifies PID/start
+absence, closes all output handles, and requires endpoint refusal. Child output
+goes directly to files, with no parent reader or capture thread. Exited children
+settle their internal threads and descriptors. Unexpected process pipes reject.
+Only a written `fixture-cleanup.json` can support `settled_fixture`. Startup,
+stop, close, endpoint, or receipt failure yields `failed_fixture` with sticky
+errors. MCP rejects `no_fixture`, missing settlement, and another allocation's
+settlement. Failed settlement prevents runtime removal and retains scratch.
+The preceding fixture source unit passed the cumulative review at
+`094a84e198a5ebdbb5e2c6e8934b189b43fce777`. Independent review of the combined
+PR6 context and documentation, and fresh final-byte live proof, remain pending.
 
 Process census, sanitized capture completion, closed readers and sockets, source
 checks, and explicit fixture settlement precede recursive scratch mutation.
@@ -363,7 +456,11 @@ successful rename. `CaseResult.passed`, wrong-memory control acceptance, CLI,
 and aggregate results require committed matching hashes. The wrong-memory child
 must commit a false result at its named mismatch with verified cleanup.
 Missing completion, failed preparation, or mismatched hashes cannot authorize
-success. Never rewrite historical receipts to meet this new contract.
+success. MCP prints `result.json` directly in a fresh `provider-mcp-*` directory,
+with the manifest and completion beside it. There is no fresh `runner-mcp-*`
+child directory. Raw result or fixture `passed` values are not success authority.
+The MCP scenario preserves its first failure if later owner finalization fails.
+Never rewrite historical receipts to meet this new contract.
 
 ## Original acceptance criteria
 
@@ -389,7 +486,7 @@ Every original ID remains visible. The [literal acceptance requirements](CONTRAC
 | N16 | Prime's native long-running controls remain available in its terminal. Omnigent goals, heartbeat, and schedule controls need separate qualification. |
 | N17 | Historical source-bound evidence only. Fresh final-byte WAIT qualification remains pending. Actual 60-second and 300-second native Python tools passed with matched runner and pane idle controls, timely native queued input, subsequent replies, living-kernel reattachment, and clean cleanup. Genuine native `waiting`, status-only protection during complete output silence, one-hour and indefinite waits remain unqualified. |
 | N18 | Inbox delivery is admission, not completion. Root quiescence is observed. Whole-descendant settlement remains unqualified. |
-| N19 | A declared MCP tool executed through Omnigent's relay with its literal result. The wrong-result control failed at that assertion with clean cleanup. Reconnect availability is unqualified. |
+| N19 | Historical source-bound evidence only. Fresh final-byte MCP qualification remains pending. Declared tool execution and its wrong-result control passed. The later regular HTTP probe qualified a completed native outage error followed by an independent call to a fresh server generation, with matching fixture, native, and provider evidence, root and kernel continuity, and clean cleanup. Actual MRTR recovery, stdio, wider errors and timing, server classes, and providers remain unqualified. |
 | N20 | Root relayed write denial verified through HTTP and terminal input with absent marker files. The opposite side-effect control failed at its named assertion. Universal allow, deny, approval, native-client, and descendant coverage remains unmet. |
 | K01 | External. Prime remains an optional Kit target. |
 | K02 | External. Equal compiled resource digests for direct Prime and Omnigent delivery need Kit proof. |
