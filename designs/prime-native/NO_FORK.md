@@ -8,16 +8,9 @@ Users launch `omnigent prime-native`, send messages through Prime's terminal or 
 
 The adapter uses Prime 0.9.6 and the shared Pi extension inbox, message conversion, and Omnigent tool relay. Prime-specific modules own version admission, credential-filtered model discovery, private launch configuration, controls, saved-session resume, and scoped shutdown. Omnigent does not import Prime internals, copy its engine, proxy the terminal, or replace its native worker.
 
-Scoped shutdown uses the published supervisor command on the conversation's
-qualified private socket. Omnigent retains owner records and saved history when
-the socket or process state cannot prove shutdown. macOS hides the arguments
-and environment of setuid helpers and exiting processes. Cleanup treats such a
-process as owned when its identity or an ancestor's identity was verified for
-this runtime, and waits for it to exit. Without that lineage, a live unreadable
-process still retains the runtime. Scoped shutdown does not use Prime's
-root-wide CLI shutdown, whose admission lease can block another Prime startup
-even when daemon discovery uses a private temporary directory. Native Windows
-launch is rejected because the published default named pipe is shared.
+The [adapter lifecycle guide](../../docs/PRIME_NATIVE.md#state-and-compatibility)
+owns scoped shutdown, unreadable-process ownership, runtime retention, and
+platform constraints.
 
 Launch records a private reservation before its first asynchronous preparation
 step. Closure remains unqualified while that owner is launching, so Stop cannot
@@ -235,16 +228,16 @@ Source PASS+NOTES and documentation PASS, with 950 source cases and 20 controls.
 Those results describe the old PR6 context. Fresh independent source and
 documentation review of this composition remains required.
 
-The provider helper SHA256 is
-`4f33ceadf77a9765eae8569d4599961684a871288f97c63e766b27bf9d6f5100`.
+The MCP helper's [`OWNER_SHA256`](../../.agents/skills/verify-prime-native/scripts/mcp_probe.py)
+owns the admitted provider helper hash.
 At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.
 The historical repaired MCP helper SHA256 was
 `043dab4e5c213dbd87ffe6f3ef49a59d3e4fa8d1f30563e7633d71314a50b6a4`.
 Its fixture close fallback reaps the exact registered child even when identity
 metadata capture fails. The original failure remains sticky.
-`OWNER_SHA256` admits that exact provider helper. Every present native-final
-error rejects, including empty containers, false, zero, and whitespace-only
+Every present native-final error rejects, including empty containers, false,
+zero, and whitespace-only
 strings. Only missing, null, and exact empty-string errors are absent.
 A successful stop reason and matching literal reply remain required.
 
