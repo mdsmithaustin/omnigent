@@ -21,7 +21,7 @@ import os
 import shlex
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -49,6 +49,7 @@ from mcp.types import (
     ContentBlock,
     ElicitRequestParams,
     ElicitResult,
+    ErrorData,
     ImageContent,
     TextContent,
 )
@@ -586,7 +587,8 @@ class McpServerConnection:
         Establish the MCP connection and discover tools.
 
         Reuses an alive lifecycle and its successful discovery snapshot.
-        Serializes with calls and close so replacement has one owner.
+        Serializes with calls so replacement has one owner. A cancelled
+        connect tears down the startup it was waiting on.
 
         Schedules :meth:`_run_lifecycle` as a long-lived task on
         the running event loop. The lifecycle task opens the
@@ -603,12 +605,15 @@ class McpServerConnection:
             here via the ready future.
         """
         async with self._call_lock:
-            if self._lifecycle_task is not None and not self._lifecycle_task.done():
-                assert self._ready_future is not None
-                return await asyncio.shield(self._ready_future)
-            await self._reconnect()
-            assert self._discovered_tools is not None
-            return self._discovered_tools
+            ready, close_event = self._ready_future, self._close_event
+            if ready is None or close_event is None or close_event.is_set():
+                await self._close_lifecycle()
+                ready = self._start_lifecycle()
+            try:
+                return await asyncio.shield(ready)
+            except asyncio.CancelledError:
+                await self._close_lifecycle()
+                raise
 
     async def call_tool(
         self,
@@ -642,11 +647,7 @@ class McpServerConnection:
             tripped.
         """
         async with self._call_lock:
-            if self._discovered_tools is None:
-                raise RuntimeError(
-                    f"MCP server {self.config.name!r} is not initialized; "
-                    "call connect() before call_tool()"
-                )
+            self._require_open()
             self._breaker.pre_call(self.config.name)
             retry = self.config.retry or _MCP_RECONNECT_DEFAULTS
 
@@ -752,8 +753,7 @@ class McpServerConnection:
         :raises RuntimeError: If never successfully connected or explicitly closed.
         """
         async with self._call_lock:
-            if self._discovered_tools is None:
-                raise RuntimeError("MCP session not initialized; call connect() first")
+            self._require_open()
 
             retry_params: dict[str, Any] = {
                 "name": name,
@@ -798,22 +798,41 @@ class McpServerConnection:
         """
         Tear down the dead session and open a fresh one.
 
+        Called by ``call_tool()`` after detecting a connection
+        error. Refuses to start once :meth:`close` revoked admission.
+
         Same task-identity rule as :meth:`connect` applies: the
         new lifecycle task owns the new transport + session
         end to end.
         """
         await self._close_lifecycle()
-        loop = asyncio.get_running_loop()
-        ready: asyncio.Future[list[McpToolDef]] = loop.create_future()
+        self._require_open()
+        await asyncio.shield(self._start_lifecycle())
+
+    def _start_lifecycle(self) -> asyncio.Future[list[McpToolDef]]:
+        """
+        Schedule a lifecycle task and return its ready future.
+
+        A set close event marks the lifecycle closing or ended. A
+        lifecycle that ends before settling ready, such as one cancelled
+        during startup, fails ready with the closed error.
+        """
+        ready: asyncio.Future[list[McpToolDef]] = asyncio.get_running_loop().create_future()
         close_event = asyncio.Event()
+
+        def on_exit(_task: asyncio.Task[None]) -> None:
+            close_event.set()
+            if not ready.done():
+                ready.set_exception(self._closed_error())
+                ready.exception()
+
         self._ready_future = ready
         self._close_event = close_event
-        self._lifecycle_task = asyncio.create_task(self._run_lifecycle(ready, close_event))
-        await asyncio.shield(ready)
+        self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
+        self._lifecycle_task.add_done_callback(on_exit)
+        return ready
 
-    async def _run_lifecycle(
-        self, ready: asyncio.Future[list[McpToolDef]], close_event: asyncio.Event
-    ) -> None:
+    async def _run_lifecycle(self) -> None:
         """
         Long-lived task that owns the MCP connection's resources.
 
@@ -837,9 +856,18 @@ class McpServerConnection:
           a real error rather than a silently-wedged
           connection.
         - If a steady-state failure occurs *after* ready, it
-          is logged here — a mid-flight teardown error
+          is logged here — :meth:`close` already has the
+          ``await lifecycle_task`` it needs to surface a
+          terminal exception, but a mid-flight teardown error
           shouldn't crash the workflow.
         """
+        ready = self._ready_future
+        close_event = self._close_event
+        # Both invariants are set by the connect / reconnect site
+        # immediately before scheduling this task; assert rather
+        # than branch so a regression there fails loud here.
+        assert ready is not None, "ready future not initialized before lifecycle start"
+        assert close_event is not None, "close event not initialized before lifecycle start"
         try:
             async with AsyncExitStack() as stack:
                 read_stream, write_stream = await self._open_transport(stack)
@@ -880,10 +908,10 @@ class McpServerConnection:
             # ``async with`` exits HERE on this task → cancel scopes
             # opened by stdio_client / sse_client / ClientSession are
             # torn down by the same task that entered them. ✓
-        except asyncio.CancelledError:
-            if not ready.done():
-                ready.cancel()
-            raise
+        # Lifecycle task: any failure routes to the ready future on
+        # startup, or to the logger on steady state. Letting an
+        # exception bubble out of the task would leave the ready
+        # future never resolved and connect() would hang forever.
         except Exception as exc:
             if not ready.done():
                 ready.set_exception(exc)
@@ -950,42 +978,44 @@ class McpServerConnection:
         ``async with AsyncExitStack`` block, then awaits the
         task's completion so resource teardown is observable
         from the caller. Safe to call multiple times or if
-        :meth:`connect` was never called.
+        :meth:`connect` was never called. Does not wait for in-flight
+        calls: session teardown fails them with a closed error.
         """
-        async with self._call_lock:
-            try:
-                await self._close_lifecycle()
-            finally:
-                self._discovered_tools = None
+        self._discovered_tools = None
+        await self._close_lifecycle()
 
     async def _close_lifecycle(self) -> None:
-        if self._close_event is not None:
-            self._close_event.set()
-        task = self._lifecycle_task
-        ready = self._ready_future
-        cancelled = None
-        if task is not None:
-            if ready is not None and not ready.done():
-                task.cancel()
-            while not task.done():
-                try:
-                    await asyncio.shield(task)
-                except asyncio.CancelledError as exc:
-                    caller = asyncio.current_task()
-                    if caller is not None and caller.cancelling():
-                        cancelled = exc
-                except Exception:
-                    break
-            with suppress(asyncio.CancelledError, Exception):
-                task.result()
-        if ready is not None and ready.done() and not ready.cancelled():
-            ready.exception()
-        self._lifecycle_task = None
-        self._close_event = None
-        self._ready_future = None
-        self._session = None
-        if cancelled is not None:
-            raise cancelled
+        """
+        Signal the current lifecycle to exit and await its teardown.
+
+        A startup never reaches its close wait, so it is cancelled. A
+        cancelled caller leaves teardown finishing on the lifecycle task.
+        """
+        task, ready, close_event = self._lifecycle_task, self._ready_future, self._close_event
+        if task is None or ready is None or close_event is None:
+            return
+        close_event.set()
+        if not ready.done():
+            task.cancel()
+        await asyncio.wait({task})
+        ready.exception()
+        if self._lifecycle_task is task:
+            self._lifecycle_task = None
+            self._close_event = None
+            self._ready_future = None
+            self._session = None
+
+    def _require_open(self) -> None:
+        """
+        Reject calls before a successful :meth:`connect` or after :meth:`close`.
+        """
+        if self._discovered_tools is None:
+            raise self._closed_error()
+
+    def _closed_error(self) -> RuntimeError:
+        return RuntimeError(
+            f"MCP server {self.config.name!r} connection is closed; call connect() first"
+        )
 
     def _check_cache(self) -> list[McpToolDef] | None:
         """
@@ -1702,8 +1732,10 @@ async def _call_tool_with_reconnect(
             if needs_reconnect or conn._session is None:
                 await conn._reconnect()
                 needs_reconnect = False
-            session = conn._session
-            assert session is not None, "reconnect completed without a session"
+            session, lifecycle = conn._session, conn._lifecycle_task
+            assert session is not None and lifecycle is not None, (
+                "reconnect completed without a session"
+            )
             conn._active_session_id = session_id
             # Scope the unhealthy-transport signal to this attempt:
             # bumping the serial invalidates recordings from any
@@ -1712,13 +1744,21 @@ async def _call_tool_with_reconnect(
             # responses opened during this attempt.
             conn._call_serial += 1
             conn._transport_error = None
+            request = asyncio.ensure_future(invoke(session))
             try:
-                return await invoke(session)
+                # The SDK leaves a pending request waiting after its session
+                # is torn down, so the request ends with its lifecycle.
+                await asyncio.wait({request, lifecycle}, return_when=asyncio.FIRST_COMPLETED)
             finally:
+                request.cancel()
                 conn._active_session_id = None
+            if request.done():
+                return request.result()
+            raise McpError(ErrorData(code=CONNECTION_CLOSED, message="Connection closed"))
         except Exception as exc:
             if not (_is_connection_error(exc) or _is_dead_session_timeout(exc, conn)):
                 raise
+            conn._require_open()
             last_exc = exc
             needs_reconnect = True
             # Last attempt — don't reconnect, just raise.

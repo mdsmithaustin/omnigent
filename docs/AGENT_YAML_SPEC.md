@@ -613,14 +613,15 @@ elicitation callbacks use the current calling Omnigent session. Retries remain
 at-least-once. They cannot restore approval state lost by a restarted MCP server
 or guarantee exactly-once execution.
 
-On each connection, `connect()`, `close()`, and whole logical calls are
-serialized, including retries. Cancelling a startup waiter leaves shared
-readiness intact. A later eligible caller joins the pending startup before
-invoking a tool. Once teardown starts, a cancelled caller retains the lock until
-resource cleanup finishes, then raises cancellation. Cancellation before
-`close()` acquires the lock does not close the connection. Recovery adds no
-deadline beyond configured SDK and transport timing. A stalled transport exit
-can therefore delay cancellation and subsequent calls.
+On each connection, `connect()` and whole logical calls are serialized,
+including retries. `close()` does not wait for them. It interrupts a pending
+startup and tears down the session, so an in-flight call, including one waiting
+on an inline approval, fails with a connection-closed error. Cancelling
+`connect()` tears down the startup it was waiting on. A call cancelled during
+recovery leaves that startup for the next caller to join. A replacement session
+starts only after the previous teardown finishes. Recovery adds no deadline
+beyond configured SDK and transport timing. A stalled transport exit can
+therefore delay subsequent calls.
 
 The runner's session MCP endpoint returns HTTP 400 with code `-32700` for
 invalid JSON. Body-read failures return a sanitized HTTP 500 and propagate
