@@ -1041,7 +1041,9 @@ def test_maintenance_queries_later_runtime_after_shuffle(
     with _status_server() as (url, received):
         retired = [_retired_runtime(url, f"retired-{index}") for index in range(3)]
         entries = [entry for entry in retired[0].root.parent.iterdir() if entry.name != ".locks"]
-        last_index = next(index for index, paths in enumerate(retired) if paths.root == entries[-1])
+        last_index = next(
+            index for index, paths in enumerate(retired) if paths.root == entries[-1]
+        )
         last = retired[last_index]
         monkeypatch.setattr(process.random, "shuffle", lambda entries: entries.reverse())
         monkeypatch.setattr(
