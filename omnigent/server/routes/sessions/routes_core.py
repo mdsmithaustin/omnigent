@@ -42,7 +42,12 @@ from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCategory, ErrorCode, ErrorImpact, ErrorPhase, OmnigentError
 from omnigent.harnesses.prime_native.controls import ControlStatus, SetEffort, SetModel
 from omnigent.models.model_override import validate_model_override
-from omnigent.native.source_owner import NativeAdmission, NativeAdmissionRequest, NativeStop
+from omnigent.native.source_owner import (
+    NativeAdmission,
+    NativeAdmissionRequest,
+    NativeAdmissionStatusRequest,
+    NativeStop,
+)
 from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
     token_bound_runner_id,
@@ -392,6 +397,16 @@ def register_core_routes(
         else:
             await asyncio.to_thread(conversation_store.validate_native_stop, body)
         return {"current": True}
+
+    @router.post("/sessions/{session_id}/native-admission/status", include_in_schema=False)
+    async def native_admission_status(
+        session_id: str, body: NativeAdmissionStatusRequest, request: Request
+    ) -> dict[str, bool]:
+        _require_user(request, auth_provider)
+        deleted = await asyncio.to_thread(
+            conversation_store.native_source_deleted, session_id, body.epoch
+        )
+        return {"deleted": deleted}
 
     async def _schedule_managed_launch(
         request: Request,

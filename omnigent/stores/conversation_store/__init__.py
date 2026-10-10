@@ -415,6 +415,9 @@ class ConversationStore(ABC):
     def get_native_source(self, conversation_id: str) -> NativeSource | None: ...
 
     @abstractmethod
+    def native_source_deleted(self, conversation_id: str, epoch: str) -> bool: ...
+
+    @abstractmethod
     def admit_native(
         self, conversation_id: str, owner: NativeOwner, *, expected_epoch: str | None = None
     ) -> NativeAdmission: ...
