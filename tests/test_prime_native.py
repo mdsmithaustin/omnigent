@@ -1764,6 +1764,7 @@ def test_stop_deadline_reports_all_blocker_categories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _shutdown_paths(tmp_path)
+    paths.executable_file.write_text(sys.executable)
     owner, terminal = _write_lifecycle_records(paths)
     blocker = subprocess.Popen(
         [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
