@@ -865,6 +865,170 @@ def test_maintenance_retains_owner_on_shutdown_failure_for_retry(tmp_path: Path)
     assert bridge.prune_orphaned_bridge_dirs() == 0
 
 
+_RETIRED_SOURCE = "retired-source"
+_STATUS_PATH = f"/v1/sessions/{_RETIRED_SOURCE}/native-admission/status"
+
+
+@contextmanager
+def _status_server(
+    status: int = 200, body: bytes = b'{"deleted": true}', delay: float = 0.0
+) -> Iterator[tuple[str, list[tuple[str, str | None, object]]]]:
+    received: list[tuple[str, str | None, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append((self.path, self.headers.get("Authorization"), payload))
+            time.sleep(delay)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield f"http://127.0.0.1:{server.server_port}", received
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+
+
+def _retired_runtime(server_url: str, **changes: object) -> PrimeRuntimePaths:
+    from omnigent.native.admission import native_owner
+    from omnigent.native.source_owner import NativeAdmission
+
+    paths = bridge.runtime_paths(_RETIRED_SOURCE)
+    paths.prepare()
+    (paths.session_dir / "saved.jsonl").write_text("saved transcript")
+    admission = NativeAdmission(
+        source_id=_RETIRED_SOURCE,
+        epoch="retired-epoch",
+        owner=native_owner(_RETIRED_SOURCE, "prime-native"),
+    )
+    config: dict[str, object] = {
+        "sessionId": _RETIRED_SOURCE,
+        "serverUrl": server_url,
+        "authHeaders": {"Authorization": "Bearer fixture"},
+        "nativeAdmission": admission.model_dump(),
+    }
+    config.update(changes)
+    (paths.root / "config.json").write_text(
+        json.dumps({key: value for key, value in config.items() if value is not None})
+    )
+    return paths
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (404, b'{"error": "not found"}'),
+        (500, b'{"deleted": true}'),
+        (201, b'{"deleted": true}'),
+        (200, b"not json"),
+        (200, b'{"deleted": false}'),
+        (200, b'{"deleted": 1}'),
+        (200, b'{"deleted": "true"}'),
+        (200, b'{"deleted": true, "current": true}'),
+    ],
+)
+def test_maintenance_keeps_retired_runtime_without_exact_deleted_answer(
+    status: int, body: bytes
+) -> None:
+    with _status_server(status, body) as (url, received):
+        paths = _retired_runtime(url)
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert received == [(_STATUS_PATH, "Bearer fixture", {"epoch": "retired-epoch"})]
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_keeps_retired_runtime_when_status_times_out() -> None:
+    with _status_server(delay=6.0) as (url, received):
+        paths = _retired_runtime(url)
+        started = time.monotonic()
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert time.monotonic() - started < 6.0
+    assert len(received) == 1
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_keeps_retired_runtime_when_server_refuses_connection() -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    paths = _retired_runtime(f"http://127.0.0.1:{port}")
+    assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sessionId": None},
+        {"serverUrl": None},
+        {"authHeaders": None},
+        {"nativeAdmission": None},
+        {"sessionId": "other-source"},
+        {"authHeaders": "Bearer fixture"},
+        {"nativeAdmission": {"source_id": _RETIRED_SOURCE}},
+    ],
+)
+def test_maintenance_never_queries_with_incomplete_runtime_config(
+    changes: dict[str, object],
+) -> None:
+    with _status_server() as (url, received):
+        paths = _retired_runtime(url, **changes)
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert received == []
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize("config", [None, "not JSON"])
+def test_maintenance_never_queries_without_readable_runtime_config(config: str | None) -> None:
+    with _status_server() as (url, received):
+        paths = _retired_runtime(url)
+        if config is None:
+            (paths.root / "config.json").unlink()
+        else:
+            (paths.root / "config.json").write_text(config)
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+    assert received == []
+    assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+@pytest.mark.parametrize("record", ["live owner", "invalid owner", "live terminal"])
+def test_maintenance_never_queries_a_runtime_with_owner_records(record: str) -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        with _status_server() as (url, received):
+            paths = _retired_runtime(url)
+            if record == "live owner":
+                process.owner_claim.write_owner_claim(paths.root)
+            elif record == "invalid owner":
+                (paths.root / "owner.pid").write_text("invalid")
+            else:
+                (paths.root / "terminal.json").write_text(
+                    json.dumps(
+                        {
+                            "pid": child.pid,
+                            "created_at": process.psutil.Process(child.pid).create_time(),
+                        }
+                    )
+                )
+            assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert received == []
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+        assert child.poll() is None
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+
+
 def _wrapper_command(paths: PrimeRuntimePaths, *child_command: str) -> list[str]:
     source = (
         "import sys; from pathlib import Path; "

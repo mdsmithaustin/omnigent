@@ -17,10 +17,11 @@ import uuid
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 import click
 import psutil
+from pydantic import TypeAdapter
 
 from omnigent._platform import IS_WINDOWS, resolve_cli_binary
 from omnigent.harnesses.pi_native.bridge import _atomic_text
@@ -32,7 +33,7 @@ from omnigent.harnesses.prime_native.bridge import (
     runtime_paths,
 )
 from omnigent.native import native_bridge_common, owner_claim
-from omnigent.native.source_owner import NativeStop
+from omnigent.native.source_owner import NativeAdmission, NativeStop
 
 QUALIFIED_VERSION = "0.9.6"
 _DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
@@ -890,6 +891,37 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     _remove_runtime_records(paths)
 
 
+class _BridgeConfig(TypedDict):
+    sessionId: str
+    serverUrl: str
+    authHeaders: dict[str, str]
+    nativeAdmission: NativeAdmission
+
+
+_BRIDGE_CONFIG = TypeAdapter(_BridgeConfig)
+
+
+def _retired_source_deleted(paths: PrimeRuntimePaths) -> bool:
+    from omnigent.harnesses.pi_native.bridge import config_path
+    from omnigent.native.admission import native_source_deleted_sync
+
+    owner_records = (paths.root / owner_claim.OWNER_PID_FILENAME, paths.terminal_file)
+    if any(os.path.lexists(record) for record in owner_records):
+        return False
+    if _owned_process_identities(paths) or _live_sockets(paths):
+        return False
+    try:
+        config = _BRIDGE_CONFIG.validate_json(config_path(paths.root).read_bytes())
+    except (OSError, ValueError):
+        return False
+    admission = config["nativeAdmission"]
+    if config["sessionId"] != admission.source_id or runtime_paths(admission.source_id) != paths:
+        return False
+    return native_source_deleted_sync(
+        admission, server_url=config["serverUrl"], headers=config["authHeaders"]
+    )
+
+
 def stop_orphaned_runtimes() -> int:
     from omnigent.harnesses.claude_native.bridge import ensure_secure_dir
     from omnigent.inner.terminal import _process_alive as owner_process_alive
@@ -916,6 +948,11 @@ def stop_orphaned_runtimes() -> int:
                         continue
                     claim = owner_claim.read_owner_claim(entry)
                     if reservation is None:
+                        if claim is None and _retired_source_deleted(paths):
+                            shutil.rmtree(entry)
+                            _ACTIVE_RUNTIMES.discard(paths)
+                            stopped += 1
+                            continue
                         if claim is None or not owner_claim.owner_is_gone(
                             claim, process_alive=owner_process_alive
                         ):
