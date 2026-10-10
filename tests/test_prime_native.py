@@ -1698,6 +1698,48 @@ def test_stop_settles_a_captured_kernel_that_is_unreadable_while_exiting(
         kernel.stdin.close()
 
 
+def test_stop_waits_for_an_unreadable_unrelated_process_to_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _shutdown_paths(tmp_path)
+    _write_lifecycle_records(paths)
+    exiting = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    try:
+        _hide_process_arguments(monkeypatch, exiting.pid)
+        stop_prime_runtime(paths)
+        assert exiting.poll() == 0
+        assert not (paths.root / "owner.pid").exists()
+        assert not (paths.root / "terminal.json").exists()
+    finally:
+        _kill(exiting.pid)
+        exiting.wait(timeout=5)
+
+
+def test_stop_fails_closed_naming_a_live_unreadable_unrelated_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _shutdown_paths(tmp_path)
+    owner, terminal = _write_lifecycle_records(paths)
+    blocker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        name = process.psutil.Process(blocker.pid).name()
+        _hide_process_arguments(monkeypatch, blocker.pid)
+        monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.5)
+        with pytest.raises(RuntimeError) as raised:
+            stop_prime_runtime(paths)
+        status = process.psutil.Process(blocker.pid).status()
+        assert str(raised.value) == (
+            "Prime process ownership could not be observed; runtime retained. "
+            f"Unresolved: pid {blocker.pid} ({name}, {status})"
+        )
+        assert blocker.poll() is None
+        assert (paths.root / "owner.pid").read_text() == owner
+        assert (paths.root / "terminal.json").read_text() == terminal
+    finally:
+        _kill(blocker.pid)
+        blocker.wait(timeout=5)
+
+
 def test_stop_fails_closed_when_private_process_observation_is_unreadable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
