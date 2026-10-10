@@ -25,6 +25,13 @@ from omnigent.spec.types import AgentSpec, ExecutorSpec
 from tests.native_source_helpers import native_source_server as native_source_server
 
 
+@pytest.fixture(autouse=True)
+def private_compact_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "omnigent.harnesses.prime_native.bridge._COMPACT_ROOT", tmp_path / "compact"
+    )
+
+
 @dataclass(frozen=True)
 class _DeliveryAck:
     delivered: bool = True
