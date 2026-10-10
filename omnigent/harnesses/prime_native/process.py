@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import random
 import shutil
 import signal
 import socket
@@ -937,7 +938,10 @@ def stop_orphaned_runtimes() -> int:
         except FileNotFoundError:
             continue
         ensure_secure_dir(root)
-        for entry in root.iterdir():
+        # Random order keeps an unresponsive server from starving later status queries.
+        entries = list(root.iterdir())
+        random.shuffle(entries)
+        for entry in entries:
             if entry.name == ".locks":
                 continue
             paths = PrimeRuntimePaths(entry)
