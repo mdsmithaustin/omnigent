@@ -199,8 +199,11 @@ because Prime's default named pipe is shared.
 macOS can hide the arguments and environment of setuid helpers and exiting
 processes. Cleanup recognizes an unreadable process through its verified PID
 and start time or those of an owned ancestor, and waits for it to exit.
-A live unreadable candidate without that verified identity or lineage keeps
-the runtime retained.
+Cleanup also waits for an unreadable candidate without that verified identity
+or lineage, but never signals it. If the shutdown deadline expires, the runtime
+is retained. The error lists every remaining blocker category: unresolved
+processes with their PID, name, and status, surviving owned process PIDs, and
+live socket paths. An unreadable status appears as `status unreadable`.
 
 The current launch path reserves and prepares the private runtime, then calls
 `stop_prime_runtime` before dispatching even a fresh terminal. Ownership discovery
