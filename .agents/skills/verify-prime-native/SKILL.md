@@ -252,6 +252,16 @@ projection checks too. An idle snapshot or completed carrier cannot prove the
 reply. An interrupted final or incomplete public page fails the operation.
 Each HTTP request, response body, and close has a bounded budget.
 
+The owned census reads each process's environment and argv. macOS hides both
+for setuid helpers, such as the `/bin/ps` that Prime's kernel runs, and for
+exiting processes. Such a process joins the census only when its own identity
+or an ancestor's identity is already owned, and its record keeps the
+executable. `progress.json` and the final manifest list other unreadable
+processes under `unowned_unreadable` with PID, start time, and executable.
+A descendant that a qualified selected root starts after the census joins it as
+`selected_descendant`. A selected descendant owned by another user fails as
+`selected_descendant_foreign_uid` with its PID and executable.
+
 Inspect `cleanup.json` in every child. Require empty errors, no exact owned
 survivors or private sockets, `forced_native_fallback: false`,
 `credential_copies_absent: true`, `runtime_removed: true`, and unchanged source

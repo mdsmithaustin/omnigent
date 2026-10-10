@@ -191,9 +191,16 @@ Cleanup sends Prime's public shutdown command to the qualified private
 supervisor socket. Omnigent clears transient ownership only after that socket
 and its owned processes stop. If ownership or shutdown cannot be proved, it
 retains the runtime for a later cleanup attempt. The public
-`prime-agent shutdown` CLI holds a per-user admission lease. Omnigent uses
+`prime-agent shutdown` CLI holds a per-user admission lease that can block
+another Prime startup even with a private temporary directory. Omnigent uses
 the private socket for session cleanup. Native Windows launch is rejected
 because Prime's default named pipe is shared.
+
+macOS can hide the arguments and environment of setuid helpers and exiting
+processes. Cleanup recognizes an unreadable process through its verified PID
+and start time or those of an owned ancestor, and waits for it to exit.
+A live unreadable candidate without that verified identity or lineage keeps
+the runtime retained.
 
 The current launch path reserves and prepares the private runtime, then calls
 `stop_prime_runtime` before dispatching even a fresh terminal. Ownership discovery
