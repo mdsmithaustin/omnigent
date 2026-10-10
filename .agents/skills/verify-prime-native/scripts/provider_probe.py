@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import codecs
 import errno
 import hashlib
 import json
@@ -1597,6 +1598,13 @@ class _RetiredOwnedTree:
     delete_step: int
     status: int
     event_flags: int
+    kind: Literal["delete_event", "maintenance_retired"] = "delete_event"
+    status_line: str | None = None
+
+
+_ACCESS_LINE = re.compile(
+    r' uvicorn\.access +\S+ +\| \S+ - "(?P<request>[A-Z]+ \S+) HTTP/[0-9.]+" (?P<status>[0-9]{3}) '
+)
 
 
 def _open_witnessed_directory(target: _CredentialTarget, directory: Path) -> int | None:
@@ -2140,6 +2148,48 @@ class _RuntimeOwner:
                 )
 
 
+class _PtyDrain:
+    """Reads an attached client's pty like a real terminal so the client never blocks on it."""
+
+    def __init__(self, fd: int, sink: Callable[[str], None]):
+        self.fd = fd
+        self.sink = sink
+        self.eof = False
+        self.error: str | None = None
+        self.stopping = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        try:
+            while not self.stopping.is_set():
+                if not select.select([self.fd], [], [], 0.1)[0]:
+                    continue
+                try:
+                    chunk = os.read(self.fd, 65536)
+                except OSError as exc:
+                    if exc.errno != errno.EIO:
+                        raise
+                    chunk = b""
+                self.sink(decoder.decode(chunk, final=not chunk))
+                if not chunk:
+                    self.eof = True
+                    return
+        except FINALIZATION_ERRORS as exc:
+            self.error = type(exc).__name__ + ": " + sanitize(str(exc))
+
+    def wait_eof(self, timeout: float) -> bool:
+        self.thread.join(timeout)
+        if self.error:
+            raise RuntimeError("attachment_drain_failed: " + self.error)
+        return self.eof
+
+    def stop(self) -> None:
+        self.stopping.set()
+        self.thread.join()
+
+
 class _OwnedRun:
     def __init__(
         self, request: Request, profile: ClockProfile, kind: str, runtime_owner: _RuntimeOwner
@@ -2162,6 +2212,7 @@ class _OwnedRun:
         self.foreground_host_identity: ProcessIdentity | None = None
         self.host_log_handle: TextIO | None = None
         self.terminal: pexpect.spawn | None = None
+        self.attachment_drain: _PtyDrain | None = None
         self.attachment_identity: ProcessIdentity | None = None
         self.terminal_log: Path | None = None
         self.owners: dict[tuple[int, float], dict] = {}
@@ -2169,6 +2220,7 @@ class _OwnedRun:
         self.credential_copies: set[Path] = set()
         self.credential_targets: dict[Path, _CredentialTarget] = {}
         self._retired_trees: dict[Path, _RetiredOwnedTree] = {}
+        self._retained_roots: dict[Path, _RetirementAttempt] = {}
         self.terminal_sockets: set[Path] = set()
         self.census_errors: set[str] = set()
         self.unowned_unreadable: dict[tuple[int, float], dict] = {}
@@ -2662,14 +2714,17 @@ class _OwnedRun:
             timeout=min(100, self.remaining()) if self.scenario_deadline is not None else 100,
             dimensions=(40, 140),
         )
-        attachment = self.own(psutil.Process(self.terminal.pid))
-        self.attachment_identity = ProcessIdentity(
-            attachment["pid"], attachment["started"], tuple(attachment["argv"])
-        )
-        self.terminal_log = self.evidence / ("resume.txt" if resume else "terminal.txt")
-        self.terminal_log.touch(mode=0o600)
-        self.terminal.logfile_read = self
-        self.terminal.expect(r"Web UI: [^\r\n]*/c/([A-Za-z0-9_-]+)")
+        try:
+            self.terminal_log = self.evidence / ("resume.txt" if resume else "terminal.txt")
+            self.terminal_log.touch(mode=0o600)
+            attachment = self.own(psutil.Process(self.terminal.pid))
+            self.attachment_identity = ProcessIdentity(
+                attachment["pid"], attachment["started"], tuple(attachment["argv"])
+            )
+            self.terminal.logfile_read = self
+            self.terminal.expect(r"Web UI: [^\r\n]*/c/([A-Za-z0-9_-]+)")
+        finally:
+            self.attachment_drain = _PtyDrain(self.terminal.child_fd, self.write)
         sid = self.terminal.match.group(1)
         if self.foreground_host_record() is None:
             raise RuntimeError("native_foreground_host_reuse_missing")
@@ -3536,13 +3591,10 @@ class _OwnedRun:
         identity = self.attachment_identity
         if identity is None or identity.pid != self.terminal.pid:
             raise RuntimeError("exact_attachment_identity_missing")
-        if not self.terminal.closed:
-            self.terminal.expect(
-                pexpect.EOF,
-                timeout=min(15, self.remaining()) if self.scenario_deadline is not None else 15,
-            )
-        elif not self.terminal.flag_eof:
-            raise RuntimeError("attachment_closed_without_observed_eof")
+        if not self.attachment_drain.wait_eof(
+            min(15, self.remaining()) if self.scenario_deadline is not None else 15
+        ):
+            raise RuntimeError("attachment_pty_eof_missing")
         wait_for(
             lambda: not self.terminal.isalive() and not identity_alive(identity),
             "exact attachment child exit",
@@ -4258,7 +4310,24 @@ class _OwnedRun:
         root = target.path.parent.parent
         receipt = self._retired_trees.get(root)
         if receipt is None:
-            return _open_witnessed_directory(target, target.path.parent)
+            try:
+                return _open_witnessed_directory(target, target.path.parent)
+            except RuntimeError as exc:
+                if exc.args != ("owned_credential_directory_missing",):
+                    raise
+                receipt = self._maintenance_retirement(root)
+                if receipt is None:
+                    raise
+                self._check_retired(target, root, receipt)
+                self._retired_trees[root] = receipt
+                write_json(self.evidence / "maintenance-retirement.json", asdict(receipt))
+                return None
+        self._check_retired(target, root, receipt)
+        return None
+
+    def _check_retired(
+        self, target: _CredentialTarget, root: Path, receipt: _RetiredOwnedTree
+    ) -> None:
         if (
             not target.copy_absence_required
             or receipt.session_id != self.session_id
@@ -4273,10 +4342,55 @@ class _OwnedRun:
             try:
                 os.stat(root.name, dir_fd=descriptor, follow_symlinks=False)
             except FileNotFoundError:
-                return None
+                return
             raise RuntimeError("owned_credential_root_recreated")
         finally:
             os.close(descriptor)
+
+    def _maintenance_retirement(self, root: Path) -> _RetiredOwnedTree | None:
+        """Accept host maintenance removing a root after the server confirmed its deletion."""
+        attempt = self._retained_roots.get(root)
+        if attempt is None or attempt.http_status != 200:
+            return None
+        deleted = f"DELETE /v1/sessions/{attempt.session_id}"
+        queried = f"POST /v1/sessions/{attempt.session_id}/native-admission/status"
+        after_delete = False
+        for line in self._owned_server_log().splitlines():
+            match = _ACCESS_LINE.search(line)
+            if match is None or match["status"] != "200":
+                continue
+            after_delete = after_delete or match["request"] == deleted
+            if after_delete and match["request"] == queried:
+                return _RetiredOwnedTree(
+                    root,
+                    attempt.root_identity,
+                    attempt.parent_identity,
+                    attempt.session_id,
+                    attempt.delete_step,
+                    attempt.http_status,
+                    attempt.event_flags,
+                    "maintenance_retired",
+                    sanitize(line),
+                )
+        return None
+
+    def _owned_server_log(self) -> str:
+        directory = self.runtime / "data/logs/server"
+        descriptor = _open_witnessed_directory(self.runtime_owner.target, directory)
+        if descriptor is None:
+            return ""
+        try:
+            names = [name for name in os.listdir(descriptor) if name.startswith("server-")]
+            if len(names) != 1:
+                return ""
+            log = os.open(names[0], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        finally:
+            os.close(descriptor)
+        with os.fdopen(log, "rb") as handle:
+            metadata = os.fstat(handle.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                return ""
+            return handle.read().decode(errors="replace")
 
     def register_owned_credential(self, path: Path) -> None:
         canonical, aliases = self._credential_path(path)
@@ -4557,6 +4671,7 @@ class _OwnedRun:
                                 os.close(credential)
                             current.phase = "complete"
                             current.branch = "retained_original"
+                            self._retained_roots[root] = current
                     finally:
                         os.close(checked)
         except FINALIZATION_ERRORS as exc:
@@ -4802,6 +4917,7 @@ class _OwnedRun:
                     identity = self.attachment_identity
                     if identity is None or identity.pid != self.terminal.pid:
                         raise RuntimeError("exact_attachment_identity_missing")
+                    self.attachment_drain.stop()
                     if identity_alive(identity):
                         self.terminal.close(force=True)
 

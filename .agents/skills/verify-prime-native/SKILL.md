@@ -284,6 +284,12 @@ binds its original root and surviving parent identities to the exact session,
 DELETE step, successful HTTP status, and Darwin deletion event. The outer scratch
 removal instead records its checked descriptor-relative `rmdir` and held original
 vnode proof. HTTP success or path absence alone proves neither removal.
+When an offline runner leaves the root after DELETE 200, host maintenance removes
+it once the server confirms the deletion. `maintenance-retirement.json` then
+records a `maintenance_retired` receipt. It binds the retained original attempt,
+the same root and parent identities, and name absence. It also records the owned
+server's access line for that session's `native-admission/status` 200 after its
+DELETE 200.
 See the [ownership and completion contract](../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
 for the Darwin predicate and its namespace-removal limits.
 
@@ -400,11 +406,11 @@ mean that no observation was established. No body, exception text, directory
 content, alias target, or credential material enters these records.
 A missing receipt or receipt-write failure cannot authorize cleanup.
 
-A 200 response proves best-effort conversation deletion. Only the existing
+A 200 response proves best-effort conversation deletion. During DELETE, only the
 combined original-vnode `NOTE_DELETE`, name-absence, parent, and root checks
-admit retirement. Offline runners, failed teardown, and retained external roots
-remain failed. There is no manual external-root reclamation or replacement
-retirement authority. Empty census, writer and reader closure, socket and
+admit retirement. Afterward, only the maintenance receipt above admits it.
+Failed teardown and external roots that stay present remain failed. There is no
+manual external-root reclamation or replacement retirement authority. Empty census, writer and reader closure, socket and
 fixture settlement, captures, sticky errors, and committed completion after
 owner exit remain required. The cooperative namespace grant does not exclude
 hostile same-UID writers in the final check/syscall window.
