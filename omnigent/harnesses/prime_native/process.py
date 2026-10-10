@@ -908,7 +908,8 @@ def _retired_source_deleted(paths: PrimeRuntimePaths) -> bool:
     owner_records = (paths.root / owner_claim.OWNER_PID_FILENAME, paths.terminal_file)
     if any(os.path.lexists(record) for record in owner_records):
         return False
-    if _owned_process_identities(paths) or _live_sockets(paths):
+    owned, unresolved = _owned_process_identities(paths)
+    if owned or unresolved or _live_sockets(paths):
         return False
     try:
         config = _BRIDGE_CONFIG.validate_json(config_path(paths.root).read_bytes())
