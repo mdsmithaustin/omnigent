@@ -947,6 +947,30 @@ def test_maintenance_keeps_retired_runtime_without_exact_deleted_answer(
     assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
 
 
+def test_maintenance_removes_retired_runtime_on_exact_deleted_answer() -> None:
+    with _status_server() as (url, received):
+        paths = _retired_runtime(url)
+        assert bridge.prune_orphaned_bridge_dirs() == 1
+    assert received == [(_STATUS_PATH, "Bearer fixture", {"epoch": "retired-epoch"})]
+    assert not paths.root.exists()
+
+
+def test_maintenance_never_queries_a_runtime_with_an_unresolved_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        _hide_process_arguments(monkeypatch, blocker.pid)
+        with _status_server() as (url, received):
+            paths = _retired_runtime(url)
+            assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert received == []
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+    finally:
+        blocker.kill()
+        blocker.wait(timeout=5)
+
+
 def test_maintenance_keeps_retired_runtime_when_status_times_out() -> None:
     with _status_server(delay=6.0) as (url, received):
         paths = _retired_runtime(url)
