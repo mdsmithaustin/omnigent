@@ -361,10 +361,10 @@ def _name_matches_alias(name: str, aliases: set[str]) -> bool:
 
 def _owned_processes(
     paths: PrimeRuntimePaths, known: Set[_ProcessIdentity] = frozenset()
-) -> list[psutil.Process]:
+) -> tuple[list[psutil.Process], list[psutil.Process]]:
     processes: dict[int, psutil.Process] = {}
     verified: set[_ProcessIdentity] = set()
-    unreadable: list[tuple[psutil.Process, BaseException]] = []
+    unreadable: list[psutil.Process] = []
     kernel_process_names = _read_kernel_process_names(paths)
     prime_process_names = _read_prime_process_names(paths)
     claim = owner_claim.read_owner_claim(paths.root)
@@ -391,25 +391,26 @@ def _owned_processes(
                     processes[owned.pid] = owned
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
-        except (psutil.AccessDenied, OSError, SystemError) as exc:
-            unreadable.append((process, exc))
+        except (psutil.AccessDenied, OSError, SystemError):
+            unreadable.append(process)
     # Setuid helpers and exiting processes hide argv and environment on macOS.
-    for process, exc in unreadable:
+    unresolved = []
+    for process in unreadable:
         if process.pid in processes:
             continue
         if _owned_by_lineage(process, verified | set(known)):
             processes[process.pid] = process
-            continue
-        for attempt in range(3):
-            if not _process_alive(process):
-                break
-            if attempt < 2:
-                time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
-        else:
-            raise RuntimeError(
-                "Prime process ownership could not be observed; runtime retained."
-            ) from exc
-    return list(processes.values())
+        elif _process_alive(process):
+            unresolved.append(process)
+    return list(processes.values()), unresolved
+
+
+def _describe_process(process: psutil.Process) -> str:
+    try:
+        status = process.status()
+    except (psutil.Error, OSError, SystemError):
+        status = "status unreadable"
+    return f"pid {process.pid} ({process.info.get('name')}, {status})"
 
 
 def _owned_by_lineage(process: psutil.Process, owned: set[_ProcessIdentity]) -> bool:
@@ -437,9 +438,10 @@ def _process_identity(process: psutil.Process) -> _ProcessIdentity | None:
 
 def _owned_process_identities(
     paths: PrimeRuntimePaths, known: Set[_ProcessIdentity] = frozenset()
-) -> set[_ProcessIdentity]:
-    identities = (_process_identity(process) for process in _owned_processes(paths, known))
-    return {identity for identity in identities if identity is not None}
+) -> tuple[set[_ProcessIdentity], list[psutil.Process]]:
+    owned, unresolved = _owned_processes(paths, known)
+    identities = (_process_identity(process) for process in owned)
+    return {identity for identity in identities if identity is not None}, unresolved
 
 
 def _identity_alive(identity: _ProcessIdentity) -> bool:
@@ -796,18 +798,24 @@ def _send_shutdown(
 def _wait_for_runtime_absence(paths: PrimeRuntimePaths, captured: set[_ProcessIdentity]) -> None:
     deadline = time.monotonic() + _SHUTDOWN_SETTLE_TIMEOUT_S
     while True:
-        fresh = _owned_process_identities(paths, captured)
+        fresh, unresolved = _owned_process_identities(paths, captured)
         observed = captured | fresh
         survivors = [identity for identity in observed if _identity_alive(identity)]
         live_sockets = _live_sockets(paths)
-        if not survivors and not live_sockets:
+        if not survivors and not unresolved and not live_sockets:
             return
         if time.monotonic() >= deadline:
-            raise RuntimeError(
-                "Prime shutdown left a scoped process or socket; runtime retained. "
-                f"PIDs: {[identity.pid for identity in survivors]}; "
-                f"sockets: {[str(path) for path in live_sockets]}"
-            )
+            reason = "Prime shutdown left a scoped process or socket"
+            details = []
+            if unresolved:
+                reason = "Prime process ownership could not be observed"
+                blockers = ", ".join(_describe_process(process) for process in unresolved)
+                details.append(f"Unresolved: {blockers}")
+            if survivors:
+                details.append(f"PIDs: {[identity.pid for identity in survivors]}")
+            if live_sockets:
+                details.append(f"sockets: {[str(path) for path in live_sockets]}")
+            raise RuntimeError(f"{reason}; runtime retained. {'; '.join(details)}")
         time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
 
 
@@ -861,7 +869,7 @@ def stop_prime_runtime(
 
 def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     endpoint = _supervisor_endpoint(paths)
-    captured = _owned_process_identities(paths)
+    captured, _ = _owned_process_identities(paths)
     shutdown_sent = False
     if endpoint is not None:
         try:
