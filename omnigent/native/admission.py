@@ -17,6 +17,7 @@ from omnigent.native.native_dispatch import resolve_hook_for_key
 from omnigent.native.source_owner import (
     NativeAdmission,
     NativeAdmissionRequest,
+    NativeAdmissionStatusRequest,
     NativeOwner,
     NativeStop,
 )
@@ -112,6 +113,21 @@ def validate_native_sync(
             raise RuntimeError(
                 "Native admission validation did not confirm the current source owner."
             )
+
+
+def native_source_deleted_sync(
+    admission: NativeAdmission, *, server_url: str, headers: dict[str, str]
+) -> bool:
+    try:
+        with httpx.Client(base_url=server_url, headers=headers, timeout=5.0) as client:
+            response = client.post(
+                f"/v1/sessions/{admission.source_id}/native-admission/status",
+                json=NativeAdmissionStatusRequest(epoch=admission.epoch).model_dump(),
+            )
+        body = response.json()
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        return False
+    return response.status_code == 200 and body == {"deleted": True} and body["deleted"] is True
 
 
 @asynccontextmanager

@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import random
 import shutil
 import signal
 import socket
@@ -17,10 +18,11 @@ import uuid
 from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 import click
 import psutil
+from pydantic import TypeAdapter
 
 from omnigent._platform import IS_WINDOWS, resolve_cli_binary
 from omnigent.harnesses.pi_native.bridge import _atomic_text
@@ -32,7 +34,7 @@ from omnigent.harnesses.prime_native.bridge import (
     runtime_paths,
 )
 from omnigent.native import native_bridge_common, owner_claim
-from omnigent.native.source_owner import NativeStop
+from omnigent.native.source_owner import NativeAdmission, NativeStop
 
 QUALIFIED_VERSION = "0.9.6"
 _DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
@@ -41,6 +43,8 @@ _DAEMON_SCHEMA_REVISION = 30
 _SOCKET_IO_TIMEOUT_S = 1.5
 _SHUTDOWN_SETTLE_TIMEOUT_S = 5.0
 _SHUTDOWN_POLL_INTERVAL_S = 0.1
+# Runner startup sweeps synchronously; later retired runtimes wait for the next sweep.
+_RETIRED_STATUS_BUDGET_S = 10.0
 _LAUNCH_IDENTITY_TIMEOUT_S = 5.0
 _LAUNCH_RESERVATION_FILE = "launch.pending.json"
 _ACTIVE_RUNTIMES: set[PrimeRuntimePaths] = set()
@@ -890,18 +894,54 @@ def _stop_prime_runtime(paths: PrimeRuntimePaths) -> None:
     _remove_runtime_records(paths)
 
 
+class _BridgeConfig(TypedDict):
+    sessionId: str
+    serverUrl: str
+    authHeaders: dict[str, str]
+    nativeAdmission: NativeAdmission
+
+
+_BRIDGE_CONFIG = TypeAdapter(_BridgeConfig)
+
+
+def _retired_source_deleted(paths: PrimeRuntimePaths) -> bool:
+    from omnigent.harnesses.pi_native.bridge import config_path
+    from omnigent.native.admission import native_source_deleted_sync
+
+    owner_records = (paths.root / owner_claim.OWNER_PID_FILENAME, paths.terminal_file)
+    if any(os.path.lexists(record) for record in owner_records):
+        return False
+    owned, unresolved = _owned_process_identities(paths)
+    if owned or unresolved or _live_sockets(paths):
+        return False
+    try:
+        config = _BRIDGE_CONFIG.validate_json(config_path(paths.root).read_bytes())
+    except (OSError, ValueError):
+        return False
+    admission = config["nativeAdmission"]
+    if config["sessionId"] != admission.source_id or runtime_paths(admission.source_id) != paths:
+        return False
+    return native_source_deleted_sync(
+        admission, server_url=config["serverUrl"], headers=config["authHeaders"]
+    )
+
+
 def stop_orphaned_runtimes() -> int:
     from omnigent.harnesses.claude_native.bridge import ensure_secure_dir
     from omnigent.inner.terminal import _process_alive as owner_process_alive
 
     stopped = 0
+    status_deadline = time.monotonic() + _RETIRED_STATUS_BUDGET_S
     for root in bridge_roots():
         try:
             root.lstat()
         except FileNotFoundError:
             continue
         ensure_secure_dir(root)
-        for entry in root.iterdir():
+        # Random order keeps an unresponsive server from starving later status queries.
+        entries = list(root.iterdir())
+        random.shuffle(entries)
+        for entry in entries:
             if entry.name == ".locks":
                 continue
             paths = PrimeRuntimePaths(entry)
@@ -916,6 +956,15 @@ def stop_orphaned_runtimes() -> int:
                         continue
                     claim = owner_claim.read_owner_claim(entry)
                     if reservation is None:
+                        if (
+                            claim is None
+                            and time.monotonic() < status_deadline
+                            and _retired_source_deleted(paths)
+                        ):
+                            shutil.rmtree(entry)
+                            _ACTIVE_RUNTIMES.discard(paths)
+                            stopped += 1
+                            continue
                         if claim is None or not owner_claim.owner_is_gone(
                             claim, process_alive=owner_process_alive
                         ):

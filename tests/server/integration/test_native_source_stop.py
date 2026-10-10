@@ -269,3 +269,43 @@ async def test_reader_cannot_stop_but_can_fork_after_owner_stop(auth_client, db_
         f"/v1/sessions/{source_id}/fork", json={"agent_id": target_id}, headers=reader
     )
     assert allowed.status_code == 201, allowed.text
+
+
+@pytest.fixture
+def header_auth_required(monkeypatch):
+    monkeypatch.setenv("OMNIGENT_LOCAL_SINGLE_USER", "0")
+
+
+async def test_native_admission_status_requires_a_matching_deleted_tombstone(
+    header_auth_required, auth_client, db_uri
+):
+    import uuid
+
+    owner_headers = {"X-Forwarded-Email": "owner@example.com"}
+    deleted_id, _ = await source_and_target(auth_client, user="owner@example.com")
+    live_id, _ = await source_and_target(auth_client, user="owner@example.com")
+    store = SqlAlchemyConversationStore(db_uri)
+    owner = NativeOwner(provider="prime-native", environment="fixture", runtime="private-owner")
+    deleted_epoch = store.admit_native(deleted_id, owner).epoch
+    live_epoch = store.admit_native(live_id, owner).epoch
+    deleted = await auth_client.delete(f"/v1/sessions/{deleted_id}", headers=owner_headers)
+    assert deleted.status_code == 200, deleted.text
+
+    async def status(session_id, epoch, headers):
+        response = await auth_client.post(
+            f"/v1/sessions/{session_id}/native-admission/status",
+            json={"epoch": epoch},
+            headers=headers,
+        )
+        return response.status_code, response.json()
+
+    stranger = {"X-Forwarded-Email": "stranger@example.com"}
+    assert await status(deleted_id, deleted_epoch, owner_headers) == (200, {"deleted": True})
+    assert await status(deleted_id, live_epoch, owner_headers) == (200, {"deleted": False})
+    assert await status(uuid.uuid4().hex, deleted_epoch, owner_headers) == (
+        200,
+        {"deleted": False},
+    )
+    assert await status(live_id, live_epoch, owner_headers) == (200, {"deleted": False})
+    assert await status(live_id, live_epoch, stranger) == (200, {"deleted": False})
+    assert (await status(deleted_id, deleted_epoch, {}))[0] == 401
