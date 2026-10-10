@@ -168,7 +168,6 @@ def executor_bridge_dir() -> Path:
 
 
 def prune_orphaned_bridge_dirs() -> int:
-    """Count stopped orphan runtimes, retaining their saved sessions and configuration."""
     from omnigent.harnesses.prime_native.process import stop_orphaned_runtimes
 
     return stop_orphaned_runtimes()

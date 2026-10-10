@@ -146,3 +146,35 @@ def test_verified_close_replacement_uses_original_new_epoch(stores):
     current_stop = second.seal_native_stop(source.id)
     assert current_stop.unresolved_owners == ()
     assert first.finish_native_stop(current_stop, NativeStopOutcome.VERIFIED).outcome == "verified"
+
+
+async def test_delete_keeps_a_deleted_tombstone_that_admission_treats_as_absent(stores):
+    from omnigent.db.db_models import workspace_scope
+
+    first, second = stores
+    source = first.create_conversation(labels={"omnigent.wrapper": "prime-native-ui"})
+    child = first.create_conversation(parent_conversation_id=source.id)
+    live = first.create_conversation(labels={"omnigent.wrapper": "prime-native-ui"})
+    owner = NativeOwner(provider="prime-native", environment="host", runtime="private")
+    ticket = first.admit_native(source.id, owner)
+    child_ticket = first.admit_native(child.id, owner)
+    live_ticket = first.admit_native(live.id, owner)
+
+    assert await second.delete_conversation(source.id) is True
+
+    assert first.native_source_deleted(source.id, ticket.epoch) is True
+    assert first.native_source_deleted(child.id, child_ticket.epoch) is True
+    assert first.native_source_deleted(source.id, child_ticket.epoch) is False
+    assert first.native_source_deleted(live.id, live_ticket.epoch) is False
+    with workspace_scope(7):
+        assert first.native_source_deleted(source.id, ticket.epoch) is False
+    assert first.get_native_source(source.id) is None
+    with pytest.raises(OmnigentError, match="revoked"):
+        first.validate_native_admission(ticket)
+    assert first.admit_native(live.id, owner, expected_epoch=live_ticket.epoch) == live_ticket
+
+    recreated = first.create_conversation(conversation_id=source.id)
+    readmitted = first.admit_native(recreated.id, owner)
+    assert readmitted.epoch != ticket.epoch
+    assert first.get_native_source(source.id).phase == "open"
+    assert first.native_source_deleted(source.id, ticket.epoch) is False
