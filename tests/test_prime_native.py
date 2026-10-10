@@ -1213,7 +1213,7 @@ def test_stop_rejects_missing_endpoint_with_a_surviving_private_process(
         identity = process._ProcessIdentity(
             survivor.pid, process.psutil.Process(survivor.pid).create_time()
         )
-        monkeypatch.setattr(process, "_owned_process_identities", lambda *_: {identity})
+        monkeypatch.setattr(process, "_owned_process_identities", lambda *_: ({identity}, []))
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.01)
         monkeypatch.setattr(process, "_SHUTDOWN_POLL_INTERVAL_S", 0.001)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
@@ -1256,7 +1256,7 @@ def test_stop_retains_records_for_an_orphaned_private_python_process(
         identity = process._ProcessIdentity(
             kernel.pid, process.psutil.Process(kernel.pid).create_time()
         )
-        assert identity in process._owned_process_identities(paths)
+        assert identity in process._owned_process_identities(paths)[0]
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
             stop_prime_runtime(paths)
         assert kernel.poll() is None
@@ -1492,11 +1492,11 @@ def test_unreadable_candidate_is_checked_for_liveness(
             return process.psutil.STATUS_RUNNING
 
     monkeypatch.setattr(process.psutil, "process_iter", lambda *_args: iter([Candidate()]))
-    if alive:
-        with pytest.raises(RuntimeError, match="ownership could not be observed"):
-            process._owned_process_identities(paths)
-    else:
-        assert process._owned_process_identities(paths) == set()
+    owned, unresolved = process._owned_process_identities(paths)
+    assert (owned, [candidate.pid for candidate in unresolved]) == (
+        set(),
+        [999_999] if alive else [],
+    )
 
 
 @pytest.mark.parametrize(
@@ -1547,10 +1547,10 @@ def test_unrelated_candidate_does_not_require_environment_access(
             return process.psutil.STATUS_RUNNING
 
     monkeypatch.setattr(process.psutil, "process_iter", lambda *_args: iter([Candidate()]))
-    assert process._owned_process_identities(paths) == set()
+    assert process._owned_process_identities(paths) == (set(), [])
 
 
-def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
+def test_unreadable_python_is_unresolved_only_while_alive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
@@ -1576,8 +1576,10 @@ def test_unreadable_python_that_exits_during_inspection_is_not_a_survivor(
         def status(self) -> str:
             return process.psutil.STATUS_RUNNING
 
-    monkeypatch.setattr(process.psutil, "process_iter", lambda *_args: iter([Candidate()]))
-    assert process._owned_process_identities(paths) == set()
+    candidate = Candidate()
+    monkeypatch.setattr(process.psutil, "process_iter", lambda *_args: iter([candidate]))
+    assert process._owned_process_identities(paths) == (set(), [candidate])
+    assert process._owned_process_identities(paths) == (set(), [])
 
 
 _KERNEL_WITH_HELPER = """
@@ -1647,14 +1649,11 @@ def test_unreadable_helper_is_owned_only_through_an_owned_ancestor(
     helper = kernel_helper if helper_parent == "owned_kernel" else unrelated.pid
     try:
         _hide_process_arguments(monkeypatch, helper)
-        if helper_parent == "owned_kernel":
-            assert {identity.pid for identity in process._owned_process_identities(paths)} == {
-                kernel.pid,
-                kernel_helper,
-            }
-        else:
-            with pytest.raises(RuntimeError, match="ownership could not be observed"):
-                process._owned_process_identities(paths)
+        owned, unresolved = process._owned_process_identities(paths)
+        assert {identity.pid for identity in owned} == {kernel.pid, kernel_helper}
+        assert (unrelated.pid in {candidate.pid for candidate in unresolved}) == (
+            helper_parent == "unrelated"
+        )
     finally:
         _kill(kernel_helper, kernel.pid, unrelated.pid)
         kernel.wait(timeout=5)
@@ -1862,7 +1861,7 @@ def test_stop_observes_a_private_process_that_appears_during_settlement(
         identity = process._ProcessIdentity(
             survivor.pid, process.psutil.Process(survivor.pid).create_time()
         )
-        observations = iter([set(), {identity}])
+        observations = iter([(set(), []), ({identity}, [])])
         monkeypatch.setattr(process, "_owned_process_identities", lambda *_: next(observations))
         monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0.0)
         with pytest.raises(RuntimeError, match="left a scoped process or socket"):
