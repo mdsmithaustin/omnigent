@@ -28,6 +28,12 @@ class NativeAdmissionRequest(BaseModel):
     expected_epoch: str | None = None
 
 
+class NativeAdmissionStatusRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    epoch: str
+
+
 class NativeStopOutcome(StrEnum):
     VERIFIED = "verified"
     UNKNOWN = "unknown"
@@ -54,7 +60,7 @@ class NativeStopReceipt(BaseModel):
 
 class NativeSource(BaseModel):
     admission: NativeAdmission
-    phase: Literal["admitted", "open", "stopping", "closed"] = "open"
+    phase: Literal["admitted", "open", "stopping", "closed", "deleted"] = "open"
     stop: NativeStop | None = None
     result: NativeStopResult | None = None
     unresolved_owners: tuple[NativeOwner, ...] = ()
