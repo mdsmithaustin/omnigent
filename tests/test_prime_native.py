@@ -899,20 +899,22 @@ def _status_server(
             thread.join(timeout=5)
 
 
-def _retired_runtime(server_url: str, **changes: object) -> PrimeRuntimePaths:
+def _retired_runtime(
+    server_url: str, source: str = _RETIRED_SOURCE, **changes: object
+) -> PrimeRuntimePaths:
     from omnigent.native.admission import native_owner
     from omnigent.native.source_owner import NativeAdmission
 
-    paths = bridge.runtime_paths(_RETIRED_SOURCE)
+    paths = bridge.runtime_paths(source)
     paths.prepare()
     (paths.session_dir / "saved.jsonl").write_text("saved transcript")
     admission = NativeAdmission(
-        source_id=_RETIRED_SOURCE,
+        source_id=source,
         epoch="retired-epoch",
-        owner=native_owner(_RETIRED_SOURCE, "prime-native"),
+        owner=native_owner(source, "prime-native"),
     )
     config: dict[str, object] = {
-        "sessionId": _RETIRED_SOURCE,
+        "sessionId": source,
         "serverUrl": server_url,
         "authHeaders": {"Authorization": "Bearer fixture"},
         "nativeAdmission": admission.model_dump(),
@@ -979,6 +981,18 @@ def test_maintenance_keeps_retired_runtime_when_status_times_out() -> None:
         assert time.monotonic() - started < 6.0
     assert len(received) == 1
     assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_bounds_status_queries_per_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process, "_RETIRED_STATUS_BUDGET_S", 2.0)
+    with _status_server(delay=6.0) as (url, received):
+        retired = [_retired_runtime(url, f"retired-{index}") for index in range(3)]
+        started = time.monotonic()
+        assert bridge.prune_orphaned_bridge_dirs() == 0
+        assert time.monotonic() - started < 2.0 + 5.0
+    assert len(received) == 1
+    for paths in retired:
+        assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
 
 
 def test_maintenance_keeps_retired_runtime_when_server_refuses_connection() -> None:

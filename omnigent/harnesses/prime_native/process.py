@@ -42,6 +42,8 @@ _DAEMON_SCHEMA_REVISION = 30
 _SOCKET_IO_TIMEOUT_S = 1.5
 _SHUTDOWN_SETTLE_TIMEOUT_S = 5.0
 _SHUTDOWN_POLL_INTERVAL_S = 0.1
+# Runner startup sweeps synchronously; later retired runtimes wait for the next sweep.
+_RETIRED_STATUS_BUDGET_S = 10.0
 _LAUNCH_IDENTITY_TIMEOUT_S = 5.0
 _LAUNCH_RESERVATION_FILE = "launch.pending.json"
 _ACTIVE_RUNTIMES: set[PrimeRuntimePaths] = set()
@@ -928,6 +930,7 @@ def stop_orphaned_runtimes() -> int:
     from omnigent.inner.terminal import _process_alive as owner_process_alive
 
     stopped = 0
+    status_deadline = time.monotonic() + _RETIRED_STATUS_BUDGET_S
     for root in bridge_roots():
         try:
             root.lstat()
@@ -949,7 +952,11 @@ def stop_orphaned_runtimes() -> int:
                         continue
                     claim = owner_claim.read_owner_claim(entry)
                     if reservation is None:
-                        if claim is None and _retired_source_deleted(paths):
+                        if (
+                            claim is None
+                            and time.monotonic() < status_deadline
+                            and _retired_source_deleted(paths)
+                        ):
                             shutil.rmtree(entry)
                             _ACTIVE_RUNTIMES.discard(paths)
                             stopped += 1
