@@ -805,17 +805,17 @@ def _wait_for_runtime_absence(paths: PrimeRuntimePaths, captured: set[_ProcessId
         if not survivors and not unresolved and not live_sockets:
             return
         if time.monotonic() >= deadline:
+            reason = "Prime shutdown left a scoped process or socket"
+            details = []
             if unresolved:
+                reason = "Prime process ownership could not be observed"
                 blockers = ", ".join(_describe_process(process) for process in unresolved)
-                raise RuntimeError(
-                    "Prime process ownership could not be observed; runtime retained. "
-                    f"Unresolved: {blockers}"
-                )
-            raise RuntimeError(
-                "Prime shutdown left a scoped process or socket; runtime retained. "
-                f"PIDs: {[identity.pid for identity in survivors]}; "
-                f"sockets: {[str(path) for path in live_sockets]}"
-            )
+                details.append(f"Unresolved: {blockers}")
+            if survivors:
+                details.append(f"PIDs: {[identity.pid for identity in survivors]}")
+            if live_sockets:
+                details.append(f"sockets: {[str(path) for path in live_sockets]}")
+            raise RuntimeError(f"{reason}; runtime retained. {'; '.join(details)}")
         time.sleep(_SHUTDOWN_POLL_INTERVAL_S)
 
 

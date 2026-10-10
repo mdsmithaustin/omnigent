@@ -1702,16 +1702,36 @@ def test_stop_waits_for_an_unreadable_unrelated_process_to_exit(
 ) -> None:
     paths = _shutdown_paths(tmp_path)
     _write_lifecycle_records(paths)
-    exiting = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    exiting = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    assert exiting.stdin is not None
+    observations = 0
+    process_alive = process._process_alive
+
+    def release_process(candidate: process.psutil.Process) -> bool:
+        nonlocal observations
+        if candidate.pid == exiting.pid:
+            observations += 1
+            if observations == 4:
+                assert exiting.stdin is not None
+                exiting.stdin.close()
+                exiting.wait(timeout=5)
+        return process_alive(candidate)
+
     try:
         _hide_process_arguments(monkeypatch, exiting.pid)
+        monkeypatch.setattr(process, "_process_alive", release_process)
+        monkeypatch.setattr(process, "_SHUTDOWN_POLL_INTERVAL_S", 0)
         stop_prime_runtime(paths)
+        assert observations == 4
         assert exiting.poll() == 0
         assert not (paths.root / "owner.pid").exists()
         assert not (paths.root / "terminal.json").exists()
     finally:
         _kill(exiting.pid)
         exiting.wait(timeout=5)
+        exiting.stdin.close()
 
 
 def test_stop_fails_closed_naming_a_live_unreadable_unrelated_process(
@@ -1727,15 +1747,47 @@ def test_stop_fails_closed_naming_a_live_unreadable_unrelated_process(
         with pytest.raises(RuntimeError) as raised:
             stop_prime_runtime(paths)
         status = process.psutil.Process(blocker.pid).status()
-        assert str(raised.value) == (
-            "Prime process ownership could not be observed; runtime retained. "
-            f"Unresolved: pid {blocker.pid} ({name}, {status})"
+        message = str(raised.value)
+        assert message.startswith(
+            "Prime process ownership could not be observed; runtime retained. Unresolved: "
         )
+        assert f"pid {blocker.pid} ({name}, {status})" in message
         assert blocker.poll() is None
         assert (paths.root / "owner.pid").read_text() == owner
         assert (paths.root / "terminal.json").read_text() == terminal
     finally:
         _kill(blocker.pid)
+        blocker.wait(timeout=5)
+
+
+def test_stop_deadline_reports_all_blocker_categories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _shutdown_paths(tmp_path)
+    owner, terminal = _write_lifecycle_records(paths)
+    blocker = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    assert blocker.stdin is not None
+    try:
+        name = process.psutil.Process(blocker.pid).name()
+        _hide_process_arguments(monkeypatch, blocker.pid)
+        monkeypatch.setattr(process, "_SHUTDOWN_SETTLE_TIMEOUT_S", 0)
+        with _prime_daemon(paths, tmp_path, socket_name="worker-private.sock") as worker:
+            with pytest.raises(RuntimeError) as raised:
+                stop_prime_runtime(paths)
+            message = str(raised.value)
+            status = process.psutil.Process(blocker.pid).status()
+            assert "runtime retained" in message
+            assert f"pid {blocker.pid} ({name}, {status})" in message
+            assert f"PIDs: [{worker.process.pid}]" in message
+            assert f"sockets: ['{worker.socket_path}']" in message
+            assert not worker.command_path.exists()
+        assert blocker.poll() is None
+        assert (paths.root / "owner.pid").read_text() == owner
+        assert (paths.root / "terminal.json").read_text() == terminal
+    finally:
+        blocker.stdin.close()
         blocker.wait(timeout=5)
 
 
