@@ -1600,6 +1600,8 @@ class _RetiredOwnedTree:
     event_flags: int
     kind: Literal["delete_event", "maintenance_retired"] = "delete_event"
     status_line: str | None = None
+    epoch_sha256: str | None = None
+    status_response: dict | None = None
 
 
 _ACCESS_LINE = re.compile(
@@ -2221,6 +2223,7 @@ class _OwnedRun:
         self.credential_targets: dict[Path, _CredentialTarget] = {}
         self._retired_trees: dict[Path, _RetiredOwnedTree] = {}
         self._retained_roots: dict[Path, _RetirementAttempt] = {}
+        self._root_admissions: dict[Path, tuple[str, str]] = {}
         self.terminal_sockets: set[Path] = set()
         self.census_errors: set[str] = set()
         self.unowned_unreadable: dict[tuple[int, float], dict] = {}
@@ -4347,10 +4350,36 @@ class _OwnedRun:
         finally:
             os.close(descriptor)
 
+    def _record_root_admission(self, root: Path, descriptor: int) -> None:
+        self._root_admissions.pop(root, None)
+        try:
+            config_fd = os.open(
+                "config.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+            )
+        except FileNotFoundError:
+            return
+        with os.fdopen(config_fd) as handle:
+            metadata = os.fstat(handle.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                return
+            config = json.load(handle)
+        admission = config.get("nativeAdmission")
+        if not isinstance(admission, dict) or config.get("serverUrl") != self.url:
+            return
+        session, epoch = admission.get("source_id"), admission.get("epoch")
+        if session == self.session_id and type(epoch) is str and epoch:
+            self._root_admissions[root] = (session, epoch)
+
     def _maintenance_retirement(self, root: Path) -> _RetiredOwnedTree | None:
-        """Accept host maintenance removing a root after the server confirmed its deletion."""
+        """Require absence, a maintenance query, and an exact-epoch deletion confirmation."""
         attempt = self._retained_roots.get(root)
-        if attempt is None or attempt.http_status != 200:
+        admission = self._root_admissions.get(root)
+        if (
+            attempt is None
+            or attempt.http_status != 200
+            or admission is None
+            or admission[0] != attempt.session_id
+        ):
             return None
         deleted = f"DELETE /v1/sessions/{attempt.session_id}"
         queried = f"POST /v1/sessions/{attempt.session_id}/native-admission/status"
@@ -4361,7 +4390,7 @@ class _OwnedRun:
                 continue
             after_delete = after_delete or match["request"] == deleted
             if after_delete and match["request"] == queried:
-                return _RetiredOwnedTree(
+                receipt = _RetiredOwnedTree(
                     root,
                     attempt.root_identity,
                     attempt.parent_identity,
@@ -4371,7 +4400,28 @@ class _OwnedRun:
                     attempt.event_flags,
                     "maintenance_retired",
                     sanitize(line),
+                    hashlib.sha256(admission[1].encode()).hexdigest(),
                 )
+                target = self.credential_targets[root / "agent/auth.json"]
+                self._check_retired(target, root, receipt)
+                try:
+                    response = asyncio.run(
+                        self._request_http(
+                            "POST",
+                            queried.removeprefix("POST "),
+                            {"epoch": admission[1]},
+                            5,
+                            time.monotonic() + 5,
+                        )
+                    )
+                    body = response.json()
+                except (httpx.HTTPError, ValueError, RuntimeError):
+                    return None
+                if response.status_code != 200 or body != {"deleted": True}:
+                    return None
+                if body["deleted"] is not True:
+                    return None
+                return replace(receipt, status_response=body)
         return None
 
     def _owned_server_log(self) -> str:
@@ -4537,6 +4587,7 @@ class _OwnedRun:
                     if descriptor is None:
                         raise RuntimeError("owned_credential_directory_missing")
                     handles.callback(os.close, descriptor)
+                    self._record_root_admission(root, descriptor)
                     pins[root] = (parent, descriptor)
                     queue.control(
                         [

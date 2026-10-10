@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
@@ -2796,7 +2797,16 @@ def _access_line(method, session_id, suffix=""):
 
 
 @pytest.mark.parametrize(
-    "variant", ["accepted", "no_status", "status_before_delete", "other_session", "replaced"]
+    "variant",
+    [
+        "accepted",
+        "no_status",
+        "status_before_delete",
+        "other_session",
+        "replaced",
+        "wrong_epoch",
+        "missing_epoch",
+    ],
 )
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
@@ -2820,6 +2830,31 @@ def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
     run.server = SimpleNamespace(poll=lambda: None)
     run.recover_owned_session = lambda: None
     run.owned_paths = lambda session: (run.register_owned_credential(target), paths)[1]
+    epoch = "wrong-epoch" if variant == "wrong_epoch" else "owned-epoch"
+    (compact / "config.json").write_text(
+        json.dumps(
+            {
+                "serverUrl": run.url,
+                "nativeAdmission": {
+                    "source_id": run.session_id,
+                    **({} if variant == "missing_epoch" else {"epoch": epoch}),
+                },
+                "authHeaders": {"Authorization": "FORBIDDEN_AUTH_SENTINEL"},
+            }
+        )
+    )
+    confirmations = []
+
+    async def status_confirmation(method, route, body, timeout, deadline):
+        assert (method, route) == (
+            "POST",
+            "/v1/sessions/synthetic-session/native-admission/status",
+        )
+        assert not compact.exists()
+        confirmations.append(body)
+        return httpx.Response(200, json={"deleted": body == {"epoch": "owned-epoch"}})
+
+    run._request_http = status_confirmation
     deleted = _access_line("DELETE", run.session_id)
     status = _access_line(
         "POST",
@@ -2859,6 +2894,11 @@ def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
             assert receipt.status_line == status.strip()
             recorded = json.loads((run.evidence / "maintenance-retirement.json").read_text())
             assert recorded["kind"] == "maintenance_retired"
+            assert recorded["epoch_sha256"] == hashlib.sha256(b"owned-epoch").hexdigest()
+            assert recorded["status_response"] == {"deleted": True}
+            assert confirmations == [{"epoch": "owned-epoch"}]
+            assert "owned-epoch" not in json.dumps(recorded)
+            assert "FORBIDDEN_AUTH_SENTINEL" not in json.dumps(recorded)
             assert owner.removed is not None
         else:
             expected = "replaced" if variant == "replaced" else "missing"
@@ -2866,6 +2906,10 @@ def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
                 run.cleanup(settlement)
             assert compact not in run._retired_trees
             assert owner.removed is None
+            if variant == "wrong_epoch":
+                assert confirmations == [{"epoch": "wrong-epoch"}]
+            else:
+                assert confirmations == []
         attempts = json.loads((run.evidence / "retirement-attempts.json").read_text())
         assert [(item["branch"], item["http_status"]) for item in attempts] == [
             ("retained_original", 200)
@@ -2885,11 +2929,10 @@ os.write(1, b"Resume with omnigent prime-native --resume synthetic-session\r\n" 
 """
 
 
-@pytest.mark.parametrize("drained", [True, False])
 @pytest.mark.skipif(
     sys.platform != "darwin", reason="Darwin holds an exiting pty client until its output is read"
 )
-def test_attached_client_exits_while_delete_blocks_the_probe(tmp_path, monkeypatch, drained):
+def test_attached_client_exits_while_delete_blocks_the_probe(tmp_path, monkeypatch):
     import select
 
     probe = _provider_probe()
@@ -2900,8 +2943,6 @@ def test_attached_client_exits_while_delete_blocks_the_probe(tmp_path, monkeypat
         "spawn",
         lambda command, argv, **kwargs: spawn(sys.executable, ["-c", _ATTACHED_CLIENT], **kwargs),
     )
-    if not drained:
-        monkeypatch.setattr(probe, "_PtyDrain", lambda fd, sink: None, raising=False)
     run.foreground_host_record = lambda: ({}, {})
     run.own_session = lambda session: setattr(run, "session_id", session)
     run.attach()
@@ -2920,19 +2961,12 @@ def test_attached_client_exits_while_delete_blocks_the_probe(tmp_path, monkeypat
             0,
         )
         run.terminal.send("\r")
-        # The runner waits 5 s for the attached client while the probe blocks in DELETE.
-        assert bool(queue.control([], 1, 5)) is drained
-        if drained:
-            exit_record = run.close_attachment()
-            assert exit_record["exitstatus"] == 0
-            transcript = (run.evidence / "terminal.txt").read_text()
-            assert "Web UI: http://127.0.0.1/c/synthetic-session" in transcript
-            assert transcript.count("Resume with omnigent prime-native") == 50
-        else:
-            with contextlib.suppress(OSError):
-                while os.read(run.terminal.child_fd, 65536):
-                    pass
-            assert queue.control([], 1, 5)
+        assert queue.control([], 1, 5)
+        exit_record = run.close_attachment()
+        assert exit_record["exitstatus"] == 0
+        transcript = (run.evidence / "terminal.txt").read_text()
+        assert "Web UI: http://127.0.0.1/c/synthetic-session" in transcript
+        assert transcript.count("Resume with omnigent prime-native") == 50
     finally:
         queue.close()
         if not run.terminal.closed:

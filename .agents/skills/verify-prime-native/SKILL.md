@@ -284,12 +284,16 @@ binds its original root and surviving parent identities to the exact session,
 DELETE step, successful HTTP status, and Darwin deletion event. The outer scratch
 removal instead records its checked descriptor-relative `rmdir` and held original
 vnode proof. HTTP success or path absence alone proves neither removal.
-When an offline runner leaves the root after DELETE 200, host maintenance removes
-it once the server confirms the deletion. `maintenance-retirement.json` then
-records a `maintenance_retired` receipt. It binds the retained original attempt,
-the same root and parent identities, and name absence. It also records the owned
-server's access line for that session's `native-admission/status` 200 after its
-DELETE 200.
+When an offline runner leaves the root after DELETE 200, the probe accepts later
+removal only with the retained original root and parent identities, name absence,
+and the owned server's maintenance status access line after DELETE. Before DELETE,
+it records the root's native admission session and epoch from its extension config
+and checks that its server URL matches the owned server. After removal, the probe
+queries that server with the recorded epoch and requires HTTP 200 with exactly
+`{"deleted": true}`. `maintenance-retirement.json` records these identities, the
+access line, the epoch hash, and the probe's status response. This proves deletion
+confirmation for that epoch and subsequent root absence, not which process removed
+it. Raw epochs and authentication headers are excluded from evidence.
 See the [ownership and completion contract](../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
 for the Darwin predicate and its namespace-removal limits.
 
