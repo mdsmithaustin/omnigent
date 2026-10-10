@@ -781,7 +781,7 @@ def live_initial_process_records(initial: list[dict[str, object]]) -> list[dict[
                 continue
             try:
                 argv = process.cmdline()
-            except psutil.AccessDenied:
+            except (psutil.AccessDenied, SystemError):
                 # A live setuid or exiting owned process keeps its verified identity.
                 argv = []
             retained.append(
@@ -794,7 +794,7 @@ def live_initial_process_records(initial: list[dict[str, object]]) -> list[dict[
             )
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
-        except (OSError, psutil.Error) as exc:
+        except (OSError, psutil.Error, SystemError) as exc:
             retained.append(
                 {
                     "pid": pid,

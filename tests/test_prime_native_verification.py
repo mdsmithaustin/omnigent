@@ -655,7 +655,12 @@ def _spawn_unreadable(probe, monkeypatch, spawn, kind: str) -> tuple[int, str]:
 
         def hidden(self, original=original):
             if self.pid == pid:
-                raise probe.psutil.AccessDenied(pid)
+                # psutil raises SystemError from proc_cmdline for an exiting process.
+                raise (
+                    SystemError("proc_cmdline")
+                    if kind == "exiting"
+                    else probe.psutil.AccessDenied(pid)
+                )
             return original(self)
 
         monkeypatch.setattr(probe.psutil.Process, name, hidden)
@@ -680,7 +685,7 @@ def _census_run(probe, tmp_path: Path):
     return run
 
 
-@pytest.mark.parametrize("kind", ["setuid", "simulated"])
+@pytest.mark.parametrize("kind", ["setuid", "simulated", "exiting"])
 def test_census_owns_an_unreadable_descendant_through_its_owned_parent(
     tmp_path, monkeypatch, kind
 ):
@@ -714,12 +719,13 @@ def test_census_owns_an_unreadable_descendant_through_its_owned_parent(
     ]
 
 
-def test_census_reports_an_unreadable_process_outside_the_owned_tree(tmp_path, monkeypatch):
+@pytest.mark.parametrize("kind", ["simulated", "exiting"])
+def test_census_reports_an_unreadable_process_outside_the_owned_tree(tmp_path, monkeypatch, kind):
     probe = _provider_probe()
     run = _census_run(probe, tmp_path)
     owned_env = {"OMNIGENT_DATA_DIR": str(run.runtime / "data")}
     with _process_tree(owned_env) as (root, _), _process_tree({}) as (_, spawn_foreign):
-        foreign, exe = _spawn_unreadable(probe, monkeypatch, spawn_foreign, "simulated")
+        foreign, exe = _spawn_unreadable(probe, monkeypatch, spawn_foreign, kind)
         started = probe.psutil.Process(foreign).create_time()
         records = run.census()
 

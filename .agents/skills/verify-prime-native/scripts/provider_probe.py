@@ -1540,7 +1540,7 @@ def _reply_verdict(
 def process_exe(process: psutil.Process) -> str | None:
     try:
         return process.exe()
-    except (psutil.Error, OSError):
+    except (psutil.Error, OSError, SystemError):
         return None
 
 
@@ -2467,7 +2467,7 @@ class _OwnedRun:
                             continue
             except (psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
-            except (psutil.Error, OSError) as exc:
+            except (psutil.Error, OSError, SystemError) as exc:
                 self.census_errors.add(f"owned_descendants_unreadable {pid} {type(exc).__name__}")
         records = []
         unreadable = []
@@ -2482,7 +2482,7 @@ class _OwnedRun:
                 try:
                     argv = process.cmdline()
                     env = process.environ()
-                except psutil.AccessDenied:
+                except (psutil.AccessDenied, SystemError):
                     unreadable.append((process, started))
                     continue
                 agent = env.get("PRIME_AGENT_CODING_AGENT_DIR", "")
@@ -2508,7 +2508,7 @@ class _OwnedRun:
                         self.admit_config(Path(config))
             except (psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
-            except (psutil.Error, OSError) as exc:
+            except (psutil.Error, OSError, SystemError) as exc:
                 if owned or any(pid == process.pid for pid, _ in captured):
                     self.census_errors.add(
                         f"owned_identity_unreadable {process.pid} {type(exc).__name__} "
@@ -2523,7 +2523,7 @@ class _OwnedRun:
                     records.append(record)
             except (psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
-            except (psutil.Error, OSError) as exc:
+            except (psutil.Error, OSError, SystemError) as exc:
                 self.census_errors.add(
                     f"owned_identity_unreadable {process.pid} {type(exc).__name__} "
                     f"exe={process_exe(process)}"
@@ -3233,7 +3233,7 @@ class _OwnedRun:
                 try:
                     identity = ProcessIdentity(process.pid, started, tuple(process.cmdline()))
                     env = process.environ()
-                except psutil.AccessDenied:
+                except (psutil.AccessDenied, SystemError):
                     identity, env = ProcessIdentity(process.pid, started, ()), None
                 record = expected.get(process.pid)
                 if (
