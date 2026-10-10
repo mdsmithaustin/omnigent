@@ -988,10 +988,22 @@ class SqlAlchemyConversationStore(ConversationStore):
                 {"id": uuid_to_bytes(conversation_id)},
             )
 
+    @staticmethod
+    def _live_native_source(row: SqlNativeSource | None) -> NativeSource | None:
+        state = NativeSource.model_validate_json(row.state) if row is not None else None
+        return state if state is not None and state.phase != "deleted" else None
+
     def get_native_source(self, conversation_id: str) -> NativeSource | None:
         with self._conv_session("read_native_source") as session:
+            return self._live_native_source(
+                session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
+            )
+
+    def native_source_deleted(self, conversation_id: str, epoch: str) -> bool:
+        with self._conv_session("read_deleted_native_source") as session:
             row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
-            return NativeSource.model_validate_json(row.state) if row is not None else None
+            state = NativeSource.model_validate_json(row.state) if row is not None else None
+        return state is not None and state.phase == "deleted" and state.admission.epoch == epoch
 
     def _write_native_source(
         self, conversation_id: str, change: Callable[[NativeSource | None], NativeSource | None]
@@ -1001,7 +1013,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             if session.get(SqlConversation, (current_workspace_id(), conversation_id)) is None:
                 raise ConversationNotFoundError(conversation_id)
             row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
-            state = change(NativeSource.model_validate_json(row.state) if row else None)
+            state = change(self._live_native_source(row))
             if state is not None:
                 if row is None:
                     session.add(SqlNativeSource(id=conversation_id, state=state.model_dump_json()))
@@ -5260,9 +5272,10 @@ class SqlAlchemyConversationStore(ConversationStore):
             native_row = session.get(
                 SqlNativeSource, (current_workspace_id(), source_conversation_id)
             )
+            native_state = self._live_native_source(native_row)
             native_source = (
                 source_is_native
-                or native_row is not None
+                or native_state is not None
                 or native_coding_agent_for_wrapper_label(
                     _fetch_labels(session, source_conversation_id).get(WRAPPER_LABEL_KEY)
                 )
@@ -5278,9 +5291,6 @@ class SqlAlchemyConversationStore(ConversationStore):
                 and chosen_agent_id is not None
                 and chosen_agent_id != current_source.agent_id
             ):
-                native_state = (
-                    NativeSource.model_validate_json(native_row.state) if native_row else None
-                )
                 if (
                     native_state is None
                     or native_state.phase != "closed"
@@ -5508,12 +5518,17 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlConversationItem.conversation_id.in_(subtree_ids),
                 )
             )
-            ap_sess.execute(
-                delete(SqlNativeSource).where(
+            for native_row in ap_sess.scalars(
+                select(SqlNativeSource).where(
                     SqlNativeSource.workspace_id == current_workspace_id(),
                     SqlNativeSource.id.in_(subtree_ids),
                 )
-            )
+            ):
+                native_row.state = (
+                    NativeSource.model_validate_json(native_row.state)
+                    .model_copy(update={"phase": "deleted"})
+                    .model_dump_json()
+                )
             ap_sess.execute(
                 delete(SqlConversationLabel).where(
                     SqlConversationLabel.workspace_id == current_workspace_id(),
