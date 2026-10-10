@@ -16,11 +16,13 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partialmethod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
 import click
+import httpx
 import pytest
 
 from omnigent.harnesses.prime_native import bridge, process
@@ -871,15 +873,24 @@ _STATUS_PATH = f"/v1/sessions/{_RETIRED_SOURCE}/native-admission/status"
 
 @contextmanager
 def _status_server(
-    status: int = 200, body: bytes = b'{"deleted": true}', delay: float = 0.0
+    status: int = 200,
+    body: bytes = b'{"deleted": true}',
+    *,
+    stall: bool = False,
+    received_event: threading.Event | None = None,
 ) -> Iterator[tuple[str, list[tuple[str, str | None, object]]]]:
     received: list[tuple[str, str | None, object]] = []
+    release = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append((self.path, self.headers.get("Authorization"), payload))
-            time.sleep(delay)
+            if received_event is not None:
+                received_event.set()
+            if stall:
+                release.wait()
+                return
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -890,11 +901,13 @@ def _status_server(
             pass
 
     with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        server.daemon_threads = False
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
             yield f"http://127.0.0.1:{server.server_port}", received
         finally:
+            release.set()
             server.shutdown()
             thread.join(timeout=5)
 
@@ -973,26 +986,83 @@ def test_maintenance_never_queries_a_runtime_with_an_unresolved_process(
         blocker.wait(timeout=5)
 
 
-def test_maintenance_keeps_retired_runtime_when_status_times_out() -> None:
-    with _status_server(delay=6.0) as (url, received):
+@pytest.fixture
+def retired_status_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact")
+
+
+@pytest.fixture
+def status_timeout(monkeypatch: pytest.MonkeyPatch) -> threading.Event:
+    received = threading.Event()
+
+    def trace(name: str, info: dict[str, object]) -> None:
+        if name == "http11.receive_response_headers.started":
+            assert received.wait(timeout=5)
+            raise httpx.ReadTimeout("Status server has not sent response headers")
+
+    monkeypatch.setattr(
+        httpx.Client,
+        "post",
+        partialmethod(httpx.Client.post, extensions={"trace": trace}),
+    )
+    return received
+
+
+def test_maintenance_keeps_retired_runtime_when_status_times_out(
+    retired_status_roots: None, status_timeout: threading.Event
+) -> None:
+    with _status_server(stall=True, received_event=status_timeout) as (url, received):
         paths = _retired_runtime(url)
-        started = time.monotonic()
         assert bridge.prune_orphaned_bridge_dirs() == 0
-        assert time.monotonic() - started < 6.0
-    assert len(received) == 1
+    assert received == [(_STATUS_PATH, "Bearer fixture", {"epoch": "retired-epoch"})]
     assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
 
 
-def test_maintenance_bounds_status_queries_per_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(process, "_RETIRED_STATUS_BUDGET_S", 2.0)
-    with _status_server(delay=6.0) as (url, received):
+def test_maintenance_bounds_status_queries_per_sweep(
+    monkeypatch: pytest.MonkeyPatch, retired_status_roots: None, status_timeout: threading.Event
+) -> None:
+    with _status_server(stall=True, received_event=status_timeout) as (url, received):
         retired = [_retired_runtime(url, f"retired-{index}") for index in range(3)]
-        started = time.monotonic()
+        ticks = iter([0.0, 0.0, process._RETIRED_STATUS_BUDGET_S + 1.0])
+        monkeypatch.setattr(
+            process,
+            "time",
+            SimpleNamespace(monotonic=lambda: next(ticks, process._RETIRED_STATUS_BUDGET_S + 1.0)),
+        )
         assert bridge.prune_orphaned_bridge_dirs() == 0
-        assert time.monotonic() - started < 2.0 + 5.0
     assert len(received) == 1
     for paths in retired:
         assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
+
+
+def test_maintenance_queries_later_runtime_after_shuffle(
+    monkeypatch: pytest.MonkeyPatch, retired_status_roots: None
+) -> None:
+    with _status_server() as (url, received):
+        retired = [_retired_runtime(url, f"retired-{index}") for index in range(3)]
+        entries = [entry for entry in retired[0].root.parent.iterdir() if entry.name != ".locks"]
+        last_index = next(index for index, paths in enumerate(retired) if paths.root == entries[-1])
+        last = retired[last_index]
+        monkeypatch.setattr(process.random, "shuffle", lambda entries: entries.reverse())
+        monkeypatch.setattr(
+            process,
+            "time",
+            SimpleNamespace(
+                monotonic=lambda: process._RETIRED_STATUS_BUDGET_S + 1.0 if received else 0.0
+            ),
+        )
+        assert bridge.prune_orphaned_bridge_dirs() == 1
+    assert received == [
+        (
+            f"/v1/sessions/retired-{last_index}/native-admission/status",
+            "Bearer fixture",
+            {"epoch": "retired-epoch"},
+        )
+    ]
+    assert not last.root.exists()
+    for paths in retired:
+        if paths != last:
+            assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
 
 
 def test_maintenance_keeps_retired_runtime_when_server_refuses_connection() -> None:
