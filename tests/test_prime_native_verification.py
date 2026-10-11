@@ -2967,6 +2967,214 @@ def test_provider_cleanup_continues_with_malformed_admission_config(tmp_path, mo
         _assert_synthetic_sentinels(before)
 
 
+class _LiveServer:
+    pid = 0
+    stdout = None
+
+    def __init__(self):
+        self.stopped = False
+
+    def poll(self):
+        return 0 if self.stopped else None
+
+    def terminate(self):
+        self.stopped = True
+
+    kill = terminate
+
+    def wait(self, timeout=None):
+        return 0
+
+
+@pytest.mark.parametrize("variant", ["reclaimed", "still_present", "removed_by_delete"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_restarts_owned_host_to_run_maintenance_for_a_retained_root(
+    tmp_path, monkeypatch, variant
+):
+    import shutil
+    import threading
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    monkeypatch.setattr(probe, "MAINTENANCE_RECLAIM_TIMEOUT_S", 5)
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    run.server = _LiveServer()
+    (run.evidence / "server.log").write_text("synthetic server\n")
+    run.host_identity = {"pid": os.getpid(), "started": 1.0}
+    run.recover_owned_session = lambda: None
+    run.owned_paths = lambda session: (run.register_owned_credential(target), paths)[1]
+    (compact / "config.json").write_text(
+        json.dumps(
+            {
+                "serverUrl": run.url,
+                "nativeAdmission": {"source_id": run.session_id, "epoch": "owned-epoch"},
+                "authHeaders": {"Authorization": "FORBIDDEN_AUTH_SENTINEL"},
+            }
+        )
+    )
+    server_log = run.runtime / "data/logs/server/server-20261010-190652-190824.log"
+    server_log.parent.mkdir()
+    server_log.write_text("")
+
+    def delete(method, route, **kwargs):
+        assert (method, route) == ("DELETE", "/v1/sessions/synthetic-session")
+        if variant == "removed_by_delete":
+            shutil.rmtree(compact)
+        with server_log.open("a") as handle:
+            handle.write(_access_line("DELETE", run.session_id))
+        return httpx.Response(200, request=httpx.Request(method, "http://synthetic/session"))
+
+    async def status_confirmation(method, route, body, timeout, deadline):
+        assert route == "/v1/sessions/synthetic-session/native-admission/status"
+        assert run.server.poll() is None
+        return httpx.Response(200, json={"deleted": body == {"epoch": "owned-epoch"}})
+
+    restarts = []
+    maintenance = []
+
+    def restarted_host(name):
+        restarts.append((name, compact.exists(), run.server.poll()))
+        child = subprocess.Popen([sys.executable, "-c", ""])
+        child.wait()
+        run.foreground_host = child
+        run.foreground_host_identity = probe.ProcessIdentity(child.pid, 0.0, ())
+        run.host_log_handle = (run.evidence / f"{name}.log").open("w")
+        if variant == "reclaimed":
+
+            def startup_maintenance():
+                time.sleep(1)
+                with server_log.open("a") as handle:
+                    handle.write(_access_line("POST", run.session_id, "/native-admission/status"))
+                shutil.rmtree(compact)
+
+            maintenance.append(threading.Thread(target=startup_maintenance))
+            maintenance[0].start()
+
+    run.request_http = delete
+    run._request_http = status_confirmation
+    run.start_host = restarted_host
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        result = run.cleanup(settlement)
+        cleanup = json.loads((run.evidence / "cleanup.json").read_text())
+        assert "owned-epoch" not in json.dumps(cleanup)
+        assert "FORBIDDEN_AUTH_SENTINEL" not in json.dumps(cleanup)
+        if variant == "removed_by_delete":
+            assert result.status == "VERIFIED", run.cleanup_errors
+            assert restarts == []
+            assert "maintenance_host_restart" not in cleanup
+            assert run._retired_trees[compact].kind == "delete_event"
+            return
+        assert restarts == [("host-maintenance", True, None)]
+        restart = cleanup["maintenance_host_restart"]
+        assert restart["reason"] == "retained_root_after_delete"
+        assert restart["roots"] == [str(compact)]
+        assert restart["requested_at"] <= restart["host_ready_at"] <= restart["finished_at"]
+        assert (run.evidence / "host-maintenance.log").is_file()
+        attempts = json.loads((run.evidence / "retirement-attempts.json").read_text())
+        assert [(item["branch"], item["http_status"]) for item in attempts] == [
+            ("retained_original", 200)
+        ]
+        if variant == "reclaimed":
+            assert result.status == "VERIFIED", run.cleanup_errors
+            assert restart["roots_absent"] is True
+            receipt = run._retired_trees[compact]
+            assert receipt.kind == "maintenance_retired"
+            assert receipt.status_response == {"deleted": True}
+            assert owner.removed is not None
+        else:
+            assert result.status == "FAILED"
+            assert restart["roots_absent"] is False
+            assert compact.is_dir()
+            assert f"compact_runtime_removal_unproved: {compact}" in run.cleanup_errors
+            assert compact not in run._retired_trees
+            assert owner.removed is None
+            with contextlib.suppress(RuntimeError):
+                owner.__exit__(None, None, None)
+            assert "runtime_retained_unsettled" in owner.errors
+    finally:
+        for thread in maintenance:
+            thread.join(timeout=5)
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+_RESTARTED_HOST = r"""
+import json, os, sys, time
+from pathlib import Path
+time.sleep(0.5)
+target = sys.argv[sys.argv.index("--server") + 1]
+registry = Path(os.environ["OMNIGENT_DATA_DIR"], "daemons", "owned-target.json")
+registry.with_suffix(".tmp").write_text(json.dumps({
+    "pid": os.getpid(), "target": target, "mode": "server", "server_url": target,
+    "started_at": time.time(), "host_id": "restarted-host",
+}))
+registry.with_suffix(".tmp").replace(registry)
+time.sleep(30)
+"""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_host_restart_waits_past_the_stopped_host_registry_record(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    host = tmp_path / "repo/.venv/bin/omnigent"
+    host.parent.mkdir(parents=True)
+    host.write_text(f"#!{sys.executable}\n{_RESTARTED_HOST}")
+    host.chmod(0o700)
+    monkeypatch.setattr(probe, "REPO", tmp_path / "repo")
+    exited = subprocess.Popen([sys.executable, "-c", ""])
+    exited.wait()
+    stopped = {
+        "pid": exited.pid,
+        "target": run.url,
+        "mode": "server",
+        "server_url": run.url,
+        "started_at": 1.0,
+        "host_id": "stopped-host",
+    }
+    (run.runtime / "data/daemons").mkdir()
+    (run.runtime / "data/daemons/owned-target.json").write_text(json.dumps(stopped))
+    run.host_record = stopped
+
+    def host_api(method, route, *args, **kwargs):
+        assert (method, route) == ("GET", "/v1/hosts/restarted-host")
+        return httpx.Response(
+            200,
+            json={"host_id": "restarted-host", "status": "online"},
+            request=httpx.Request(method, "http://synthetic/host"),
+        )
+
+    run.request_http = host_api
+    try:
+        run.start_host("host-maintenance")
+        assert run.host_record["host_id"] == "restarted-host"
+        assert run.host_identity["pid"] == run.foreground_host.pid
+        ready = json.loads((run.evidence / "host-maintenance-ready.json").read_text())
+        assert ready["api"] == {"host_id": "restarted-host", "status": "online"}
+    finally:
+        if run.foreground_host:
+            run.foreground_host.kill()
+            run.foreground_host.wait(timeout=5)
+        if run.host_log_handle:
+            run.host_log_handle.close()
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
 _ATTACHED_CLIENT = r"""
 import os, sys
 print("Web UI: http://127.0.0.1/c/synthetic-session", flush=True)
