@@ -3036,6 +3036,7 @@ def test_provider_restarts_owned_host_to_run_maintenance_for_a_retained_root(
 
     async def status_confirmation(method, route, body, timeout, deadline):
         assert route == "/v1/sessions/synthetic-session/native-admission/status"
+        assert run.server.poll() is None
         return httpx.Response(200, json={"deleted": body == {"epoch": "owned-epoch"}})
 
     restarts = []

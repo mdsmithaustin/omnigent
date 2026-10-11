@@ -5111,6 +5111,12 @@ class _OwnedRun:
         if "maintenance_host_restart" in result:
             attempt("maintenance host stop", host_stop)
             attempt("reap maintenance host", reap_host)
+        for root in self._retained_roots:
+            if not os.path.lexists(root):
+                attempt(
+                    "maintenance retirement proof",
+                    lambda root=root: self.credential_directory(root / "agent/auth.json"),
+                )
         attempt(
             "native absence",
             lambda: wait_for(
