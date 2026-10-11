@@ -6,6 +6,8 @@ The stamped version in [`pyproject.toml`](../pyproject.toml) is upstream `0.17.0
 
 Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
+Revision `.5` supersedes `.4`, which was certified but not published. For Prime runtime deletion, admission tombstone retention, and rollback compatibility, see [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
+
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
 ## Source line
@@ -31,11 +33,11 @@ Run these commands from the repository root. Any nonzero exit means the check fa
 ```sh
 source_sha=$(git rev-parse HEAD)
 python scripts/fork_release.py check-source --source-sha "$source_sha"
-uv run --no-sync python scripts/update_versions.py check
+uv run --no-sync python scripts/update_versions.py check --expect "$(python -c 'import json; print(json.load(open(".github/fork-release.json"))["version"])')"
 uv lock --check
 ```
 
-`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command checks package versions, sibling pins, and the runtime constant against `[project].version` in `pyproject.toml`, then prints that version. The lock check must exit zero without changing the lockfile.
+`check-source` prints the checked source, tree, manifest digest, and pin as JSON. The version command checks package versions, sibling pins, and the runtime constant against `[project].version` in `pyproject.toml`, requires it to equal the manifest `version`, then prints that version. The lock check must exit zero without changing the lockfile.
 
 The verifier reads `.github/fork-release.json` from the exact source commit. It requires the published stable upstream release ID, publication timestamp, and current peeled tag SHA to match. A failed or unavailable lookup fails the check.
 
