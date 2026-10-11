@@ -307,7 +307,6 @@ def test_launch_rejects_directory_links_before_copying_credentials(
 @pytest.mark.parametrize(
     "filename",
     [
-        "agent/auth.json",
         "agent/settings.json",
         "agent/models.json",
         "executable",
@@ -515,9 +514,9 @@ def test_launch_uses_private_config_temp_and_native_resume(tmp_path: Path) -> No
     assert json.loads((paths.agent_dir / "auth.json").read_text()) == {"provider": "secret"}
     assert not (paths.agent_dir / "daemon").exists()
     assert stat.S_IMODE(paths.agent_dir.stat().st_mode) == 0o700
-    assert stat.S_IMODE((paths.agent_dir / "auth.json").stat().st_mode) == 0o600
-    (paths.agent_dir / "auth.json").write_text("updated")
-    assert json.loads((source / "auth.json").read_text()) == {"provider": "secret"}
+    assert stat.S_IMODE((paths.agent_dir / "settings.json").stat().st_mode) == 0o600
+    (paths.agent_dir / "settings.json").write_text("updated")
+    assert json.loads((source / "settings.json").read_text()) == {"defaultModel": "fixture"}
 
 
 def _launch_with_source(paths: PrimeRuntimePaths, source: Path) -> None:
@@ -551,6 +550,23 @@ def test_conversations_share_the_host_prime_login(tmp_path: Path) -> None:
 
     assert (source / "auth.json").read_text() == '{"xai": "refreshed"}'
     assert (second.agent_dir / "auth.json").read_text() == '{"xai": "refreshed"}'
+
+
+def test_launch_repoints_a_foreign_login_link(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "auth.json").write_text('{"xai": "host"}')
+    outside = tmp_path / "outside.json"
+    outside.write_text("unchanged")
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    paths.prepare()
+    (paths.agent_dir / "auth.json").symlink_to(outside)
+
+    _launch_with_source(paths, source)
+    _save_like_prime(paths.agent_dir / "auth.json", '{"xai": "refreshed"}')
+
+    assert outside.read_text() == "unchanged"
+    assert (source / "auth.json").read_text() == '{"xai": "refreshed"}'
 
 
 def test_resumed_conversation_drops_its_private_login_copy(tmp_path: Path) -> None:

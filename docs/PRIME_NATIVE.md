@@ -14,12 +14,14 @@ Complete the selected flow as described in the
 [pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
 Saved authentication is separate from the current provider and model labels.
 A listed or selected model does not prove that a request will succeed.
-Omnigent seeds `auth.json`, `settings.json`, and `models.json` from the host's
-normal Prime configuration only when each source file exists and its private
-conversation copy is absent. It does not change the source files. Resuming a
-conversation preserves existing private copies, so later host login or settings
-changes are not automatically recopied. Configure the host's source directory
-before creating a new conversation. Prime resolves authentication from that configuration.
+When the host's normal Prime `auth.json` exists, every launch links the
+conversation's `auth.json` to it. Prime saves refreshed logins through that link, so all
+conversations share the host login. Omnigent seeds `settings.json` and
+`models.json` from the host's configuration only when each source file exists
+and its private conversation copy is absent. It does not change those source
+files. Resuming a conversation preserves existing private copies, so later host
+settings changes are not automatically recopied. Configure the host's source
+directory before creating a new conversation. Prime resolves authentication from that configuration.
 Launch is rejected on native Windows because the published default supervisor
 named pipe does not identify a private conversation for scoped shutdown.
 
