@@ -520,6 +520,53 @@ def test_launch_uses_private_config_temp_and_native_resume(tmp_path: Path) -> No
     assert json.loads((source / "auth.json").read_text()) == {"provider": "secret"}
 
 
+def _launch_with_source(paths: PrimeRuntimePaths, source: Path) -> None:
+    build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=paths.root / "extension.js",
+        config=paths.root / "config.json",
+        environ={"PRIME_AGENT_CODING_AGENT_DIR": str(source)},
+    )
+
+
+def _save_like_prime(auth: Path, text: str) -> None:
+    real = Path(os.path.realpath(auth))
+    temporary = real.with_name(f"{real.name}.{os.getpid()}.tmp")
+    temporary.write_text(text)
+    os.replace(temporary, real)
+
+
+def test_conversations_share_the_host_prime_login(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "auth.json").write_text('{"xai": "signed-in"}')
+    first = PrimeRuntimePaths(tmp_path / "prime-native" / "first")
+    second = PrimeRuntimePaths(tmp_path / "prime-native" / "second")
+    _launch_with_source(first, source)
+    _launch_with_source(second, source)
+
+    _save_like_prime(first.agent_dir / "auth.json", '{"xai": "refreshed"}')
+    shutil.rmtree(first.root)
+
+    assert (source / "auth.json").read_text() == '{"xai": "refreshed"}'
+    assert (second.agent_dir / "auth.json").read_text() == '{"xai": "refreshed"}'
+
+
+def test_resumed_conversation_drops_its_private_login_copy(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "auth.json").write_text('{"xai": "current"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    paths.prepare()
+    (paths.agent_dir / "auth.json").write_text('{"xai": "stale copy"}')
+
+    _launch_with_source(paths, source)
+    _save_like_prime(paths.agent_dir / "auth.json", '{"xai": "refreshed"}')
+
+    assert (source / "auth.json").read_text() == '{"xai": "refreshed"}'
+
+
 @pytest.mark.parametrize(
     "arg",
     ["--session", "--resume=other", "--daemon-socket", "--extension", "--mode", "--no-extensions"],
