@@ -277,7 +277,7 @@ def header_auth_required(monkeypatch):
 
 
 async def test_native_admission_status_requires_a_matching_deleted_tombstone(
-    header_auth_required, auth_client, db_uri
+    header_auth_required, auth_client, db_uri, monkeypatch
 ):
     import uuid
 
@@ -309,3 +309,13 @@ async def test_native_admission_status_requires_a_matching_deleted_tombstone(
     assert await status(live_id, live_epoch, owner_headers) == (200, {"deleted": False})
     assert await status(live_id, live_epoch, stranger) == (200, {"deleted": False})
     assert (await status(deleted_id, deleted_epoch, {}))[0] == 401
+
+    from omnigent.native.source_owner import NATIVE_TOMBSTONE_TTL_SECONDS
+    from omnigent.stores.conversation_store import sqlalchemy_store
+
+    expired = sqlalchemy_store.now_epoch() + NATIVE_TOMBSTONE_TTL_SECONDS + 1
+    monkeypatch.setattr(sqlalchemy_store, "now_epoch", lambda: expired)
+    later = await auth_client.delete(f"/v1/sessions/{live_id}", headers=owner_headers)
+    assert later.status_code == 200, later.text
+    assert await status(deleted_id, deleted_epoch, owner_headers) == (200, {"deleted": False})
+    assert await status(live_id, live_epoch, owner_headers) == (200, {"deleted": True})

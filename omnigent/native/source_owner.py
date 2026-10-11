@@ -1,7 +1,9 @@
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
+
+NATIVE_TOMBSTONE_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 class NativeOwner(BaseModel):
@@ -60,7 +62,18 @@ class NativeStopReceipt(BaseModel):
 
 class NativeSource(BaseModel):
     admission: NativeAdmission
-    phase: Literal["admitted", "open", "stopping", "closed", "deleted"] = "open"
+    phase: Literal["admitted", "open", "stopping", "closed"] = "open"
     stop: NativeStop | None = None
     result: NativeStopResult | None = None
     unresolved_owners: tuple[NativeOwner, ...] = ()
+    # Set on deletion. The tombstone stays "closed" so releases without this
+    # field read it as a revoked source.
+    deleted_at: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _expire_deleted_phase(cls, data: Any) -> Any:
+        # Unreleased builds tombstoned with phase "deleted" and no deletion time.
+        if isinstance(data, dict) and data.get("phase") == "deleted":
+            return {**data, "phase": "closed", "deleted_at": 0}
+        return data

@@ -1,12 +1,40 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 import pytest
+from pydantic import BaseModel
 
+from omnigent.db.db_models import SqlNativeSource, current_workspace_id, workspace_scope
 from omnigent.errors import OmnigentError
-from omnigent.native.source_owner import NativeOwner, NativeStopOutcome
+from omnigent.native.source_owner import (
+    NATIVE_TOMBSTONE_TTL_SECONDS,
+    NativeAdmission,
+    NativeOwner,
+    NativeStop,
+    NativeStopOutcome,
+    NativeStopResult,
+)
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.conversation_store import sqlalchemy_store
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+
+
+class ReleasedNativeSource(BaseModel):
+    """The native source schema of releases that predate deletion tombstones."""
+
+    admission: NativeAdmission
+    phase: Literal["admitted", "open", "stopping", "closed"] = "open"
+    stop: NativeStop | None = None
+    result: NativeStopResult | None = None
+    unresolved_owners: tuple[NativeOwner, ...] = ()
+
+
+def stored_state(store: SqlAlchemyConversationStore, conversation_id: str) -> str | None:
+    with store._conv_session("read_native_source") as session:
+        row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
+        return row.state if row is not None else None
 
 
 @pytest.fixture
@@ -149,8 +177,6 @@ def test_verified_close_replacement_uses_original_new_epoch(stores):
 
 
 async def test_delete_keeps_a_deleted_tombstone_that_admission_treats_as_absent(stores):
-    from omnigent.db.db_models import workspace_scope
-
     first, second = stores
     source = first.create_conversation(labels={"omnigent.wrapper": "prime-native-ui"})
     child = first.create_conversation(parent_conversation_id=source.id)
@@ -178,3 +204,64 @@ async def test_delete_keeps_a_deleted_tombstone_that_admission_treats_as_absent(
     assert readmitted.epoch != ticket.epoch
     assert first.get_native_source(source.id).phase == "open"
     assert first.native_source_deleted(source.id, ticket.epoch) is False
+
+
+OWNER = NativeOwner(provider="prime-native", environment="host", runtime="private")
+
+
+async def delete_admitted_source(store: SqlAlchemyConversationStore) -> tuple[str, str]:
+    source = store.create_conversation(labels={"omnigent.wrapper": "prime-native-ui"})
+    ticket = store.admit_native(source.id, OWNER)
+    assert await store.delete_conversation(source.id) is True
+    return source.id, ticket.epoch
+
+
+async def test_tombstone_reads_as_a_revoked_source_in_releases_without_tombstones(stores):
+    first, _ = stores
+    source_id, epoch = await delete_admitted_source(first)
+
+    released = ReleasedNativeSource.model_validate_json(stored_state(first, source_id))
+
+    assert (released.admission.epoch, released.phase) == (epoch, "closed")
+    assert first.native_source_deleted(source_id, epoch) is True
+
+
+async def test_a_later_deletion_purges_tombstones_older_than_the_ttl(stores, monkeypatch):
+    first, _ = stores
+    monkeypatch.setattr(sqlalchemy_store, "now_epoch", lambda: 1_000)
+    expiring = await delete_admitted_source(first)
+    with workspace_scope(7):
+        other_workspace = await delete_admitted_source(first)
+    monkeypatch.setattr(
+        sqlalchemy_store, "now_epoch", lambda: 1_000 + NATIVE_TOMBSTONE_TTL_SECONDS
+    )
+    recent = await delete_admitted_source(first)
+    assert first.native_source_deleted(*expiring) is True
+
+    monkeypatch.setattr(
+        sqlalchemy_store, "now_epoch", lambda: 1_001 + NATIVE_TOMBSTONE_TTL_SECONDS
+    )
+    await delete_admitted_source(first)
+
+    assert first.native_source_deleted(*expiring) is False
+    assert stored_state(first, expiring[0]) is None
+    assert first.native_source_deleted(*recent) is True
+    with workspace_scope(7):
+        assert first.native_source_deleted(*other_workspace) is True
+
+
+async def test_deleted_phase_tombstone_confirms_deletion_until_the_next_purge(stores):
+    first, _ = stores
+    source_id, epoch = await delete_admitted_source(first)
+    legacy = json.loads(stored_state(first, source_id))
+    del legacy["deleted_at"]
+    with first._conv_session("write_native_source") as session:
+        row = session.get(SqlNativeSource, (current_workspace_id(), source_id))
+        row.state = json.dumps({**legacy, "phase": "deleted"})
+        session.commit()
+    assert first.native_source_deleted(source_id, epoch) is True
+
+    await delete_admitted_source(first)
+
+    assert first.native_source_deleted(source_id, epoch) is False
+    assert stored_state(first, source_id) is None
