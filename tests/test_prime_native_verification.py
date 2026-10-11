@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
@@ -2784,6 +2785,243 @@ for command in sys.stdin:
         runner.stderr.close()
         with contextlib.suppress(RuntimeError):
             owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+def _access_line(method, session_id, suffix=""):
+    return (
+        "INFO  10-10 14:39:08.709 uvicorn.access                   send               | "
+        f'127.0.0.1:62985 - "{method} /v1/sessions/{session_id}{suffix} HTTP/1.1" 200 OK '
+        f"3.0ms sid={session_id}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "accepted",
+        "no_status",
+        "status_before_delete",
+        "other_session",
+        "replaced",
+        "wrong_epoch",
+        "missing_epoch",
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
+    tmp_path, monkeypatch, variant
+):
+    import shutil
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    run.server = SimpleNamespace(poll=lambda: None)
+    run.recover_owned_session = lambda: None
+    run.owned_paths = lambda session: (run.register_owned_credential(target), paths)[1]
+    epoch = "wrong-epoch" if variant == "wrong_epoch" else "owned-epoch"
+    (compact / "config.json").write_text(
+        json.dumps(
+            {
+                "serverUrl": run.url,
+                "nativeAdmission": {
+                    "source_id": run.session_id,
+                    **({} if variant == "missing_epoch" else {"epoch": epoch}),
+                },
+                "authHeaders": {"Authorization": "FORBIDDEN_AUTH_SENTINEL"},
+            }
+        )
+    )
+    confirmations = []
+
+    async def status_confirmation(method, route, body, timeout, deadline):
+        assert (method, route) == (
+            "POST",
+            "/v1/sessions/synthetic-session/native-admission/status",
+        )
+        assert not compact.exists()
+        confirmations.append(body)
+        return httpx.Response(200, json={"deleted": body == {"epoch": "owned-epoch"}})
+
+    run._request_http = status_confirmation
+    deleted = _access_line("DELETE", run.session_id)
+    status = _access_line(
+        "POST",
+        "other-session" if variant == "other_session" else run.session_id,
+        "/native-admission/status",
+    )
+    server_log = run.runtime / "data/logs/server/server-20261010-143750-143838.log"
+    server_log.parent.mkdir()
+    server_log.write_text(
+        {"no_status": deleted, "status_before_delete": status + deleted}.get(
+            variant, deleted + status
+        )
+    )
+
+    def offline_runner_delete(method, route, *args, **kwargs):
+        assert (method, route) == ("DELETE", "/v1/sessions/synthetic-session")
+        run.server = None
+        return httpx.Response(200, request=httpx.Request(method, "http://synthetic/session"))
+
+    def census_during_host_maintenance():
+        if run.server is None and compact.exists() and compact not in run._retired_trees:
+            shutil.rmtree(compact)
+            if variant == "replaced":
+                paths.prepare()
+        return []
+
+    run.request_http = offline_runner_delete
+    run.census = census_during_host_maintenance
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        if variant == "accepted":
+            result = run.cleanup(settlement)
+            assert result.status == "VERIFIED", run.cleanup_errors
+            receipt = run._retired_trees[compact]
+            assert receipt.kind == "maintenance_retired"
+            assert receipt.session_id == "synthetic-session"
+            assert receipt.status_line == status.strip()
+            recorded = json.loads((run.evidence / "maintenance-retirement.json").read_text())
+            assert recorded["kind"] == "maintenance_retired"
+            assert recorded["epoch_sha256"] == hashlib.sha256(b"owned-epoch").hexdigest()
+            assert recorded["status_response"] == {"deleted": True}
+            assert confirmations == [{"epoch": "owned-epoch"}]
+            assert "owned-epoch" not in json.dumps(recorded)
+            assert "FORBIDDEN_AUTH_SENTINEL" not in json.dumps(recorded)
+            assert owner.removed is not None
+        else:
+            expected = "replaced" if variant == "replaced" else "missing"
+            with pytest.raises(RuntimeError, match=f"owned_credential_directory_{expected}"):
+                run.cleanup(settlement)
+            assert compact not in run._retired_trees
+            assert owner.removed is None
+            if variant == "wrong_epoch":
+                assert confirmations == [{"epoch": "wrong-epoch"}]
+            else:
+                assert confirmations == []
+        attempts = json.loads((run.evidence / "retirement-attempts.json").read_text())
+        assert [(item["branch"], item["http_status"]) for item in attempts] == [
+            ("retained_original", 200)
+        ]
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_continues_with_malformed_admission_config(tmp_path, monkeypatch):
+    import shutil
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    (compact / "config.json").write_text('{"nativeAdmission":')
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    run.server = SimpleNamespace(poll=lambda: None)
+    run.recover_owned_session = lambda: None
+    run.owned_paths = lambda session: (run.register_owned_credential(target), paths)[1]
+    run._root_admissions[compact] = (run.session_id, "previous-epoch")
+
+    def delete(method, route, **kwargs):
+        assert (method, route) == ("DELETE", "/v1/sessions/synthetic-session")
+        assert compact not in run._root_admissions
+        shutil.rmtree(compact)
+        run.server = None
+        return httpx.Response(200, request=httpx.Request(method, "http://synthetic/session"))
+
+    run.request_http = delete
+    try:
+        with owner:
+            settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+            assert run.cleanup(settlement).status == "VERIFIED", run.cleanup_errors
+            assert compact not in run._root_admissions
+            assert run._retired_trees[compact].kind == "delete_event"
+            assert not compact.exists()
+            assert owner.removed is not None
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
+_ATTACHED_CLIENT = r"""
+import os, sys
+print("Web UI: http://127.0.0.1/c/synthetic-session", flush=True)
+sys.stdin.readline()
+os.write(1, b"Resume with omnigent prime-native --resume synthetic-session\r\n" * 50)
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="Darwin holds an exiting pty client until its output is read"
+)
+def test_attached_client_exits_while_delete_blocks_the_probe(tmp_path, monkeypatch):
+    import select
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    spawn = probe.pexpect.spawn
+    monkeypatch.setattr(
+        probe.pexpect,
+        "spawn",
+        lambda command, argv, **kwargs: spawn(sys.executable, ["-c", _ATTACHED_CLIENT], **kwargs),
+    )
+    run.foreground_host_record = lambda: ({}, {})
+    run.own_session = lambda session: setattr(run, "session_id", session)
+    run.attach()
+    queue = select.kqueue()
+    try:
+        queue.control(
+            [
+                select.kevent(
+                    run.terminal.pid,
+                    filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD,
+                    fflags=select.KQ_NOTE_EXIT,
+                )
+            ],
+            0,
+            0,
+        )
+        run.terminal.send("\r")
+        assert queue.control([], 1, 5)
+        exit_record = run.close_attachment()
+        assert exit_record["exitstatus"] == 0
+        transcript = (run.evidence / "terminal.txt").read_text()
+        assert "Web UI: http://127.0.0.1/c/synthetic-session" in transcript
+        assert transcript.count("Resume with omnigent prime-native") == 50
+    finally:
+        queue.close()
+        if not run.terminal.closed:
+            run.terminal.close(force=True)
+        run.terminal = None
+        run.session_id = None
+        with owner:
+            settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+            assert run.cleanup(settlement).status == "VERIFIED"
         _assert_synthetic_sentinels(before)
 
 
