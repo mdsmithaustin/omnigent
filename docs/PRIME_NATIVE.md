@@ -405,8 +405,8 @@ failure. A successful Stop fallback cannot clear the DELETE failure.
 `retirement-attempts.json` records bounded allocation and session
 bindings, reached phase, status, held identities, no-follow name state, validated
 event flags, and allowlisted branches on every retirement-attempt exit.
-Unknown observations remain explicit. A retained external root or DELETE 200
-without the combined removal witness cannot qualify retirement. There is no
+Unknown observations remain explicit. The [verification workflow](../.agents/skills/verify-prime-native/SKILL.md#qualify-authenticated-finite-waits)
+owns the retirement requirements during DELETE and after maintenance removal. There is no
 manual external-root reclamation. Sticky errors, complete settlement, captures,
 and owner exit before committed publication remain required. The cooperative
 namespace precondition still leaves hostile same-UID final-syscall interference
