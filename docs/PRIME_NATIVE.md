@@ -15,9 +15,10 @@ Complete the selected flow as described in the
 Saved authentication is separate from the current provider and model labels.
 A listed or selected model does not prove that a request will succeed.
 When the host's normal Prime `auth.json` exists, every launch links the
-conversation's `auth.json` to it. Prime saves refreshed logins through that link, so all
-conversations share the host login. Omnigent seeds `settings.json` and
-`models.json` from the host's configuration only when each source file exists
+conversation's `agent/auth.json` to it, replacing a legacy private copy or
+an existing link without modifying the old link's target. Prime saves refreshed
+logins through that link, so all conversations share the host login. Omnigent
+seeds `settings.json` and `models.json` from the host's configuration only when each source file exists
 and its private conversation copy is absent. It does not change those source
 files. Resuming a conversation preserves existing private copies, so later host
 settings changes are not automatically recopied. Configure the host's source
@@ -168,12 +169,22 @@ available. Unknown or failed closure keeps a different-agent fork blocked.
 
 Conversation state lives under `$OMNIGENT_DATA_DIR/prime-native/`, or
 `~/.omnigent-mdsmithaustin/prime-native/` when the variable is unset. Each conversation has
-its own Prime configuration, temporary directory, daemon socket, and saved
-sessions. When that socket path would exceed the Unix limit, Omnigent uses a
-private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
+its own settings and models, temporary directory, daemon socket, and saved
+sessions. Authentication follows the shared-login behavior described under
+[Launch and reattach](#launch-and-reattach). When that socket path would exceed
+the Unix limit, Omnigent uses a private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
 sessions. Conversation DELETE attempts adapter-state removal after shutdown.
 Runner cleanup is best effort. A successful response can leave state when the
 runner is unavailable or removal fails; it does not prove observed retirement.
+Removing a conversation's auth link leaves the host login intact. Runtime
+validation allows a symlink only at `agent/auth.json`; other runtime files
+still reject symlinks.
+
+Releases that predate shared authentication reject the auth link. After a
+rollback to such a release, linked conversations cannot launch or delete their
+runtime until you remove their `agent/auth.json` link. Remove only the link,
+not the host auth file it points to.
+
 Deletion keeps a tombstone of the conversation's native admission. After the
 runtime has no owner, terminal, or private process, startup and host
 maintenance ask its recorded server whether that admission was deleted. They
