@@ -93,6 +93,7 @@ from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
 from omnigent.native.session_todos import validate_session_todos
 from omnigent.native.source_owner import (
+    NATIVE_TOMBSTONE_TTL_SECONDS,
     NativeAdmission,
     NativeOwner,
     NativeSource,
@@ -992,7 +993,43 @@ class SqlAlchemyConversationStore(ConversationStore):
     @staticmethod
     def _live_native_source(row: SqlNativeSource | None) -> NativeSource | None:
         state = NativeSource.model_validate_json(row.state) if row is not None else None
-        return state if state is not None and state.phase != "deleted" else None
+        return state if state is not None and state.deleted_at is None else None
+
+    @staticmethod
+    def _tombstone_native_sources(session: Session, conversation_ids: list[str]) -> None:
+        now = now_epoch()
+        for row in session.scalars(
+            select(SqlNativeSource).where(
+                SqlNativeSource.workspace_id == current_workspace_id(),
+                SqlNativeSource.id.in_(conversation_ids),
+            )
+        ):
+            row.state = (
+                NativeSource.model_validate_json(row.state)
+                .model_copy(update={"phase": "closed", "deleted_at": now})
+                .model_dump_json()
+            )
+        orphans = select(SqlNativeSource).where(
+            SqlNativeSource.workspace_id == current_workspace_id(),
+            ~select(SqlConversation.id)
+            .where(
+                SqlConversation.workspace_id == SqlNativeSource.workspace_id,
+                SqlConversation.id == SqlNativeSource.id,
+            )
+            .exists(),
+        )
+        expired = [
+            row.id
+            for row in session.scalars(orphans)
+            if now - (NativeSource.model_validate_json(row.state).deleted_at or 0)
+            > NATIVE_TOMBSTONE_TTL_SECONDS
+        ]
+        session.execute(
+            delete(SqlNativeSource).where(
+                SqlNativeSource.workspace_id == current_workspace_id(),
+                SqlNativeSource.id.in_(expired),
+            )
+        )
 
     def get_native_source(self, conversation_id: str) -> NativeSource | None:
         with self._conv_session("read_native_source") as session:
@@ -1004,7 +1041,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         with self._conv_session("read_deleted_native_source") as session:
             row = session.get(SqlNativeSource, (current_workspace_id(), conversation_id))
             state = NativeSource.model_validate_json(row.state) if row is not None else None
-        return state is not None and state.phase == "deleted" and state.admission.epoch == epoch
+        return (
+            state is not None and state.deleted_at is not None and state.admission.epoch == epoch
+        )
 
     def _write_native_source(
         self, conversation_id: str, change: Callable[[NativeSource | None], NativeSource | None]
@@ -5673,17 +5712,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlConversationItem.conversation_id.in_(subtree_ids),
                 )
             )
-            for native_row in ap_sess.scalars(
-                select(SqlNativeSource).where(
-                    SqlNativeSource.workspace_id == current_workspace_id(),
-                    SqlNativeSource.id.in_(subtree_ids),
-                )
-            ):
-                native_row.state = (
-                    NativeSource.model_validate_json(native_row.state)
-                    .model_copy(update={"phase": "deleted"})
-                    .model_dump_json()
-                )
+            self._tombstone_native_sources(ap_sess, subtree_ids)
             ap_sess.execute(
                 delete(SqlConversationLabel).where(
                     SqlConversationLabel.workspace_id == current_workspace_id(),
