@@ -286,7 +286,13 @@ removal instead records its checked descriptor-relative `rmdir` and held origina
 vnode proof. HTTP success or path absence alone proves neither removal.
 When an offline runner leaves the root after DELETE 200, the probe accepts later
 removal only with the retained original root and parent identities, name absence,
-and the owned server's maintenance status access line after DELETE. Before DELETE,
+and the owned server's maintenance status access line after DELETE. Host
+maintenance runs only on host startup and runner exit, so when that root is still
+present after the first host stop and the owned server is up, the probe starts
+its owned host once more against that server. It waits up to 30 seconds for the
+root to disappear, then stops that host. `cleanup.json` records the restart
+reason, roots, timestamps, and whether the roots disappeared under
+`maintenance_host_restart`. The probe never removes the root itself. Before DELETE,
 it records the root's native admission session and epoch from its extension config
 and checks that its server URL matches the owned server. After removal, the probe
 queries that server with the recorded epoch and requires HTTP 200 with exactly

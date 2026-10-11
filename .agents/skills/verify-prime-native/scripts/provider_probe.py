@@ -55,6 +55,8 @@ from verify import assistant_text, doctor, wait_for
 
 REPO = Path(__file__).resolve().parents[4]
 FINALIZATION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
+# Covers the host startup maintenance delay plus its Prime orphan stage.
+MAINTENANCE_RECLAIM_TIMEOUT_S = 30
 
 
 @dataclass(frozen=True)
@@ -2283,7 +2285,7 @@ class _OwnedRun:
             if self.foreground_host_identity
             else None,
             "exit": self.foreground_host.poll() if self.foreground_host else None,
-            "log": str(self.evidence / "host.log"),
+            "log": self.host_log_handle.name if self.host_log_handle else None,
             "log_closed": self.host_log_handle.closed if self.host_log_handle else None,
         }
 
@@ -2746,7 +2748,7 @@ class _OwnedRun:
         self.census()
         self.progress("reattached" if resume else "attached")
 
-    def foreground_host_record(self) -> tuple[dict, dict] | None:
+    def foreground_host_record(self, stopped: dict | None = None) -> tuple[dict, dict] | None:
         identity = self.foreground_host_identity
         if not self.foreground_host or identity is None:
             raise RuntimeError("exact_foreground_host_identity_missing")
@@ -2763,6 +2765,8 @@ class _OwnedRun:
         if len(hosts) != 1:
             raise RuntimeError("expected_exact_owned_host")
         record = hosts[0]
+        if record == stopped:
+            return None
         qualified = qualify_owned_host_record(
             record, self.url, self.runtime / "data", psutil.Process(identity.pid)
         )
@@ -2772,7 +2776,9 @@ class _OwnedRun:
             raise RuntimeError("native_foreground_host_registry_changed")
         return record, qualified
 
-    def start_host(self) -> None:
+    def start_host(self, name: str = "host") -> None:
+        # A stopped host leaves its registry record until the next host replaces it.
+        stopped, self.host_record = self.host_record, None
         self.guard("foreground_host_launch")
         argv = [
             str(REPO / ".venv/bin/omnigent"),
@@ -2782,7 +2788,7 @@ class _OwnedRun:
             "--no-open",
             "--non-interactive",
         ]
-        self.host_log_handle = (self.evidence / "host.log").open("w")
+        self.host_log_handle = (self.evidence / f"{name}.log").open("w")
         self.foreground_host = subprocess.Popen(
             argv,
             cwd=self.workspace,
@@ -2800,12 +2806,12 @@ class _OwnedRun:
             owned["pid"], owned["started"], tuple(owned["argv"])
         )
         write_json(
-            self.evidence / "host-launch.json",
+            self.evidence / f"{name}-launch.json",
             {"argv": argv, "cwd": self.workspace, "env": self.env(), "identity": owned},
         )
         self.progress("foreground_host_owned")
         self.host_record, self.host_identity = wait_for(
-            self.foreground_host_record, "owned foreground host registry", 60
+            lambda: self.foreground_host_record(stopped), "owned foreground host registry", 60
         )
 
         def online() -> dict | None:
@@ -2825,7 +2831,7 @@ class _OwnedRun:
 
         snapshot = wait_for(online, "owned foreground host online", 60)
         write_json(
-            self.evidence / "host-ready.json",
+            self.evidence / f"{name}-ready.json",
             {"registry": self.host_record, "qualified": self.host_identity, "api": snapshot},
         )
         self.progress("foreground_host_ready")
@@ -5076,11 +5082,35 @@ class _OwnedRun:
                 )
             if self.host_log_handle and not self.host_log_handle.closed:
                 self.host_log_handle.close()
-                path = self.evidence / "host.log"
+                path = Path(self.host_log_handle.name)
                 path.write_text(sanitize(path.read_text(errors="replace")))
                 path.chmod(0o600)
 
         attempt("reap foreground host", reap_host)
+
+        def maintenance_host() -> None:
+            roots = sorted(str(root) for root in self._retained_roots if os.path.lexists(root))
+            if not roots or not self.server or self.server.poll() is not None:
+                return
+            # Only host maintenance reclaims a root whose runner exited before DELETE,
+            # and a host start is the product event that schedules it.
+            restart = result["maintenance_host_restart"] = {
+                "reason": "retained_root_after_delete",
+                "roots": roots,
+                "requested_at": time.time(),
+            }
+            self.start_host("host-maintenance")
+            restart["host_ready_at"] = time.time()
+            deadline = time.monotonic() + MAINTENANCE_RECLAIM_TIMEOUT_S
+            while any(map(os.path.lexists, roots)) and time.monotonic() < deadline:
+                time.sleep(0.2)
+            restart["roots_absent"] = not any(map(os.path.lexists, roots))
+            restart["finished_at"] = time.time()
+
+        attempt("maintenance host restart", maintenance_host)
+        if "maintenance_host_restart" in result:
+            attempt("maintenance host stop", host_stop)
+            attempt("reap maintenance host", reap_host)
         attempt(
             "native absence",
             lambda: wait_for(
