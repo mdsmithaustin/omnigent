@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -271,6 +272,25 @@ def test_launch_fault_driver_declines_issue_prompt_and_preserves_web_url(
         assert probe.expect_conversation_id(terminal) == "conv_expected"
 
 
+def write_marker_source(marker: Path, content: str) -> str:
+    """Child source that publishes ``content`` atomically, so an existing marker is complete."""
+    staged = marker.with_name(f"{marker.name}.tmp")
+    return (
+        "import os; from pathlib import Path; "
+        f"Path({str(staged)!r}).write_text({content}); "
+        f"os.replace({str(staged)!r}, {str(marker)!r})"
+    )
+
+
+def wait_until(condition: Callable[[], bool], timeout: float = 30) -> bool:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def wrapper_command(paths: PrimeRuntimePaths, token: str, *command: str) -> list[str]:
     return [
         sys.executable,
@@ -339,10 +359,7 @@ def test_wrapper_claim_before_revocation_retains_child_until_qualified_cleanup(
 ) -> None:
     reservation = process.reserve_prime_launch(launch_paths)
     marker = tmp_path / "child-pid"
-    child = (
-        "import os,time; from pathlib import Path; "
-        f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)"
-    )
+    child = f"{write_marker_source(marker, 'str(os.getpid())')}; import time; time.sleep(60)"
     wrapper = subprocess.Popen(
         wrapper_command(launch_paths, reservation.token, sys.executable, "-c", child),
         env={**os.environ, "OMNIGENT_DATA_DIR": str(tmp_path)},
@@ -350,11 +367,9 @@ def test_wrapper_claim_before_revocation_retains_child_until_qualified_cleanup(
         stderr=subprocess.DEVNULL,
     )
     try:
-        for _ in range(200):
-            if marker.exists() and (launch_paths.root / "terminal.json").exists():
-                break
-            time.sleep(0.01)
-        assert marker.exists()
+        assert wait_until(
+            lambda: marker.exists() and (launch_paths.root / "terminal.json").exists()
+        )
         claimed = process._read_launch_reservation(launch_paths)
         assert claimed is not None and claimed.state == "claimed"
         assert claimed.wrapper is not None and claimed.wrapper.pid == wrapper.pid
@@ -376,10 +391,7 @@ def test_child_record_crash_gap_remains_unknown(
 ) -> None:
     reservation = process.reserve_prime_launch(launch_paths)
     marker = tmp_path / "child-pid"
-    child = (
-        "import os,time; from pathlib import Path; "
-        f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)"
-    )
+    child = f"{write_marker_source(marker, 'str(os.getpid())')}; import time; time.sleep(60)"
     source = (
         "import sys; from omnigent.harnesses.pi_native import bridge; "
         "from omnigent.harnesses.prime_native import process; "
@@ -408,13 +420,9 @@ def test_child_record_crash_gap_remains_unknown(
             timeout=10,
         )
     try:
-        for _ in range(100):
-            if marker.exists():
-                break
-            time.sleep(0.01)
         assert wrapper.returncode != 0
         assert "record unavailable" in log.read_text()
-        assert marker.exists()
+        assert wait_until(marker.exists)
         with pytest.raises(RuntimeError, match="claimed dispatch has no child record"):
             process.abandon_prime_launch(launch_paths, reservation, dispatched=True)
         with pytest.raises(RuntimeError, match="claimed dispatch has no child record"):
@@ -1001,8 +1009,7 @@ async def test_post_spawn_oserror_retains_terminal_ownership(
         lambda: [
             sys.executable,
             "-c",
-            "import time; from pathlib import Path; "
-            f"Path({str(marker)!r}).write_text('started'); time.sleep(60)",
+            f"{write_marker_source(marker, repr('started'))}; import time; time.sleep(60)",
         ],
     )
     create_subprocess_exec = asyncio.create_subprocess_exec
