@@ -177,6 +177,10 @@ runtime has no owner, terminal, or private process, startup and host
 maintenance ask its recorded server whether that admission was deleted. They
 remove the runtime only on an exact `{"deleted": true}` answer for the recorded
 epoch. Any other answer or failure keeps the runtime.
+Each later conversation deletion purges its workspace's tombstones older than
+30 days. A runtime whose host has not checked before its tombstone is purged
+stays on disk. The tombstone is stored as a closed admission, so a server
+rolled back to a release without tombstones reads it as revoked.
 
 Prime's main terminal is eligible for native pane idle cleanup. By default,
 the runner checks every 60 seconds and closes the pane after one hour of
