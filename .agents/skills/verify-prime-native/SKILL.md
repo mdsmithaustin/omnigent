@@ -292,8 +292,10 @@ and checks that its server URL matches the owned server. After removal, the prob
 queries that server with the recorded epoch and requires HTTP 200 with exactly
 `{"deleted": true}`. `maintenance-retirement.json` records these identities, the
 access line, the epoch hash, and the probe's status response. This proves deletion
-confirmation for that epoch and subsequent root absence, not which process removed
-it. Raw epochs and authentication headers are excluded from evidence.
+confirmation for that epoch after observed root absence, not which process removed
+it. An unreadable or malformed config leaves no recorded admission and cannot
+authorize a maintenance receipt; cleanup still proceeds. Raw epochs and
+authentication headers are excluded from evidence.
 See the [ownership and completion contract](../../../designs/prime-native/NO_FORK.md#provider-probe-ownership-and-completion)
 for the Darwin predicate and its namespace-removal limits.
 
