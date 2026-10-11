@@ -6,7 +6,7 @@ The stamped version in [`pyproject.toml`](../pyproject.toml) is upstream `0.17.0
 
 Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
-Revision `.5` supersedes `.4`, which was certified but not published. It removes a deleted Prime session's compact runtime at deletion, or, when the runner had already exited, at the next host start or runner exit after the server confirms that exact admission was deleted. Deletion records are stored as closed admissions with a deletion time and expire after 30 days, so a server rolled back to `.4` reads them as revoked.
+Revision `.5` supersedes `.4`, which was certified but not published. For Prime runtime deletion, admission tombstone retention, and rollback compatibility, see [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
 
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
