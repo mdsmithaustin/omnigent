@@ -497,9 +497,69 @@
       "name": "chore-release-stamp-0-17-0-mdsmithaustin-4-34-7dda6cc9a433",
       "reason": "chore(release): stamp 0.17.0+mdsmithaustin.4 (#34)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "ddb15882c3775c21bbd7517d33c336ae7d2683f7",
+      "name": "chore-release-inventory-0-17-0-mdsmithaustin-4-3-ddb15882c377",
+      "reason": "chore(release): inventory 0.17.0+mdsmithaustin.4 (#36)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "29bc923326b1ae73f2d027c40d1e3cb7f61c7fe1",
+      "name": "fix-prime-native-own-unreadable-processes-only-t-29bc923326b1",
+      "reason": "fix(prime-native): own unreadable processes only through verified lineage (#37)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "66d2dd3175cfc1ed6669c2d98aaac235f66db252",
+      "name": "test-prime-native-keep-controls-and-terminal-tes-66d2dd3175cf",
+      "reason": "test(prime-native): keep controls and terminal tests out of the shared compact root (#39)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8178de3a858229d73601362ed2f5f6742a7b6851",
+      "name": "fix-prime-native-wait-for-exiting-unreadable-pro-8178de3a8582",
+      "reason": "fix(prime-native): wait for exiting unreadable processes during stop (#40)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "da60938a7bef47f754e0373317a59d49f7ac51d4",
+      "name": "fix-prime-native-remove-runtimes-of-server-confi-da60938a7bef",
+      "reason": "fix(prime-native): remove runtimes of server-confirmed deleted sessions (#41)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7c543e249c4d71ce1e74143cd995a812552b23f2",
+      "name": "fix-prevent-prime-verification-stalls-and-recogn-7c543e249c4d",
+      "reason": "fix: prevent Prime verification stalls and recognize maintenance cleanup (#42)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0b9b1ce3785d6466720d9cbf9749af93fbcaf85c",
+      "name": "test-restart-owned-hosts-for-prime-probe-cleanup-0b9b1ce3785d",
+      "reason": "test: restart owned hosts for Prime probe cleanup (#43)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "e06aab4545c3bba10308e0230252808776a516f5",
+      "name": "fix-native-admission-make-deletion-tombstones-ro-e06aab4545c3",
+      "reason": "fix(native-admission): make deletion tombstones rollback-safe and expiring (#45)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4ff1cb8b6e4d6edb7d21812d612c4207996c218e",
+      "name": "test-prime-native-remove-marker-and-startup-race-4ff1cb8b6e4d",
+      "reason": "test(prime-native): remove marker and startup races in launch-recovery tests (#44)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2eb45e7c594a9b7c77e0a76acdf4e8ab5a35c6d2",
+      "name": "chore-release-stamp-0-17-0-mdsmithaustin-5-46-2eb45e7c594a",
+      "reason": "chore(release): stamp 0.17.0+mdsmithaustin.5 (#46)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "7dda6cc9a4334cedc3ac0d1e8cc223f6ef34044e",
+  "payload_commit": "2eb45e7c594a9b7c77e0a76acdf4e8ab5a35c6d2",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
@@ -508,5 +568,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.17.0"
   },
-  "version": "0.17.0+mdsmithaustin.4"
+  "version": "0.17.0+mdsmithaustin.5"
 }
