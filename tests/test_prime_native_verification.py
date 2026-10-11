@@ -2921,6 +2921,52 @@ def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
         _assert_synthetic_sentinels(before)
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_continues_with_malformed_admission_config(tmp_path, monkeypatch):
+    import shutil
+
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    compact = bridge._COMPACT_ROOT / "owned"
+    paths = bridge.PrimeRuntimePaths(compact)
+    paths.prepare()
+    target = paths.agent_dir / "auth.json"
+    target.write_text("SYNTHETIC COMPACT COPY")
+    (compact / "config.json").write_text('{"nativeAdmission":')
+    run.register_owned_credential(target)
+    run.bridge_roots.add(compact)
+    run.session_id = "synthetic-session"
+    run.server = SimpleNamespace(poll=lambda: None)
+    run.recover_owned_session = lambda: None
+    run.owned_paths = lambda session: (run.register_owned_credential(target), paths)[1]
+    run._root_admissions[compact] = (run.session_id, "previous-epoch")
+
+    def delete(method, route, **kwargs):
+        assert (method, route) == ("DELETE", "/v1/sessions/synthetic-session")
+        assert compact not in run._root_admissions
+        shutil.rmtree(compact)
+        run.server = None
+        return httpx.Response(200, request=httpx.Request(method, "http://synthetic/session"))
+
+    run.request_http = delete
+    try:
+        with owner:
+            settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+            assert run.cleanup(settlement).status == "VERIFIED", run.cleanup_errors
+            assert compact not in run._root_admissions
+            assert run._retired_trees[compact].kind == "delete_event"
+            assert not compact.exists()
+            assert owner.removed is not None
+    finally:
+        if not owner.closed:
+            with contextlib.suppress(RuntimeError, OSError):
+                owner.__exit__(None, None, None)
+        _assert_synthetic_sentinels(before)
+
+
 _ATTACHED_CLIENT = r"""
 import os, sys
 print("Web UI: http://127.0.0.1/c/synthetic-session", flush=True)

@@ -4356,13 +4356,15 @@ class _OwnedRun:
             config_fd = os.open(
                 "config.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
             )
-        except FileNotFoundError:
+            with os.fdopen(config_fd) as handle:
+                metadata = os.fstat(handle.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    return
+                config = json.load(handle)
+        except (OSError, ValueError):
             return
-        with os.fdopen(config_fd) as handle:
-            metadata = os.fstat(handle.fileno())
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-                return
-            config = json.load(handle)
+        if not isinstance(config, dict):
+            return
         admission = config.get("nativeAdmission")
         if not isinstance(admission, dict) or config.get("serverUrl") != self.url:
             return
@@ -4417,11 +4419,14 @@ class _OwnedRun:
                     body = response.json()
                 except (httpx.HTTPError, ValueError, RuntimeError):
                     return None
-                if response.status_code != 200 or body != {"deleted": True}:
-                    return None
-                if body["deleted"] is not True:
-                    return None
-                return replace(receipt, status_response=body)
+                if (
+                    response.status_code == 200
+                    and type(body) is dict
+                    and body.keys() == {"deleted"}
+                    and body["deleted"] is True
+                ):
+                    return replace(receipt, status_response=body)
+                return None
         return None
 
     def _owned_server_log(self) -> str:
