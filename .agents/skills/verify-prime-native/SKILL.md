@@ -167,9 +167,12 @@ Before deleting each credential copy that is a regular file, the probe hashes
 it in-process and compares it with the recorded hash of the `--auth-source`
 login. This covers the staging file and a session login that Prime replaced
 with a regular file. It never logs credential contents. On a mismatch, cleanup
-records `staged_auth_rewritten` in `cleanup.json`, prints a `FAILED` line, and
-marks `owned_cleanup` as `FAILED` with that reason. The probe still deletes the
-copy, retains the runtime directory for diagnosis, and runs no further cases.
+prints a `FAILED` line and marks `owned_cleanup` as `FAILED` with the reason
+`staged_auth_rewritten`. It records the error in `cleanup.json` if cleanup
+reaches that write. If a later cleanup step raises, `case-finalization.json`
+retains the rewrite error and `owned_cleanup` keeps that reason through owner
+exit. The probe still deletes the copy, retains the runtime directory for
+diagnosis, and runs no further cases.
 The manifest records `"stopped": "staged_auth_rewritten"`. If the provider
 rotates refresh tokens, the login saved in the `--auth-source` file is no
 longer valid. Sign in to Prime again to refresh that file before the next run.
@@ -480,10 +483,10 @@ The flag does not exclude hostile same-UID writers in the final check/syscall wi
 PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
 ```
 
-The MCP probe stages the login and checks it at cleanup like the finite-wait
-workflow. A `staged_auth_rewritten` cleanup error or `owned_cleanup` reason
-means the same thing here. Sign in to Prime again to refresh the
-`--auth-source` file before the next run.
+The MCP probe uses the same staged-login cleanup checks and
+`staged_auth_rewritten` failure as the
+[finite-wait workflow](#qualify-authenticated-finite-waits). Follow its login
+recovery instructions before the next run.
 
 Use the printed receipt path directly. Fresh runs place `result.json`,
 `manifest.json`, and `completion.json` in one `provider-mcp-*` directory under
