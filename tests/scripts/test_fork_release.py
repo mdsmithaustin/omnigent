@@ -459,6 +459,14 @@ def test_complete_policy_tail_and_ignored_build_output_pass(release):
     assert receipt["tree"] == command(release["root"], "git", "rev-parse", "HEAD^{tree}")
 
 
+def test_source_addon_pointer_need_not_resolve_in_the_clone(release):
+    release["pin"]["addons"][0]["source_commit"] = "e" * 40
+    amend_pin(release)
+    result = check(release)
+    assert result.returncode == 0, result.stderr
+    assert line(release)["release_ready"] is True
+
+
 @pytest.mark.parametrize(
     "case", ["extra", "omitted", "duplicate", "abbreviated", "allowlist", "profile", "version"]
 )
@@ -922,7 +930,6 @@ def prepare_publisher(release, artifacts):
         GITHUB_RUN_ID="123",
         GITHUB_RUN_ATTEMPT="1",
         FORK_RELEASE_PUBLISH="true",
-        FORK_RELEASE_TAG="fork/v" + VERSION,
     )
     return directory, evidence
 
@@ -930,7 +937,6 @@ def prepare_publisher(release, artifacts):
 @pytest.mark.parametrize(
     "case",
     [
-        "tag",
         "repository",
         "automatic",
         "disabled",
@@ -943,9 +949,7 @@ def prepare_publisher(release, artifacts):
 def test_publisher_rejects_wrong_target_or_bytes_without_writing(release, artifacts, case):
     directory, evidence = prepare_publisher(release, artifacts)
     state = json.loads(release["api"].read_text())
-    if case == "tag":
-        release["env"]["FORK_RELEASE_TAG"] = "v0.17.0"
-    elif case == "repository":
+    if case == "repository":
         release["env"]["GITHUB_REPOSITORY"] = "omnigent-ai/omnigent"
     elif case == "automatic":
         release["env"]["GITHUB_EVENT_NAME"] = "push"

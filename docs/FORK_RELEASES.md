@@ -43,7 +43,7 @@ uv lock --check
 
 The verifier reads `.github/fork-release.json` from the exact source commit. It requires the published stable upstream release ID, publication timestamp, and current peeled tag SHA to match. A failed or unavailable lookup fails the check.
 
-The addon inventory must account for every linear commit through `payload_commit`. Original addon Git objects must remain available. Every later commit may change only the exact release-policy paths defined in `scripts/fork_release.py`. The manifest cannot enlarge that list. Runtime edits, including edits later reverted, merges, cross-boundary renames, symlinks, and submodules in the policy tail fail validation. Dirty tracked files and nonignored untracked files also fail.
+The addon inventory must account for every linear commit through `payload_commit`. Every later commit may change only the exact release-policy paths defined in `scripts/fork_release.py`. The manifest cannot enlarge that list. Runtime edits, including edits later reverted, merges, cross-boundary renames, symlinks, and submodules in the policy tail fail validation. Dirty tracked files and nonignored untracked files also fail.
 
 ## Build and certify
 
