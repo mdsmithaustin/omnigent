@@ -230,7 +230,7 @@ documentation review of this composition remains required.
 
 The shared source snapshot's
 [`PROBE_DRIVERS`](../../.agents/skills/verify-prime-native/scripts/adapter_probe.py)
-covers both helpers. Each MCP run that reaches preflight records both helper
+covers both helpers. Each MCP run that completes preflight records both helper
 hashes from that snapshot.
 At Source `3ac1fd1b2abca91e8973f059fd9d4cd8b6bcbb9c`, the MCP helper SHA256 was
 `b382a4c1bff9e313e0ef53a5cb81ce391e1f8f1b5c63d06f92b08366dfd6b466`.

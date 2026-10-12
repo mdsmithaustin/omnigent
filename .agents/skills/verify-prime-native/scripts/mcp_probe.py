@@ -1225,7 +1225,10 @@ def qualify(request: Request) -> tuple[bool, Path]:
             immutable=True,
         )
         cleanup = owner.Observation(
-            "owned_cleanup", "FAILED", ("case-finalization.json",), failure
+            "owned_cleanup",
+            "FAILED",
+            ("case-finalization.json",),
+            owner._cleanup_failure_reason([failure], failure),
         )
         if draft is None:
             observations = tuple(
