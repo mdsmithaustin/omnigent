@@ -1,7 +1,7 @@
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 NATIVE_TOMBSTONE_TTL_SECONDS = 30 * 24 * 60 * 60
 
@@ -70,10 +70,14 @@ class NativeSource(BaseModel):
     # field read it as a revoked source.
     deleted_at: int | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _expire_deleted_phase(cls, data: Any) -> Any:
-        # Unreleased builds tombstoned with phase "deleted" and no deletion time.
-        if isinstance(data, dict) and data.get("phase") == "deleted":
-            return {**data, "phase": "closed", "deleted_at": 0}
-        return data
+
+class _TombstoneDeletionTime(BaseModel):
+    deleted_at: int | None = None
+
+
+def tombstone_expired(state: str, now: int) -> bool:
+    try:
+        deleted_at = _TombstoneDeletionTime.model_validate_json(state).deleted_at
+    except ValidationError:
+        deleted_at = None
+    return now - (deleted_at or 0) > NATIVE_TOMBSTONE_TTL_SECONDS
