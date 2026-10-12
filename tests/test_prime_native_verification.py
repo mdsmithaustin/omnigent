@@ -2123,6 +2123,65 @@ def test_provider_removes_only_session_login_links_to_the_staging_copy(
     _assert_synthetic_sentinels(before)
 
 
+@pytest.mark.parametrize("prime_rewrites_login", [False, True])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
+    tmp_path, monkeypatch, capsys, prime_rewrites_login
+):
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    request, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    source = request.auth_source
+    staged = source.read_bytes()
+    (run.prime / "auth.json").write_bytes(staged)
+    run.auth_signature = (
+        source.stat().st_ino,
+        source.stat().st_mode,
+        hashlib.sha256(staged).digest(),
+    )
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    paths = bridge.PrimeRuntimePaths(bridge._COMPACT_ROOT / "owned")
+    paths.prepare()
+    link = paths.agent_dir / "auth.json"
+    link.symlink_to(run.prime / "auth.json")
+    run.register_owned_credential(link)
+    if prime_rewrites_login:
+        link.write_text(
+            json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
+        )
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+        assert not link.is_symlink()
+        assert not (run.prime / "auth.json").exists()
+        if prime_rewrites_login:
+            assert cleanup.status == "FAILED"
+            assert errors == [probe.STAGED_AUTH_REWRITTEN]
+            assert "FAILED staged_auth_rewritten" in capsys.readouterr().out
+        else:
+            assert cleanup.status == "VERIFIED"
+            assert errors == []
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    assert source.read_bytes() == staged
+    assert "FAKE-ROTATED" not in "".join(
+        path.read_text(errors="replace") for path in run.evidence.rglob("*") if path.is_file()
+    )
+    _assert_synthetic_sentinels(before)
+
+
+def test_source_snapshot_covers_every_probe_driver():
+    probe = _adapter_probe()
+    scripts = ".agents/skills/verify-prime-native/scripts/"
+
+    covered = set(probe.source_snapshot(probe.REPO).by_path())
+
+    assert {scripts + "provider_probe.py", scripts + "mcp_probe.py"} <= covered
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_provider_known_compact_retirement_remains_independent(tmp_path, monkeypatch):
     from omnigent.harnesses.prime_native import bridge
