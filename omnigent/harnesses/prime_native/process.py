@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import random
+import secrets
 import shutil
 import signal
 import socket
@@ -219,7 +220,10 @@ def build_prime_launch(
         )
     with native_bridge_common.bridge_dir_preparation_lock(paths.root):
         paths.validate_existing()
-        for name in ("auth.json", "settings.json", "models.json"):
+        auth_source = (source_dir / "auth.json").absolute()
+        if auth_source.is_file():
+            _replace_with_symlink(paths.agent_dir / "auth.json", auth_source)
+        for name in ("settings.json", "models.json"):
             source, target = source_dir / name, paths.agent_dir / name
             if source.is_file() and not target.exists():
                 _atomic_text(target, source.read_text(encoding="utf-8"))
@@ -228,6 +232,16 @@ def build_prime_launch(
         owner_claim.write_owner_claim(paths.root)
         _ACTIVE_RUNTIMES.add(paths)
     return PrimeLaunch(executable, tuple(args), env)
+
+
+def _replace_with_symlink(link: Path, target: Path) -> None:
+    # Prime saves refreshed OAuth tokens here; a private copy would lose them with the runtime.
+    temporary = link.with_name(f".{link.name}.{secrets.token_hex(8)}.tmp")
+    temporary.symlink_to(target)
+    try:
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _current_uid() -> int:
