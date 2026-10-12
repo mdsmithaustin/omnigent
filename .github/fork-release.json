@@ -557,9 +557,27 @@
       "name": "chore-release-stamp-0-17-0-mdsmithaustin-5-46-2eb45e7c594a",
       "reason": "chore(release): stamp 0.17.0+mdsmithaustin.5 (#46)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "f317fdc624930235ce362f81db06ada2bab9462e",
+      "name": "chore-release-inventory-0-17-0-mdsmithaustin-5-4-f317fdc62493",
+      "reason": "chore(release): inventory 0.17.0+mdsmithaustin.5 (#47)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "be269e5cbe29f8823e48e771ffcbe62ca908a9a2",
+      "name": "fix-prime-native-share-the-host-prime-login-acro-be269e5cbe29",
+      "reason": "fix(prime-native): share the host Prime login across conversations (#48)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "e078e51d278855b3a6adf536fddece4f35c4aa10",
+      "name": "chore-release-stamp-0-17-0-mdsmithaustin-6-49-e078e51d2788",
+      "reason": "chore(release): stamp 0.17.0+mdsmithaustin.6 (#49)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "2eb45e7c594a9b7c77e0a76acdf4e8ab5a35c6d2",
+  "payload_commit": "e078e51d278855b3a6adf536fddece4f35c4aa10",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "12b5f67d2529b43eab7366a7288fb89f7587e48b",
@@ -568,5 +586,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.17.0"
   },
-  "version": "0.17.0+mdsmithaustin.5"
+  "version": "0.17.0+mdsmithaustin.6"
 }
