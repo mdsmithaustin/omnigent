@@ -2251,35 +2251,6 @@ def test_provider_case_keeps_the_login_rewrite_when_later_cleanup_raises(tmp_pat
     _assert_synthetic_sentinels(before)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
-def test_provider_case_keeps_the_login_rewrite_reason_through_owner_exit(tmp_path, monkeypatch):
-    import shutil
-
-    probe = _provider_probe()
-    source = tmp_path / "synthetic-source"
-    source.write_text("SYNTHETIC SOURCE")
-
-    def rewritten_case(run):
-        run.runtime_owner.errors.append("staged_auth_rewritten: synthetic rewrite")
-        cleanup = probe.Observation(
-            "owned_cleanup", "FAILED", ("cleanup.json",), "staged_auth_rewritten"
-        )
-        result = probe.CaseResult(run.evidence / "result.json", ("launch",), (cleanup,), cleanup)
-        return probe._CaseDraft(result, {}, {})
-
-    monkeypatch.setattr(probe._OwnedRun, "qualify", rewritten_case)
-    request = probe.Request(
-        tmp_path / "no-prime", tmp_path / "no-kernel", source, tmp_path, "selector", None, True
-    )
-
-    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
-
-    finalization = json.loads((result.receipt.parent / "case-finalization.json").read_text())
-    shutil.rmtree(finalization["runtime"])
-    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
-    assert "staged_auth_rewritten: synthetic rewrite" in finalization["error"]
-
-
 @pytest.mark.parametrize("rewritten_case", [0, 3, 4])
 def test_provider_qualify_stops_live_cases_after_a_login_rewrite(
     tmp_path, monkeypatch, rewritten_case

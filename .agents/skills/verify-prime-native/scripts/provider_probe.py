@@ -2252,6 +2252,7 @@ class _OwnedRun:
         self.runner: ProcessIdentity | None = None
         self.source_before = None
         self.auth_signature = None
+        self.login_rewritten = False
         self.baseline: list[dict] = []
         self.config_path: Path | None = None
         self.config: dict = {}
@@ -4543,11 +4544,9 @@ class _OwnedRun:
         except OSError as exc:
             errors.append("staged login check: " + type(exc).__name__ + ": " + sanitize(str(exc)))
             return
-        if (
-            digest == self.auth_signature[2]
-            or _cleanup_failure_reason(errors) == STAGED_AUTH_REWRITTEN
-        ):
+        if digest == self.auth_signature[2] or self.login_rewritten:
             return
+        self.login_rewritten = True
         message = (
             f"{STAGED_AUTH_REWRITTEN}: Prime rewrote the probe's login copy during the run."
             " If the provider rotates refresh tokens, the login saved in"
@@ -4556,6 +4555,9 @@ class _OwnedRun:
         )
         errors.append(message)
         print("FAILED " + message, flush=True)
+
+    def cleanup_failure_reason(self, default: str) -> str:
+        return STAGED_AUTH_REWRITTEN if self.login_rewritten else default
 
     def _delete_owned_session(self, result: dict, *, unavailable: bool = False) -> None:
         session = self.session_id
@@ -4905,7 +4907,7 @@ class _OwnedRun:
                 "owned_cleanup",
                 "FAILED" if errors else "VERIFIED",
                 ("cleanup.json",),
-                _cleanup_failure_reason(errors) if errors else "exact_owned_absence",
+                self.cleanup_failure_reason("cleanup_error") if errors else "exact_owned_absence",
             )
         try:
             result = self._cleanup_live(external_settlement)
@@ -5328,7 +5330,7 @@ class _OwnedRun:
             "owned_cleanup",
             "VERIFIED" if passed else "FAILED",
             ("cleanup.json",),
-            "exact_owned_absence" if passed else _cleanup_failure_reason(errors),
+            "exact_owned_absence" if passed else self.cleanup_failure_reason("cleanup_error"),
         )
 
     def qualify(self) -> _CaseDraft:
@@ -5386,10 +5388,7 @@ class _OwnedRun:
                     "owned_cleanup",
                     "FAILED",
                     ("cleanup-finalization.json",),
-                    _cleanup_failure_reason(
-                        [*credential_errors, *(self.cleanup_errors or [])],
-                        "cleanup_finalization_failed",
-                    ),
+                    self.cleanup_failure_reason("cleanup_finalization_failed"),
                 )
         failure = self.first_failure
         if failure:
@@ -5451,16 +5450,11 @@ class _OwnedRun:
         )
 
 
-def _cleanup_failure_reason(errors: list[str], default: str = "cleanup_error") -> str:
-    if any(STAGED_AUTH_REWRITTEN + ":" in error for error in errors):
-        return STAGED_AUTH_REWRITTEN
-    return default
-
-
 def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) -> CaseResult:
     evidence = Path(tempfile.mkdtemp(prefix=f"{profile.name}-{kind}-", dir=parent))
     draft = None
     runtime_owner = None
+    run = None
     try:
         evidence.chmod(0o700)
         aggregate = parent / "manifest.json"
@@ -5492,7 +5486,7 @@ def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) 
             "owned_cleanup",
             "FAILED",
             ("case-finalization.json",),
-            _cleanup_failure_reason([failure], failure),
+            run.cleanup_failure_reason(failure) if run else failure,
         )
         if draft is None:
             result = CaseResult(evidence / "result.json", ("case_finalization",), (), cleanup)
@@ -5575,6 +5569,8 @@ def qualify(request: Request) -> tuple[bool, Path]:
     ):
         wrong = _run_case(replace(request, expected_memory="WRONG"), RUNNER, "positive", parent)
         results.append(wrong)
+        if wrong.cleanup.reason == STAGED_AUTH_REWRITTEN:
+            stopped = STAGED_AUTH_REWRITTEN
     wrong_verified = False
     if wrong:
         wrong_artifact = (

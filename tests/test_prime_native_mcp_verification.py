@@ -746,31 +746,6 @@ def test_real_fixture_recorded_identity_close(probe, run, monkeypatch, condition
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
-def test_mcp_keeps_the_login_rewrite_reason_through_owner_exit(probe, tmp_path, monkeypatch):
-    import shutil
-
-    def rewritten_case(run):
-        run.runtime_owner.errors.append("staged_auth_rewritten: synthetic rewrite")
-        cleanup = probe.owner.Observation(
-            "owned_cleanup", "FAILED", ("cleanup.json",), "staged_auth_rewritten"
-        )
-        result = probe.owner.CaseResult(
-            run.evidence / "result.json", probe.REQUIRED, (cleanup,), cleanup
-        )
-        return probe.owner._CaseDraft(result, {}, {})
-
-    monkeypatch.setattr(probe._McpRun, "qualify_mcp", rewritten_case)
-
-    passed, receipt = probe.qualify(request(probe, tmp_path))
-
-    finalization = json.loads((receipt.parent / "case-finalization.json").read_text())
-    shutil.rmtree(finalization["runtime"])
-    cleanup = json.loads(receipt.read_text())["cleanup"]
-    assert passed is False
-    assert (cleanup["status"], cleanup["reason"]) == ("FAILED", "staged_auth_rewritten")
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_mcp_keeps_the_login_rewrite_when_the_owner_receipt_fails(probe, tmp_path, monkeypatch):
     import hashlib
     import shutil

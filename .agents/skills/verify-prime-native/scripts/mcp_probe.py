@@ -1144,14 +1144,14 @@ class _McpRun(owner._OwnedRun):
                     "owned_cleanup",
                     "FAILED",
                     (*cleanup.evidence, "cleanup-finalization.json"),
-                    "cleanup_finalization_failed",
+                    self.cleanup_failure_reason("cleanup_finalization_failed"),
                 )
             if settlement.status != "settled_fixture":
                 cleanup = owner.Observation(
                     "owned_cleanup",
                     "FAILED",
                     (*cleanup.evidence, "fixture-cleanup.json"),
-                    "fixture_cleanup_unsettled",
+                    self.cleanup_failure_reason("fixture_cleanup_unsettled"),
                 )
             self.observations.append(cleanup)
         for name in REQUIRED:
@@ -1204,6 +1204,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
     evidence.chmod(0o700)
     draft = None
     runtime_owner = None
+    run = None
     try:
         provider_request = owner.Request(
             request.prime_path,
@@ -1228,7 +1229,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
             "owned_cleanup",
             "FAILED",
             ("case-finalization.json",),
-            owner._cleanup_failure_reason([failure], failure),
+            run.cleanup_failure_reason(failure) if run else failure,
         )
         if draft is None:
             observations = tuple(
