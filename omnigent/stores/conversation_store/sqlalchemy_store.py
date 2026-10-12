@@ -93,13 +93,13 @@ from omnigent.errors import ErrorCode, OmnigentError, StaleCursorError
 from omnigent.native.native_coding_agents import native_coding_agent_for_wrapper_label
 from omnigent.native.session_todos import validate_session_todos
 from omnigent.native.source_owner import (
-    NATIVE_TOMBSTONE_TTL_SECONDS,
     NativeAdmission,
     NativeOwner,
     NativeSource,
     NativeStop,
     NativeStopOutcome,
     NativeStopResult,
+    tombstone_expired,
 )
 from omnigent.session_import.models import IMPORT_SOURCE_LABEL_KEY
 from omnigent.stores.conversation_store import (
@@ -1020,12 +1020,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
             .exists(),
         )
-        expired = [
-            row.id
-            for row in session.scalars(orphans)
-            if now - (NativeSource.model_validate_json(row.state).deleted_at or 0)
-            > NATIVE_TOMBSTONE_TTL_SECONDS
-        ]
+        expired = [row.id for row in session.scalars(orphans) if tombstone_expired(row.state, now)]
         session.execute(
             delete(SqlNativeSource).where(
                 SqlNativeSource.workspace_id == current_workspace_id(),
