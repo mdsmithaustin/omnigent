@@ -2211,16 +2211,52 @@ def test_provider_cleanup_removes_an_unreadable_staged_login(tmp_path, monkeypat
     _assert_synthetic_sentinels(before)
 
 
-def test_provider_qualify_stops_live_cases_after_a_login_rewrite(tmp_path, monkeypatch):
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_keeps_the_login_rewrite_reason_through_owner_exit(tmp_path, monkeypatch):
+    import shutil
+
+    probe = _provider_probe()
+    source = tmp_path / "synthetic-source"
+    source.write_text("SYNTHETIC SOURCE")
+
+    def rewritten_case(run):
+        run.runtime_owner.errors.append("staged_auth_rewritten: synthetic rewrite")
+        cleanup = probe.Observation(
+            "owned_cleanup", "FAILED", ("cleanup.json",), "staged_auth_rewritten"
+        )
+        result = probe.CaseResult(run.evidence / "result.json", ("launch",), (cleanup,), cleanup)
+        return probe._CaseDraft(result, {}, {})
+
+    monkeypatch.setattr(probe._OwnedRun, "qualify", rewritten_case)
+    request = probe.Request(
+        tmp_path / "no-prime", tmp_path / "no-kernel", source, tmp_path, "selector", None, True
+    )
+
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+
+    finalization = json.loads((result.receipt.parent / "case-finalization.json").read_text())
+    shutil.rmtree(finalization["runtime"])
+    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+    assert "staged_auth_rewritten: synthetic rewrite" in finalization["error"]
+
+
+@pytest.mark.parametrize("rewritten_case", [0, 3])
+def test_provider_qualify_stops_live_cases_after_a_login_rewrite(
+    tmp_path, monkeypatch, rewritten_case
+):
     probe = _provider_probe()
     started = []
 
     def fake_case(request, profile, kind, parent):
-        started.append((profile.name, kind))
-        evidence = parent / f"{profile.name}-{kind}"
+        rewritten = len(started) == rewritten_case
+        started.append((profile.name, kind, request.expected_memory))
+        evidence = parent / f"{len(started)}-{profile.name}-{kind}"
         evidence.mkdir()
         cleanup = probe.Observation(
-            "owned_cleanup", "FAILED", ("cleanup.json",), "staged_auth_rewritten"
+            "owned_cleanup",
+            "FAILED" if rewritten else "VERIFIED",
+            ("cleanup.json",),
+            "staged_auth_rewritten" if rewritten else "exact_owned_absence",
         )
         result = probe.CaseResult(evidence / "result.json", ("launch",), (cleanup,), cleanup)
         return probe._publish_case(probe._CaseDraft(result, {}, {}))
@@ -2237,8 +2273,14 @@ def test_provider_qualify_stops_live_cases_after_a_login_rewrite(tmp_path, monke
 
     passed, manifest = probe.qualify(request)
 
+    planned = [
+        ("runner", "idle", None),
+        ("runner", "positive", None),
+        ("pane", "idle", None),
+        ("pane", "positive", None),
+    ]
     assert passed is False
-    assert started == [("runner", "idle")]
+    assert started == planned[: rewritten_case + 1]
     value = json.loads(manifest.read_text())
     assert value["status"] == "FAILED"
     assert value["stopped"] == "staged_auth_rewritten"
