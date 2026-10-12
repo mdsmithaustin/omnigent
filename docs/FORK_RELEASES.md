@@ -45,7 +45,7 @@ The verifier reads `.github/fork-release.json` from the exact source commit. It 
 
 The addon inventory must account for every linear commit through `payload_commit`. Every later commit may change only the exact release-policy paths defined in `scripts/fork_release.py`. The manifest cannot enlarge that list. Runtime edits, including edits later reverted, merges, cross-boundary renames, symlinks, and submodules in the policy tail fail validation. Dirty tracked files and nonignored untracked files also fail.
 
-Keep the `archive/*` and `codex/fork-isolation-*` branches that retain the 11 original addon source objects required by the verifiers shipped in published releases `fork/v0.17.0+mdsmithaustin.1` through `.3`. Those verifiers run `git cat-file -t` on each non-null `source_commit`, so a clean checkout needs those refs to verify these releases. Later verifier revisions do not check addon source objects; they still validate source SHA format and uniqueness and the exact linear inventory of applied commits.
+Keep the `archive/*` and `codex/fork-isolation-*` branches that retain the 11 original addon source objects required by the verifiers shipped in published releases `fork/v0.17.0+mdsmithaustin.1` through `.3`. Those verifiers run `git cat-file -t` on each non-null `source_commit`, so a clean checkout needs those refs to verify these releases. Any release published from a source cut before the removal of that check also runs the old verifier and needs those refs, including the certified `.4` and `.5` sources and the `.6` source on main. Only sources containing the check-removal change omit addon source object checks; they still validate source SHA format and uniqueness and the exact linear inventory of applied commits.
 
 ## Build and certify
 
