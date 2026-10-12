@@ -781,6 +781,29 @@ def test_live_generation_cannot_be_restarted_before_stop(probe, run):
     assert run.runtime.is_dir()
 
 
+def test_mcp_records_probe_hashes_from_the_source_snapshot(probe, run, monkeypatch):
+    from adapter_probe import SourceArtifact, SourceSnapshot
+
+    scripts = ".agents/skills/verify-prime-native/scripts/"
+
+    def provider_preflight(subject):
+        subject.source_before = SourceSnapshot(
+            (
+                SourceArtifact(scripts + "mcp_probe.py", 1, "mcp-at-snapshot"),
+                SourceArtifact(scripts + "provider_probe.py", 1, "provider-at-snapshot"),
+            )
+        )
+        (subject.prime / "settings.json").write_text("{}")
+
+    monkeypatch.setattr(probe.owner._OwnedRun, "preflight", provider_preflight)
+
+    run.preflight()
+
+    artifact = json.loads((run.evidence / "mcp-artifact.json").read_text())
+    assert artifact["driver_sha256"] == "mcp-at-snapshot"
+    assert artifact["provider_owner_sha256"] == "provider-at-snapshot"
+
+
 @pytest.mark.parametrize("poll_pass", [1, 2])
 @pytest.mark.parametrize(
     "error,expected_class",

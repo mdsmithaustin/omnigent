@@ -2123,14 +2123,9 @@ def test_provider_removes_only_session_login_links_to_the_staging_copy(
     _assert_synthetic_sentinels(before)
 
 
-@pytest.mark.parametrize("prime_rewrites_login", [False, True])
-@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
-def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
-    tmp_path, monkeypatch, capsys, prime_rewrites_login
-):
+def _staged_login_run(probe, tmp_path, monkeypatch):
     from omnigent.harnesses.prime_native import bridge
 
-    probe = _provider_probe()
     request, owner, run, before = _synthetic_owned_run(probe, tmp_path)
     source = request.auth_source
     staged = source.read_bytes()
@@ -2146,22 +2141,44 @@ def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
     link = paths.agent_dir / "auth.json"
     link.symlink_to(run.prime / "auth.json")
     run.register_owned_credential(link)
-    if prime_rewrites_login:
-        link.write_text(
-            json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
-        )
+    return request, owner, run, before, link
+
+
+@pytest.mark.parametrize("prime_save", [None, "through_link", "rename_at_staged_path"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
+    tmp_path, monkeypatch, capsys, prime_save
+):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    source = request.auth_source
+    staged = source.read_bytes()
+    rotated = json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
+    if prime_save == "through_link":
+        link.write_text(rotated)
+    elif prime_save == "rename_at_staged_path":
+        target = link.resolve()
+        temporary = target.with_name(".auth.json.fake-save.tmp")
+        temporary.write_text(rotated)
+        os.replace(temporary, target)
     settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
     try:
         cleanup = run.cleanup(settlement)
         errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
         assert not link.is_symlink()
         assert not (run.prime / "auth.json").exists()
-        if prime_rewrites_login:
-            assert cleanup.status == "FAILED"
-            assert errors == [probe.STAGED_AUTH_REWRITTEN]
-            assert "FAILED staged_auth_rewritten" in capsys.readouterr().out
+        if prime_save:
+            message = (
+                "staged_auth_rewritten: Prime rewrote the probe's login copy during the run."
+                " If the provider rotates refresh tokens, the login saved in"
+                f" {source} is no longer valid. Sign in to Prime again to refresh"
+                " that file before the next run."
+            )
+            assert (cleanup.status, cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+            assert errors == [message]
+            assert "FAILED " + message in capsys.readouterr().out
         else:
-            assert cleanup.status == "VERIFIED"
+            assert (cleanup.status, cleanup.reason) == ("VERIFIED", "exact_owned_absence")
             assert errors == []
     finally:
         with contextlib.suppress(RuntimeError, OSError):
@@ -2171,6 +2188,60 @@ def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
         path.read_text(errors="replace") for path in run.evidence.rglob("*") if path.is_file()
     )
     _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_removes_an_unreadable_staged_login(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    _, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    (run.prime / "auth.json").chmod(0)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+        assert not link.is_symlink()
+        assert not (run.prime / "auth.json").exists()
+        assert cleanup.status == "FAILED"
+        assert [error.split(":")[:2] for error in errors] == [
+            ["staged login check", " PermissionError"]
+        ]
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    _assert_synthetic_sentinels(before)
+
+
+def test_provider_qualify_stops_live_cases_after_a_login_rewrite(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    started = []
+
+    def fake_case(request, profile, kind, parent):
+        started.append((profile.name, kind))
+        evidence = parent / f"{profile.name}-{kind}"
+        evidence.mkdir()
+        cleanup = probe.Observation(
+            "owned_cleanup", "FAILED", ("cleanup.json",), "staged_auth_rewritten"
+        )
+        result = probe.CaseResult(evidence / "result.json", ("launch",), (cleanup,), cleanup)
+        return probe._publish_case(probe._CaseDraft(result, {}, {}))
+
+    monkeypatch.setattr(probe, "_run_case", fake_case)
+    request = probe.Request(
+        tmp_path / "no-prime",
+        tmp_path / "no-kernel",
+        tmp_path / "synthetic-source",
+        tmp_path,
+        "waits",
+        cooperative_cleanup=True,
+    )
+
+    passed, manifest = probe.qualify(request)
+
+    assert passed is False
+    assert started == [("runner", "idle")]
+    value = json.loads(manifest.read_text())
+    assert value["status"] == "FAILED"
+    assert value["stopped"] == "staged_auth_rewritten"
 
 
 def test_source_snapshot_covers_every_probe_driver():
