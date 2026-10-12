@@ -467,6 +467,41 @@ def test_source_addon_pointer_need_not_resolve_in_the_clone(release):
     assert line(release)["release_ready"] is True
 
 
+def test_abbreviated_source_addon_pointer_is_rejected(release):
+    release["pin"]["addons"][0]["source_commit"] = release["payload"][:8]
+    amend_pin(release)
+    result = check(release)
+    assert result.returncode == 1
+    assert "fork release rejected" in result.stderr
+
+
+def test_duplicate_source_addon_pointer_is_rejected(release):
+    root = release["root"]
+    (root / "runtime.py").write_text("stable = True\naddon = True\nsecond_addon = True\n")
+    payload = commit(root, "second addon")
+    release["pin"]["addons"].extend(
+        [
+            {
+                "name": "release policy",
+                "source_commit": None,
+                "applied_commit": release["source"],
+                "reason": "reviewed policy",
+            },
+            {
+                "name": "second fixture addon",
+                "source_commit": release["pin"]["addons"][0]["source_commit"],
+                "applied_commit": payload,
+                "reason": "reviewed second fixture",
+            },
+        ]
+    )
+    release["pin"]["payload_commit"] = payload
+    amend_pin(release)
+    result = check(release)
+    assert result.returncode == 1
+    assert "duplicate source addon" in result.stderr
+
+
 @pytest.mark.parametrize(
     "case", ["extra", "omitted", "duplicate", "abbreviated", "allowlist", "profile", "version"]
 )
@@ -1018,6 +1053,31 @@ def test_matching_existing_release_is_idempotent(release, artifacts):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "Existing fork release matches certified bytes\n"
+
+
+def test_new_release_uses_fork_tag(release, artifacts):
+    directory, evidence = prepare_publisher(release, artifacts)
+    existing = release["tmp"] / "new-assets"
+    existing.mkdir()
+    release["env"]["FIXTURE_EXISTING"] = str(existing)
+    result = cli(
+        release,
+        "publish",
+        "--certificate",
+        str(evidence / "certificate.json"),
+        "--artifacts",
+        str(directory),
+        "--evidence",
+        str(evidence),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "Published certified fork bytes\n"
+    calls = [
+        json.loads(line) for line in Path(release["env"]["FIXTURE_CALLS"]).read_text().splitlines()
+    ]
+    (create,) = [call for call in calls if call[:2] == ["release", "create"]]
+    assert create[2] == "fork/v" + VERSION
+    assert create[create.index("--title") + 1] == "fork/v" + VERSION
 
 
 def test_new_release_promotes_checked_files_and_verifies_downloads(release, artifacts):
