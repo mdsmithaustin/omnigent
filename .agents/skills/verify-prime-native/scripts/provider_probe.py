@@ -5447,7 +5447,7 @@ class _OwnedRun:
 
 
 def _cleanup_failure_reason(errors: list[str], default: str = "cleanup_error") -> str:
-    if any(error.startswith(STAGED_AUTH_REWRITTEN + ":") for error in errors):
+    if any(STAGED_AUTH_REWRITTEN + ":" in error for error in errors):
         return STAGED_AUTH_REWRITTEN
     return default
 
@@ -5483,7 +5483,12 @@ def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) 
             },
             immutable=True,
         )
-        cleanup = Observation("owned_cleanup", "FAILED", ("case-finalization.json",), failure)
+        cleanup = Observation(
+            "owned_cleanup",
+            "FAILED",
+            ("case-finalization.json",),
+            _cleanup_failure_reason([failure], failure),
+        )
         if draft is None:
             result = CaseResult(evidence / "result.json", ("case_finalization",), (), cleanup)
             draft = _CaseDraft(result, {"failure": failure, "request": asdict(request)}, {})
@@ -5557,7 +5562,12 @@ def qualify(request: Request) -> tuple[bool, Path]:
             signature == deployment_signatures[0] for signature in deployment_signatures
         )
     wrong = None
-    if request.case == "waits" and request.expected_memory is None and len(results) == 4:
+    if (
+        request.case == "waits"
+        and request.expected_memory is None
+        and len(results) == 4
+        and stopped is None
+    ):
         wrong = _run_case(replace(request, expected_memory="WRONG"), RUNNER, "positive", parent)
         results.append(wrong)
     wrong_verified = False
