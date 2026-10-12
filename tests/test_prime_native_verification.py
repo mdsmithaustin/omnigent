@@ -2030,6 +2030,99 @@ def test_provider_allocation_and_settlement_fail_closed(tmp_path, monkeypatch, f
         _assert_synthetic_sentinels(before)
 
 
+@pytest.mark.parametrize(
+    ("session_auth", "error"),
+    [
+        ("staging_link", None),
+        ("regular_copy", "native_auth_link_mismatch"),
+        ("foreign_link", "native_auth_link_mismatch"),
+        ("source_link", "native_auth_link_mismatch"),
+        ("loose_staging_copy", "native_auth_copy_privacy_mismatch"),
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_admits_only_a_session_login_linked_to_the_staging_copy(
+    tmp_path, monkeypatch, session_auth, error
+):
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    request, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    paths = bridge.PrimeRuntimePaths(bridge._COMPACT_ROOT / "owned")
+    paths.prepare()
+    staging = run.prime / "auth.json"
+    staging.chmod(0o644 if session_auth == "loose_staging_copy" else 0o600)
+    auth = paths.agent_dir / "auth.json"
+    if session_auth == "regular_copy":
+        auth.write_text("SYNTHETIC COPY")
+        auth.chmod(0o600)
+    else:
+        link_targets = {
+            "foreign_link": tmp_path / "compact-sibling",
+            "source_link": request.auth_source,
+        }
+        auth.symlink_to(link_targets.get(session_auth, staging))
+    config = paths.root / "config.json"
+    config.write_text(
+        json.dumps(
+            {"sessionId": "synthetic-session", "primeControlsDir": str(paths.root / "controls")}
+        )
+    )
+    run.session_id = "synthetic-session"
+    run.owned_paths = lambda session: paths
+    try:
+        if error is None:
+            assert run.admit_config(config)["sessionId"] == "synthetic-session"
+            assert run.config_path == config
+        else:
+            with pytest.raises(RuntimeError, match=f"^{error}$"):
+                run.admit_config(config)
+            assert run.config_path is None
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize(
+    ("link_target", "errors", "link_survives"),
+    [
+        ("staging", [], False),
+        (
+            "sibling",
+            ["remove credential copy: RuntimeError: owned_credential_copy_is_symlink"],
+            True,
+        ),
+    ],
+)
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_removes_only_session_login_links_to_the_staging_copy(
+    tmp_path, monkeypatch, link_target, errors, link_survives
+):
+    from omnigent.harnesses.prime_native import bridge
+
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    paths = bridge.PrimeRuntimePaths(bridge._COMPACT_ROOT / "owned")
+    paths.prepare()
+    link = paths.agent_dir / "auth.json"
+    targets = {"staging": run.prime / "auth.json", "sibling": tmp_path / "compact-sibling"}
+    link.symlink_to(targets[link_target])
+    run.register_owned_credential(link)
+    try:
+        observed = []
+        run.remove_owned_credentials(observed)
+        assert observed == errors
+        assert link.is_symlink() is link_survives
+        assert (run.prime / "auth.json").exists() is False
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    _assert_synthetic_sentinels(before)
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_provider_known_compact_retirement_remains_independent(tmp_path, monkeypatch):
     from omnigent.harnesses.prime_native import bridge
@@ -2041,7 +2134,7 @@ def test_provider_known_compact_retirement_remains_independent(tmp_path, monkeyp
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     sibling = bridge._COMPACT_ROOT / "sibling"
     sibling.write_text("SYNTHETIC SIBLING")
     before[sibling] = (sibling.stat().st_dev, sibling.stat().st_ino, sibling.read_bytes())
@@ -2688,7 +2781,7 @@ def test_provider_delete_routes_teardown_before_stopping_dedicated_runner(
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     run.register_owned_credential(target)
     run.bridge_roots.add(compact)
     run.session_id = "synthetic-session"
@@ -2823,7 +2916,7 @@ def test_provider_cleanup_accepts_only_server_confirmed_maintenance_removal(
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     run.register_owned_credential(target)
     run.bridge_roots.add(compact)
     run.session_id = "synthetic-session"
@@ -2934,7 +3027,7 @@ def test_provider_cleanup_continues_with_malformed_admission_config(tmp_path, mo
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     (compact / "config.json").write_text('{"nativeAdmission":')
     run.register_owned_credential(target)
     run.bridge_roots.add(compact)
@@ -3004,7 +3097,7 @@ def test_provider_restarts_owned_host_to_run_maintenance_for_a_retained_root(
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     run.register_owned_credential(target)
     run.bridge_roots.add(compact)
     run.session_id = "synthetic-session"
@@ -3490,7 +3583,7 @@ def test_retirement_attempt_receipts_fail_closed(tmp_path, monkeypatch, failure)
     paths = bridge.PrimeRuntimePaths(compact)
     paths.prepare()
     target = paths.agent_dir / "auth.json"
-    target.write_text("SYNTHETIC COMPACT COPY")
+    target.symlink_to(run.prime / "auth.json")
     run.register_owned_credential(target)
     run.bridge_roots.add(compact)
     run.session_id = "synthetic-session"

@@ -132,8 +132,10 @@ class PrimeRuntimePaths:
             except FileNotFoundError:
                 continue
             if stat.S_ISLNK(metadata.st_mode):
-                raise RuntimeError(f"refusing to use {path}: is a symlink")
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                # The launch re-points this link at the host's Prime login.
+                if path != self.agent_dir / "auth.json":
+                    raise RuntimeError(f"refusing to use {path}: is a symlink")
+            elif not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise RuntimeError(f"refusing to use {path}: not a regular file with one link")
             if uid is not None and metadata.st_uid != uid:
                 raise RuntimeError(f"refusing to use {path}: owned by another user")

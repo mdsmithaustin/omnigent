@@ -155,8 +155,10 @@ The probe qualifies root relayed tool denial. It does not prove confinement of a
 ## Qualify authenticated finite waits
 
 `scripts/provider_probe.py` uses configured xAI credentials and
-`xai/grok-4.7`. It creates fresh private runtimes and copies credentials into
-owned files. It preserves
+`xai/grok-4.7`. It creates fresh private runtimes and copies the auth file into
+one owned staging file. The adapter links each conversation's `agent/auth.json`
+to that staging file. The probe rejects a session login that is a copy or links
+anywhere else. Removing a session link never touches its target. The probe preserves
 the original auth file and checks unrelated Prime process identities. It does
 not inspect pending input in unrelated terminals.
 
