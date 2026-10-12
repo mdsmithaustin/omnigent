@@ -8,6 +8,8 @@ Revision `.3` repairs native Codex startup when the server requires authenticate
 
 Revision `.5` supersedes `.4`, which was certified but not published. For Prime runtime deletion, admission tombstone retention, and rollback compatibility, see [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
 
+Revision `.6` links each Prime conversation's `auth.json` to the host's Prime login, so refreshed sign-ins outlive the conversation. Releases through `.5` cannot launch or delete conversations whose login `.6` linked. Before rolling back, follow [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
+
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
 ## Source line
