@@ -250,18 +250,62 @@ async def test_a_later_deletion_purges_tombstones_older_than_the_ttl(stores, mon
         assert first.native_source_deleted(*other_workspace) is True
 
 
-async def test_deleted_phase_tombstone_confirms_deletion_until_the_next_purge(stores):
-    first, _ = stores
-    source_id, epoch = await delete_admitted_source(first)
-    legacy = json.loads(stored_state(first, source_id))
-    del legacy["deleted_at"]
-    with first._conv_session("write_native_source") as session:
-        row = session.get(SqlNativeSource, (current_workspace_id(), source_id))
-        row.state = json.dumps({**legacy, "phase": "deleted"})
+def rewrite_state(store: SqlAlchemyConversationStore, conversation_id: str, state: str) -> None:
+    with store._conv_session("write_native_source") as session:
+        session.get(SqlNativeSource, (current_workspace_id(), conversation_id)).state = state
         session.commit()
-    assert first.native_source_deleted(source_id, epoch) is True
 
-    await delete_admitted_source(first)
 
-    assert first.native_source_deleted(source_id, epoch) is False
-    assert stored_state(first, source_id) is None
+def with_owner_region(state: str) -> str:
+    source = json.loads(state)
+    owner = {**source["admission"]["owner"], "region": "eu"}
+    return json.dumps({**source, "admission": {**source["admission"], "owner": owner}})
+
+
+def with_archived_phase(state: str) -> str:
+    return json.dumps({**json.loads(state), "phase": "archived"})
+
+
+@pytest.mark.parametrize("newer_release", [with_owner_region, with_archived_phase])
+async def test_deletion_purges_by_age_tombstones_this_release_cannot_parse(
+    stores, monkeypatch, newer_release
+):
+    first, _ = stores
+    monkeypatch.setattr(sqlalchemy_store, "now_epoch", lambda: 1_000)
+    expiring = await delete_admitted_source(first)
+    rewrite_state(first, expiring[0], newer_release(stored_state(first, expiring[0])))
+    monkeypatch.setattr(
+        sqlalchemy_store, "now_epoch", lambda: 1_000 + NATIVE_TOMBSTONE_TTL_SECONDS
+    )
+    recent = await delete_admitted_source(first)
+    recent_state = newer_release(stored_state(first, recent[0]))
+    rewrite_state(first, recent[0], recent_state)
+    live = first.create_conversation(labels={"omnigent.wrapper": "prime-native-ui"})
+    live_ticket = first.admit_native(live.id, OWNER)
+
+    monkeypatch.setattr(
+        sqlalchemy_store, "now_epoch", lambda: 1_001 + NATIVE_TOMBSTONE_TTL_SECONDS
+    )
+    deleted = await delete_admitted_source(first)
+
+    assert first.get_conversation(deleted[0]) is None
+    assert first.native_source_deleted(*deleted) is True
+    assert stored_state(first, expiring[0]) is None
+    assert stored_state(first, recent[0]) == recent_state
+    assert first.get_native_source(live.id).admission == live_ticket
+
+
+async def test_deletion_purges_tombstones_without_a_readable_deletion_time(stores):
+    first, _ = stores
+    legacy_id, _ = await delete_admitted_source(first)
+    legacy = json.loads(stored_state(first, legacy_id))
+    del legacy["deleted_at"]
+    rewrite_state(first, legacy_id, json.dumps({**legacy, "phase": "deleted"}))
+    corrupt_id, _ = await delete_admitted_source(first)
+    rewrite_state(first, corrupt_id, '{"admission": ')
+
+    deleted = await delete_admitted_source(first)
+
+    assert first.native_source_deleted(*deleted) is True
+    assert stored_state(first, legacy_id) is None
+    assert stored_state(first, corrupt_id) is None
