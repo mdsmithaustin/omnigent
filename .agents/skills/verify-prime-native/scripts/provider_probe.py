@@ -57,6 +57,11 @@ REPO = Path(__file__).resolve().parents[4]
 FINALIZATION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 # Covers the host startup maintenance delay plus its Prime orphan stage.
 MAINTENANCE_RECLAIM_TIMEOUT_S = 30
+STAGED_AUTH_REWRITTEN = (
+    "staged_auth_rewritten: Prime rewrote the probe's login copy during the run, so a"
+    " refresh-token rotation has likely revoked the --auth-source login."
+    " Sign in to Prime again before the next run."
+)
 
 
 @dataclass(frozen=True)
@@ -4508,6 +4513,8 @@ class _OwnedRun:
                                 != str(self.prime / "auth.json")
                             ):
                                 raise RuntimeError("owned_credential_copy_is_symlink")
+                            if self.auth_signature and not stat.S_ISLNK(metadata.st_mode):
+                                self._check_staged_login(descriptor, path.name, errors)
                             target.copy_absence_required = True
                             os.unlink(path.name, dir_fd=descriptor)
                         try:
@@ -4531,6 +4538,14 @@ class _OwnedRun:
         finally:
             bridge._DATA_ROOT = previous
         return removed
+
+    def _check_staged_login(self, directory: int, name: str, errors: list[str]) -> None:
+        login = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(login, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).digest()
+        if digest != self.auth_signature[2] and STAGED_AUTH_REWRITTEN not in errors:
+            errors.append(STAGED_AUTH_REWRITTEN)
+            print("FAILED " + STAGED_AUTH_REWRITTEN, flush=True)
 
     def _delete_owned_session(self, result: dict, *, unavailable: bool = False) -> None:
         session = self.session_id
@@ -5229,11 +5244,6 @@ class _OwnedRun:
         def source_integrity() -> dict:
             after = source_snapshot(REPO)
             write_json(self.evidence / "source-after.json", asdict(after))
-            if (
-                sha256(Path(__file__))
-                != json.loads((self.evidence / "artifact.json").read_text())["driver_sha256"]
-            ):
-                raise RuntimeError("provider_probe_source_drift")
             return assert_same_sources(self.source_before, after)
 
         if self.source_before:

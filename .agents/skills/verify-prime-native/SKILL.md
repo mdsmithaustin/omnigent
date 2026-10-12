@@ -162,6 +162,11 @@ anywhere else. Removing a session link never touches its target. The probe prese
 the original auth file and checks unrelated Prime process identities. It does
 not inspect pending input in unrelated terminals.
 
+Prime saves refreshed tokens into the staging file, which cleanup deletes. If
+Prime rewrote it during the run, cleanup fails with `staged_auth_rewritten`.
+A provider that rotates refresh tokens has then likely revoked the original
+login. Sign in to Prime again before the next run.
+
 The probe supervises a public foreground host with its private clock settings.
 It requires the native CLI to reuse that exact host. Automatic host-daemon
 creation with `--server` filters the pane timeout before runner startup. The

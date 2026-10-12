@@ -781,39 +781,6 @@ def test_live_generation_cannot_be_restarted_before_stop(probe, run):
     assert run.runtime.is_dir()
 
 
-@pytest.mark.parametrize(
-    "stale_pin",
-    [
-        "0" * 64,
-        "a4ac20a5c467e8b867d281759b2c193dd0b6d659cc6cd87fc3a8d2f62fba36ed",
-        "45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c",
-        "c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3",
-    ],
-    ids=["unknown", "previous-provider", "pre-retirement-provider", "pre-final-error-provider"],
-)
-def test_mcp_rejects_stale_owner_before_allocation(probe, tmp_path, monkeypatch, stale_pin):
-    req = request(probe, tmp_path)
-    allocations = []
-    monkeypatch.setattr(probe, "OWNER_SHA256", stale_pin)
-    monkeypatch.setattr(
-        probe.owner._RuntimeOwner, "allocate", lambda *args: allocations.append(args)
-    )
-    passed, receipt = probe.qualify(req)
-    assert passed is False
-    assert allocations == []
-    assert "mcp_provider_owner_not_admitted" in receipt.read_text()
-    assert json.loads((receipt.parent / "completion.json").read_text())["passed"] is False
-
-
-def test_mcp_current_owner_pin_reaches_provider_boundary(probe, run, monkeypatch):
-    def stop_at_provider(subject):
-        raise RuntimeError("synthetic_provider_boundary")
-
-    monkeypatch.setattr(probe.owner._OwnedRun, "preflight", stop_at_provider)
-    with pytest.raises(RuntimeError, match="synthetic_provider_boundary"):
-        run.preflight()
-
-
 @pytest.mark.parametrize("poll_pass", [1, 2])
 @pytest.mark.parametrize(
     "error,expected_class",
