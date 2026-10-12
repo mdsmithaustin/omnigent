@@ -57,11 +57,7 @@ REPO = Path(__file__).resolve().parents[4]
 FINALIZATION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 # Covers the host startup maintenance delay plus its Prime orphan stage.
 MAINTENANCE_RECLAIM_TIMEOUT_S = 30
-STAGED_AUTH_REWRITTEN = (
-    "staged_auth_rewritten: Prime rewrote the probe's login copy during the run, so a"
-    " refresh-token rotation has likely revoked the --auth-source login."
-    " Sign in to Prime again before the next run."
-)
+STAGED_AUTH_REWRITTEN = "staged_auth_rewritten"
 
 
 @dataclass(frozen=True)
@@ -4540,12 +4536,26 @@ class _OwnedRun:
         return removed
 
     def _check_staged_login(self, directory: int, name: str, errors: list[str]) -> None:
-        login = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        with os.fdopen(login, "rb") as handle:
-            digest = hashlib.sha256(handle.read()).digest()
-        if digest != self.auth_signature[2] and STAGED_AUTH_REWRITTEN not in errors:
-            errors.append(STAGED_AUTH_REWRITTEN)
-            print("FAILED " + STAGED_AUTH_REWRITTEN, flush=True)
+        try:
+            login = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(login, "rb") as handle:
+                digest = hashlib.sha256(handle.read()).digest()
+        except OSError as exc:
+            errors.append("staged login check: " + type(exc).__name__ + ": " + sanitize(str(exc)))
+            return
+        if (
+            digest == self.auth_signature[2]
+            or _cleanup_failure_reason(errors) == STAGED_AUTH_REWRITTEN
+        ):
+            return
+        message = (
+            f"{STAGED_AUTH_REWRITTEN}: Prime rewrote the probe's login copy during the run."
+            " If the provider rotates refresh tokens, the login saved in"
+            f" {self.request.auth_source} is no longer valid. Sign in to Prime again to"
+            " refresh that file before the next run."
+        )
+        errors.append(message)
+        print("FAILED " + message, flush=True)
 
     def _delete_owned_session(self, result: dict, *, unavailable: bool = False) -> None:
         session = self.session_id
@@ -4895,7 +4905,7 @@ class _OwnedRun:
                 "owned_cleanup",
                 "FAILED" if errors else "VERIFIED",
                 ("cleanup.json",),
-                "cleanup_error" if errors else "exact_owned_absence",
+                _cleanup_failure_reason(errors) if errors else "exact_owned_absence",
             )
         try:
             result = self._cleanup_live(external_settlement)
@@ -5313,7 +5323,7 @@ class _OwnedRun:
             "owned_cleanup",
             "VERIFIED" if passed else "FAILED",
             ("cleanup.json",),
-            "exact_owned_absence" if passed else "cleanup_error",
+            "exact_owned_absence" if passed else _cleanup_failure_reason(errors),
         )
 
     def qualify(self) -> _CaseDraft:
@@ -5371,7 +5381,10 @@ class _OwnedRun:
                     "owned_cleanup",
                     "FAILED",
                     ("cleanup-finalization.json",),
-                    "cleanup_finalization_failed",
+                    _cleanup_failure_reason(
+                        [*credential_errors, *(self.cleanup_errors or [])],
+                        "cleanup_finalization_failed",
+                    ),
                 )
         failure = self.first_failure
         if failure:
@@ -5431,6 +5444,12 @@ class _OwnedRun:
                 "receipt": result.receipt.name,
             },
         )
+
+
+def _cleanup_failure_reason(errors: list[str], default: str = "cleanup_error") -> str:
+    if any(error.startswith(STAGED_AUTH_REWRITTEN + ":") for error in errors):
+        return STAGED_AUTH_REWRITTEN
+    return default
 
 
 def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) -> CaseResult:
@@ -5503,6 +5522,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
         "waits": ((RUNNER, "idle"), (RUNNER, "positive"), (PANE, "idle"), (PANE, "positive")),
     }
     results = []
+    stopped = None
     for profile, kind in cases[request.case]:
         result = _run_case(request, profile, kind, parent)
         results.append(result)
@@ -5514,6 +5534,9 @@ def qualify(request: Request) -> tuple[bool, Path]:
                 "runs": [str(item.receipt) for item in results],
             },
         )
+        if result.cleanup.reason == STAGED_AUTH_REWRITTEN:
+            stopped = STAGED_AUTH_REWRITTEN
+            break
     matched_deployments = False
     deployment_signatures = []
     for result in results:
@@ -5591,6 +5614,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
             "status": "VERIFIED" if passed else "FAILED",
             "request": asdict(request),
             "required_runs": expected_count,
+            "stopped": stopped,
             "matched_deployments": matched_deployments,
             "runs": [
                 {

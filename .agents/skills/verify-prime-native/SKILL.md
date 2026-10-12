@@ -162,13 +162,19 @@ anywhere else. Removing a session link never touches its target. The probe prese
 the original auth file and checks unrelated Prime process identities. It does
 not inspect pending input in unrelated terminals.
 
-Prime saves refreshed tokens into the staging file, which cleanup deletes. If
-Prime rewrote it during the run, cleanup records `staged_auth_rewritten` in
-`cleanup.json` and marks `owned_cleanup` as `FAILED`. The probe still deletes
-the credential copy and retains the runtime directory for diagnosis. It compares
-the staged bytes by hash in-process without logging credential contents.
-A provider that rotates refresh tokens has then likely revoked the original
-login. Sign in to Prime again before the next run.
+Prime saves refreshed tokens into the staging file, which cleanup deletes.
+Before deleting each credential copy that is a regular file, the probe hashes
+it in-process and compares it with the recorded hash of the `--auth-source`
+login. This covers the staging file and a session login that Prime replaced
+with a regular file. It never logs credential contents. On a mismatch, cleanup
+records `staged_auth_rewritten` in `cleanup.json`, prints a `FAILED` line, and
+marks `owned_cleanup` as `FAILED` with that reason. The probe still deletes the
+copy, retains the runtime directory for diagnosis, and runs no further cases.
+The manifest records `"stopped": "staged_auth_rewritten"`. If the provider
+rotates refresh tokens, the login saved in the `--auth-source` file is no
+longer valid. Sign in to Prime again to refresh that file before the next run.
+A copy the probe cannot read is still deleted and reported as a separate
+`staged login check` error.
 
 The probe supervises a public foreground host with its private clock settings.
 It requires the native CLI to reuse that exact host. Automatic host-daemon
@@ -473,6 +479,11 @@ The flag does not exclude hostile same-UID writers in the final check/syscall wi
 ```sh
 PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
 ```
+
+The MCP probe stages the login and checks it at cleanup like the finite-wait
+workflow. A `staged_auth_rewritten` cleanup error or `owned_cleanup` reason
+means the same thing here. Sign in to Prime again to refresh the
+`--auth-source` file before the next run.
 
 Use the printed receipt path directly. Fresh runs place `result.json`,
 `manifest.json`, and `completion.json` in one `provider-mcp-*` directory under

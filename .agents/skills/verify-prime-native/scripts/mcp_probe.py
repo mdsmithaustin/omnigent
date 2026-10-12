@@ -23,6 +23,7 @@ import psutil
 import yaml
 from adapter_probe import (
     ProcessIdentity,
+    SourceSnapshot,
     assert_same_selected_root_identity,
     read_actual_kernel_identity,
     selected_root_identity_record,
@@ -675,7 +676,7 @@ class _McpRun(owner._OwnedRun):
         )
         self.fixture = OwnedMcpFixture(self, self.declaration)
         self.provider_log = self.evidence / "provider-projections.jsonl"
-        self.driver_hashes = driver_hashes()
+        self.driver_hashes: dict[str, str] = {}
         self.continuity_roots = []
         self.scenario_request = request
 
@@ -686,6 +687,7 @@ class _McpRun(owner._OwnedRun):
 
     def preflight(self) -> None:
         super().preflight()
+        self.driver_hashes = driver_hashes(self.source_before)
         extension = self.evidence / "observer.mjs"
         extension.write_text(
             OBSERVER_SOURCE.replace(
@@ -1182,10 +1184,15 @@ class _McpRun(owner._OwnedRun):
         )
 
 
-def driver_hashes() -> dict[str, str]:
+def driver_hashes(snapshot: SourceSnapshot) -> dict[str, str]:
+    files = snapshot.by_path()
+
+    def recorded(module: str) -> str:
+        return files[Path(module).resolve().relative_to(owner.REPO).as_posix()].sha256
+
     return {
-        "driver_sha256": sha256(Path(__file__)),
-        "provider_owner_sha256": sha256(Path(owner.__file__)),
+        "driver_sha256": recorded(__file__),
+        "provider_owner_sha256": recorded(owner.__file__),
     }
 
 
@@ -1238,7 +1245,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
                     "observations": [asdict(item) for item in observations],
                     "cleanup": asdict(cleanup),
                 },
-                driver_hashes(),
+                {},
             )
         else:
             result = replace(
