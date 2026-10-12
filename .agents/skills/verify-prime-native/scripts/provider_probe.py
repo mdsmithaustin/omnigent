@@ -2678,14 +2678,17 @@ class _OwnedRun:
         if root != expected or path.resolve().parent != root or controls != root / "controls":
             raise RuntimeError("native_config_root_outside_exact_session")
         auth = root / "agent/auth.json"
-        if auth.exists():
+        staged = self.prime / "auth.json"
+        if os.path.lexists(auth):
+            if not auth.is_symlink() or os.readlink(auth) != str(staged):
+                raise RuntimeError("native_auth_link_mismatch")
             if (
-                auth.is_symlink()
-                or not auth.is_file()
-                or stat.S_IMODE(auth.stat().st_mode) != 0o600
+                staged.is_symlink()
+                or not staged.is_file()
+                or stat.S_IMODE(staged.stat().st_mode) != 0o600
             ):
                 raise RuntimeError("native_auth_copy_privacy_mismatch")
-            for directory in (root, auth.parent):
+            for directory in (root, auth.parent, self.prime):
                 if directory.is_symlink() or stat.S_IMODE(directory.stat().st_mode) != 0o700:
                     raise RuntimeError("native_auth_directory_privacy_mismatch")
         self.config_path, self.config = path, config
@@ -4498,7 +4501,12 @@ class _OwnedRun:
                         else:
                             if target.copy_absence_required:
                                 raise RuntimeError("owned_credential_copy_recreated")
-                            if stat.S_ISLNK(metadata.st_mode):
+                            # Session logins link to the staging copy; unlink drops only the link.
+                            if stat.S_ISLNK(metadata.st_mode) and (
+                                path == self.prime / "auth.json"
+                                or os.readlink(path.name, dir_fd=descriptor)
+                                != str(self.prime / "auth.json")
+                            ):
                                 raise RuntimeError("owned_credential_copy_is_symlink")
                             target.copy_absence_required = True
                             os.unlink(path.name, dir_fd=descriptor)
