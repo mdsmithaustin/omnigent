@@ -2,7 +2,7 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is upstream `0.17.0` plus fork addon revision `5`. Once published, its GitHub release tag is `fork/v` followed by that version. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.5` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is upstream `0.17.0` plus fork addon revision `6`. Once published, its GitHub release tag is `fork/v` followed by that version. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.6` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
 
 Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
