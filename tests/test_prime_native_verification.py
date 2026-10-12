@@ -2280,7 +2280,7 @@ def test_provider_case_keeps_the_login_rewrite_reason_through_owner_exit(tmp_pat
     assert "staged_auth_rewritten: synthetic rewrite" in finalization["error"]
 
 
-@pytest.mark.parametrize("rewritten_case", [0, 3])
+@pytest.mark.parametrize("rewritten_case", [0, 3, 4])
 def test_provider_qualify_stops_live_cases_after_a_login_rewrite(
     tmp_path, monkeypatch, rewritten_case
 ):
@@ -2318,12 +2318,86 @@ def test_provider_qualify_stops_live_cases_after_a_login_rewrite(
         ("runner", "positive", None),
         ("pane", "idle", None),
         ("pane", "positive", None),
+        ("runner", "positive", "WRONG"),
     ]
     assert passed is False
     assert started == planned[: rewritten_case + 1]
     value = json.loads(manifest.read_text())
     assert value["status"] == "FAILED"
     assert value["stopped"] == "staged_auth_rewritten"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_keeps_the_login_rewrite_when_the_owner_receipt_fails(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    target = link.resolve()
+    temporary = target.with_name(".auth.json.fake-save.tmp")
+    temporary.write_text(json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED"}}))
+    os.replace(temporary, target)
+    original_write = probe.write_json
+
+    def allocate(request, evidence):
+        owner.evidence = run.evidence = evidence
+        return owner
+
+    def deny_owner_receipt(path, *args, **kwargs):
+        if path.name == "runtime-owner.json":
+            raise OSError("synthetic owner receipt denied")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(probe._RuntimeOwner, "allocate", allocate)
+    monkeypatch.setattr(probe, "_OwnedRun", lambda *args: run)
+    monkeypatch.setattr(run, "start", lambda: None)
+    monkeypatch.setattr(run, "seed_memory", lambda: None)
+    monkeypatch.setattr(probe, "write_json", deny_owner_receipt)
+
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+
+    receipt = json.loads(result.receipt.read_text())
+    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+    assert receipt["cleanup"]["reason"] == "staged_auth_rewritten"
+    assert "synthetic owner receipt denied" in receipt["failure"]
+    assert not (run.prime / "auth.json").exists()
+    _assert_synthetic_sentinels(before)
+
+
+def _probe_source_checkout(tmp_path):
+    import adapter_probe
+
+    checkout = tmp_path / "source-checkout"
+    for relative in (
+        *adapter_probe.PROBE_DRIVERS,
+        *adapter_probe.ENVIRONMENT_ARTIFACTS,
+        "omnigent/__init__.py",
+    ):
+        path = checkout / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic source\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    return checkout
+
+
+@pytest.mark.parametrize("edited", ["provider_probe.py", "mcp_probe.py"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_fails_when_a_probe_driver_changes_mid_run(tmp_path, monkeypatch, edited):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    checkout = _probe_source_checkout(tmp_path)
+    monkeypatch.setattr(probe, "REPO", checkout)
+    run.source_before = probe.source_snapshot(checkout)
+    (checkout / ".agents/skills/verify-prime-native/scripts" / edited).write_text("edited\n")
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    assert cleanup.status == "FAILED"
+    assert [error.split(":")[0] for error in errors] == ["source integrity"]
+    assert "scripts/" + edited in errors[0]
+    _assert_synthetic_sentinels(before)
 
 
 def test_source_snapshot_covers_every_probe_driver():

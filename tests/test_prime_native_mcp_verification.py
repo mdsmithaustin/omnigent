@@ -771,6 +771,76 @@ def test_mcp_keeps_the_login_rewrite_reason_through_owner_exit(probe, tmp_path, 
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_mcp_keeps_the_login_rewrite_when_the_owner_receipt_fails(probe, tmp_path, monkeypatch):
+    import hashlib
+    import shutil
+
+    req = request(probe, tmp_path)
+    original_write = probe.owner.write_json
+
+    def rewritten_case(run):
+        staged = req.auth_source.read_bytes()
+        (run.prime / "auth.json").write_bytes(staged)
+        run.auth_signature = (0, 0, hashlib.sha256(staged).digest())
+        temporary = run.prime / ".auth.json.fake-save.tmp"
+        temporary.write_text(json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED"}}))
+        os.replace(temporary, run.prime / "auth.json")
+        errors = []
+        run.remove_owned_credentials(errors)
+        run.runtime_owner.errors.extend(errors)
+        cleanup = probe.owner.Observation("owned_cleanup", "FAILED", ("cleanup.json",), "x")
+        result = probe.owner.CaseResult(
+            run.evidence / "result.json", probe.REQUIRED, (cleanup,), cleanup
+        )
+        return probe.owner._CaseDraft(result, {}, {})
+
+    def deny_owner_receipt(path, *args, **kwargs):
+        if path.name == "runtime-owner.json":
+            raise OSError("synthetic owner receipt denied")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(probe._McpRun, "qualify_mcp", rewritten_case)
+    monkeypatch.setattr(probe.owner, "write_json", deny_owner_receipt)
+
+    passed, receipt = probe.qualify(req)
+
+    finalization = json.loads((receipt.parent / "case-finalization.json").read_text())
+    shutil.rmtree(finalization["runtime"])
+    cleanup = json.loads(receipt.read_text())["cleanup"]
+    assert passed is False
+    assert (cleanup["status"], cleanup["reason"]) == ("FAILED", "staged_auth_rewritten")
+    assert "synthetic owner receipt denied" in finalization["error"]
+
+
+@pytest.mark.parametrize("edited", ["provider_probe.py", "mcp_probe.py"])
+def test_mcp_cleanup_fails_when_a_probe_driver_changes_mid_run(
+    probe, run, tmp_path, monkeypatch, edited
+):
+    import adapter_probe
+
+    checkout = tmp_path / "source-checkout"
+    for relative in (
+        *adapter_probe.PROBE_DRIVERS,
+        *adapter_probe.ENVIRONMENT_ARTIFACTS,
+        "omnigent/__init__.py",
+    ):
+        path = checkout / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic source\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    monkeypatch.setattr(probe.owner, "REPO", checkout)
+    run.source_before = probe.owner.source_snapshot(checkout)
+    (checkout / ".agents/skills/verify-prime-native/scripts" / edited).write_text("edited\n")
+
+    cleanup = run.cleanup(run.fixture.close())
+
+    errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+    assert cleanup.status == "FAILED"
+    assert [error.split(":")[0] for error in errors] == ["source integrity"]
+    assert "scripts/" + edited in errors[0]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_mcp_first_failure_survives_owner_exit_failure(probe, tmp_path, monkeypatch):
     def fail_start(run):
         raise RuntimeError("first synthetic scenario failure")
