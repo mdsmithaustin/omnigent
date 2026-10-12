@@ -139,11 +139,13 @@ def _prime_daemon(
         text=True,
     )
     try:
-        for _ in range(200):
-            if socket_path.exists() or child.poll() is not None:
-                break
+        deadline = time.monotonic() + 30
+        while not socket_path.exists() and child.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert socket_path.exists(), child.stderr.read() if child.stderr is not None else ""
+        if not socket_path.exists():
+            child.kill()
+            _, stderr = child.communicate(timeout=5)
+            pytest.fail(f"fake Prime daemon never bound {socket_path}: {stderr}")
         yield _PrimeDaemon(child, socket_path, command_path)
     finally:
         if child.poll() is None:
