@@ -4913,6 +4913,11 @@ class _OwnedRun:
             self.runtime_owner.errors.append(
                 "cleanup failed: " + type(exc).__name__ + ": " + sanitize(str(exc))
             )
+            self.runtime_owner.errors.extend(
+                error
+                for error in (self.cleanup_errors or [])
+                if error not in self.runtime_owner.errors
+            )
             raise
         if result.status != "VERIFIED":
             self.runtime_owner.errors.extend(

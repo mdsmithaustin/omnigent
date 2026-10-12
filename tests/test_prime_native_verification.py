@@ -2212,6 +2212,46 @@ def test_provider_cleanup_removes_an_unreadable_staged_login(tmp_path, monkeypat
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_keeps_the_login_rewrite_when_later_cleanup_raises(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    staged = request.auth_source.read_bytes()
+    link.write_text(
+        json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
+    )
+
+    def allocate(request, evidence):
+        owner.evidence = run.evidence = evidence
+        return owner
+
+    def fail_capture():
+        raise RuntimeError("runtime_capture_failed")
+
+    monkeypatch.setattr(probe._RuntimeOwner, "allocate", allocate)
+    monkeypatch.setattr(probe, "_OwnedRun", lambda *args: run)
+    monkeypatch.setattr(run, "start", lambda: None)
+    monkeypatch.setattr(run, "seed_memory", lambda: None)
+    monkeypatch.setattr(run, "_capture_owned_logs", fail_capture)
+
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+
+    finalization = json.loads((result.receipt.parent / "case-finalization.json").read_text())
+    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+    assert next(item for item in result.observations if item.claim == "owned_cleanup") == (
+        result.cleanup
+    )
+    assert "runtime_capture_failed" in finalization["error"]
+    assert "staged_auth_rewritten:" in finalization["error"]
+    assert len([error for error in owner.errors if "staged_auth_rewritten:" in error]) == 1
+    assert owner.closed is True
+    assert run.runtime.is_dir()
+    assert not link.is_symlink()
+    assert not (run.prime / "auth.json").exists()
+    assert request.auth_source.read_bytes() == staged
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_provider_case_keeps_the_login_rewrite_reason_through_owner_exit(tmp_path, monkeypatch):
     import shutil
 
