@@ -163,7 +163,10 @@ the original auth file and checks unrelated Prime process identities. It does
 not inspect pending input in unrelated terminals.
 
 Prime saves refreshed tokens into the staging file, which cleanup deletes. If
-Prime rewrote it during the run, cleanup fails with `staged_auth_rewritten`.
+Prime rewrote it during the run, cleanup records `staged_auth_rewritten` in
+`cleanup.json` and marks `owned_cleanup` as `FAILED`. The probe still deletes
+the credential copy and retains the runtime directory for diagnosis. It compares
+the staged bytes by hash in-process without logging credential contents.
 A provider that rotates refresh tokens has then likely revoked the original
 login. Sign in to Prime again before the next run.
 
