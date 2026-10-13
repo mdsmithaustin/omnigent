@@ -621,6 +621,8 @@ def complete_prime_launch(paths: PrimeRuntimePaths, reservation: PrimeLaunchRese
         with native_bridge_common.bridge_dir_preparation_lock(paths.root):
             paths.validate_existing()
             current = _read_launch_reservation(paths)
+            if current is None and _read_terminal_identity(paths) is None:
+                raise RuntimeError("Prime terminal stopped before its launch completed.")
             if (
                 current is None
                 or current.token != reservation.token
@@ -661,7 +663,7 @@ def abandon_prime_launch(
         current = _read_launch_reservation(paths)
         if current is None:
             terminal = _read_terminal_identity(paths)
-            if terminal is not None and terminal.launch_token == reservation.token:
+            if terminal is None or terminal.launch_token == reservation.token:
                 _stop_prime_runtime(paths)
                 return
             raise RuntimeError("Prime launch reservation changed; runtime retained.")
@@ -1125,8 +1127,10 @@ def main() -> int:
             paths.prepare()
             owner_claim.write_owner_claim(paths.root)
             if terminal_signals.pending:
-                _stop_prime_runtime(paths)
-                _launch_reservation_path(paths).unlink()
+                try:
+                    _stop_prime_runtime(paths)
+                finally:
+                    _launch_reservation_path(paths).unlink()
                 return -terminal_signals.pending[0]
             child = subprocess.Popen(sys.argv[3:])
             try:
@@ -1142,8 +1146,10 @@ def main() -> int:
                 if terminal_signals.pending:
                     child.kill()
                     child.wait()
-                    _stop_prime_runtime(paths)
-                    _launch_reservation_path(paths).unlink()
+                    try:
+                        _stop_prime_runtime(paths)
+                    finally:
+                        _launch_reservation_path(paths).unlink()
                 raise
 
         try:
