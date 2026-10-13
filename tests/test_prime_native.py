@@ -1357,10 +1357,12 @@ def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
     replacement = None
     try:
         _wait_for_terminal_record(paths, wrapper)
-        terminal_pid = json.loads((paths.root / "terminal.json").read_text())["pid"]
+        terminal = process.psutil.Process(
+            json.loads((paths.root / "terminal.json").read_text())["pid"]
+        )
         with process.native_bridge_common.bridge_dir_preparation_lock(paths.root):
             release.touch()
-            process.psutil.Process(terminal_pid).wait(timeout=10)
+            terminal.wait(timeout=10)
             replacement = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
             replacement_record: dict[str, object] = {
                 "pid": replacement.pid,
