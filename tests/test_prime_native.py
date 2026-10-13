@@ -1223,6 +1223,22 @@ def _wrapper_command(paths: PrimeRuntimePaths, *child_command: str) -> list[str]
     ]
 
 
+def _wait_for_terminal_record(paths: PrimeRuntimePaths, wrapper: subprocess.Popen[bytes]) -> None:
+    terminal = paths.root / "terminal.json"
+    deadline = time.monotonic() + 30
+    while True:
+        exited = wrapper.poll() is not None
+        if terminal.is_file():
+            return
+        if exited:
+            pytest.fail(
+                f"{terminal} absent after the Prime wrapper exited with {wrapper.returncode}"
+            )
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{terminal} absent after 30 s; the Prime wrapper is still running")
+        time.sleep(0.01)
+
+
 @pytest.fixture
 def admitted_wrapper_paths() -> Iterator[PrimeRuntimePaths]:
     from omnigent.native.admission import native_owner
@@ -1296,10 +1312,7 @@ def test_terminal_wrapper_owns_runtime_until_terminal_exits(
             env={**os.environ, **launch.env},
         )
         try:
-            for _ in range(100):
-                if (paths.root / "terminal.json").is_file():
-                    break
-                time.sleep(0.02)
+            _wait_for_terminal_record(paths, wrapper)
             claim = read_owner_claim(paths.root)
             assert claim is not None and claim.pid == wrapper.pid
             assert bridge.prune_orphaned_bridge_dirs() == 0
@@ -1316,7 +1329,7 @@ def test_terminal_wrapper_owns_runtime_until_terminal_exits(
 
 
 def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
-    admitted_wrapper_paths: PrimeRuntimePaths,
+    admitted_wrapper_paths: PrimeRuntimePaths, tmp_path: Path
 ) -> None:
     from omnigent.harnesses.pi_native.bridge import _atomic_json
     from omnigent.native.owner_claim import read_owner_claim
@@ -1329,23 +1342,27 @@ def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
         config=Path("c"),
         environ={},
     )
+    release = tmp_path / "release"
     wrapper = subprocess.Popen(
         _wrapper_command(
             paths,
             sys.executable,
             "-c",
-            "import time; time.sleep(0.3)",
+            "import pathlib, sys, time\n"
+            "while not pathlib.Path(sys.argv[1]).exists(): time.sleep(0.01)",
+            str(release),
         ),
         env={**os.environ, **launch.env},
     )
     replacement = None
     try:
-        for _ in range(100):
-            if (paths.root / "terminal.json").is_file():
-                break
-            time.sleep(0.01)
+        _wait_for_terminal_record(paths, wrapper)
+        terminal = process.psutil.Process(
+            json.loads((paths.root / "terminal.json").read_text())["pid"]
+        )
         with process.native_bridge_common.bridge_dir_preparation_lock(paths.root):
-            time.sleep(0.5)
+            release.touch()
+            terminal.wait(timeout=10)
             replacement = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
             replacement_record: dict[str, object] = {
                 "pid": replacement.pid,
@@ -1354,13 +1371,14 @@ def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
             process.owner_claim.write_owner_claim(paths.root)
             _atomic_json(paths.root / "terminal.json", replacement_record)
 
-        wrapper.wait(timeout=10)
+        assert wrapper.wait(timeout=10) == 0
         assert replacement.poll() is None
         assert json.loads((paths.root / "terminal.json").read_text()) == replacement_record
         claim = read_owner_claim(paths.root)
         assert claim is not None and claim.pid == os.getpid()
         assert (paths.session_dir / "saved.jsonl").read_text() == "saved transcript"
     finally:
+        release.touch()
         if wrapper.poll() is None:
             wrapper.terminate()
             wrapper.wait(timeout=5)
@@ -1391,10 +1409,7 @@ def test_public_stop_and_wrapper_finalization_do_not_deadlock(
             env={**os.environ, **launch.env},
         )
         try:
-            for _ in range(100):
-                if (paths.root / "terminal.json").is_file():
-                    break
-                time.sleep(0.01)
+            _wait_for_terminal_record(paths, wrapper)
             reservation = process._read_launch_reservation(paths)
             assert reservation is not None
             process.complete_prime_launch(paths, reservation)
