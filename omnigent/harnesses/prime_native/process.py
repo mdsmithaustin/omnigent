@@ -1058,11 +1058,32 @@ def stop_all_runtimes() -> None:
         raise RuntimeError("; ".join(errors))
 
 
+class _TerminalSignalForwarder:
+    def __init__(self) -> None:
+        self._terminal: subprocess.Popen[bytes] | None = None
+        self.pending: list[int] = []
+
+    def forward(self, signum: int, _frame: object) -> None:
+        if self._terminal is None:
+            self.pending.append(signum)
+            return
+        with contextlib.suppress(ProcessLookupError):
+            self._terminal.send_signal(signum)
+
+    def publish(self, terminal: subprocess.Popen[bytes]) -> None:
+        self._terminal = terminal
+        for signum in self.pending:
+            self.forward(signum, None)
+
+
 def main() -> int:
     paths = PrimeRuntimePaths(Path(sys.argv[1]))
     token = sys.argv[2]
     from omnigent.harnesses.pi_native.bridge import _atomic_json
 
+    terminal_signals = _TerminalSignalForwarder()
+    signal.signal(signal.SIGTERM, terminal_signals.forward)
+    signal.signal(signal.SIGHUP, terminal_signals.forward)
     with native_bridge_common.bridge_dir_preparation_lock(paths.root):
         paths.validate_existing()
         reservation = _read_launch_reservation(paths)
@@ -1073,6 +1094,8 @@ def main() -> int:
             or reservation.state != "pending"
         ):
             raise RuntimeError("Prime launch authority was revoked or replaced.")
+        if terminal_signals.pending:
+            return -terminal_signals.pending[0]
         wrapper = _process_identity(psutil.Process(os.getpid()))
         if wrapper is None:
             raise RuntimeError("Prime wrapper identity could not be observed.")
@@ -1104,13 +1127,8 @@ def main() -> int:
         }
         _atomic_json(paths.terminal_file, record)
 
-    def forward_signal(signum: int, _frame: object) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            child.send_signal(signum)
-
-    signal.signal(signal.SIGTERM, forward_signal)
-    signal.signal(signal.SIGHUP, forward_signal)
     try:
+        terminal_signals.publish(child)
         return child.wait()
     finally:
         _finalize_wrapper_runtime(paths, terminal_identity)
