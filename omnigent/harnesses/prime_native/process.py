@@ -1142,6 +1142,8 @@ def main() -> int:
                 if terminal_signals.pending:
                     child.kill()
                     child.wait()
+                    _stop_prime_runtime(paths)
+                    _launch_reservation_path(paths).unlink()
                 raise
 
         try:
