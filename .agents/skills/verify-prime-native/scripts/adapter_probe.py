@@ -51,6 +51,8 @@ PROBE_DRIVERS = (
     ".agents/skills/verify-prime-native/scripts/adapter_probe.py",
     ".agents/skills/verify-prime-native/scripts/daemon_probe.py",
     ".agents/skills/verify-prime-native/scripts/launch_probe.py",
+    ".agents/skills/verify-prime-native/scripts/mcp_probe.py",
+    ".agents/skills/verify-prime-native/scripts/provider_probe.py",
     ".agents/skills/verify-prime-native/scripts/verify.py",
 )
 ENVIRONMENT_ARTIFACTS = (

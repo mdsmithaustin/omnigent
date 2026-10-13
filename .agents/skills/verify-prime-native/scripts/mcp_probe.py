@@ -23,6 +23,7 @@ import psutil
 import yaml
 from adapter_probe import (
     ProcessIdentity,
+    SourceSnapshot,
     assert_same_selected_root_identity,
     read_actual_kernel_identity,
     selected_root_identity_record,
@@ -31,7 +32,6 @@ from adapter_probe import (
 )
 from verify import wait_for
 
-OWNER_SHA256 = "e34309b3cb26822dfc5904b6f56399c8f34c0ec52e34d9ffccf7c709d2ab496c"
 ERROR_PREFIX = "Request failed on the runner; see the runner log for details: "
 REQUIRED = (
     "actual_provider",
@@ -676,7 +676,7 @@ class _McpRun(owner._OwnedRun):
         )
         self.fixture = OwnedMcpFixture(self, self.declaration)
         self.provider_log = self.evidence / "provider-projections.jsonl"
-        self.driver_hash = sha256(Path(__file__))
+        self.driver_hashes: dict[str, str] = {}
         self.continuity_roots = []
         self.scenario_request = request
 
@@ -686,9 +686,8 @@ class _McpRun(owner._OwnedRun):
         return super().cleanup(external_settlement)
 
     def preflight(self) -> None:
-        if sha256(Path(owner.__file__)) != OWNER_SHA256:
-            raise RuntimeError("mcp_provider_owner_not_admitted")
         super().preflight()
+        self.driver_hashes = driver_hashes(self.source_before)
         extension = self.evidence / "observer.mjs"
         extension.write_text(
             OBSERVER_SOURCE.replace(
@@ -711,8 +710,7 @@ class _McpRun(owner._OwnedRun):
         owner.write_json(
             self.evidence / "mcp-artifact.json",
             {
-                "driver_sha256": self.driver_hash,
-                "provider_owner_sha256": OWNER_SHA256,
+                **self.driver_hashes,
                 "observer_sha256": sha256(extension),
                 "declaration": asdict(self.declaration),
                 "profile": asdict(self.profile),
@@ -1146,18 +1144,14 @@ class _McpRun(owner._OwnedRun):
                     "owned_cleanup",
                     "FAILED",
                     (*cleanup.evidence, "cleanup-finalization.json"),
-                    "cleanup_finalization_failed",
+                    self.cleanup_failure_reason("cleanup_finalization_failed"),
                 )
-            if (
-                settlement.status != "settled_fixture"
-                or sha256(Path(__file__)) != self.driver_hash
-                or sha256(Path(owner.__file__)) != OWNER_SHA256
-            ):
+            if settlement.status != "settled_fixture":
                 cleanup = owner.Observation(
                     "owned_cleanup",
                     "FAILED",
                     (*cleanup.evidence, "fixture-cleanup.json"),
-                    "fixture_cleanup_or_probe_source_drift",
+                    self.cleanup_failure_reason("fixture_cleanup_unsettled"),
                 )
             self.observations.append(cleanup)
         for name in REQUIRED:
@@ -1186,12 +1180,20 @@ class _McpRun(owner._OwnedRun):
                 "failure": failure,
                 "finalization_errors": cleanup_errors,
             },
-            {
-                "receipt": result.receipt.name,
-                "driver_sha256": self.driver_hash,
-                "provider_owner_sha256": OWNER_SHA256,
-            },
+            {"receipt": result.receipt.name, **self.driver_hashes},
         )
+
+
+def driver_hashes(snapshot: SourceSnapshot) -> dict[str, str]:
+    files = snapshot.by_path()
+
+    def recorded(module: str) -> str:
+        return files[Path(module).resolve().relative_to(owner.REPO).as_posix()].sha256
+
+    return {
+        "driver_sha256": recorded(__file__),
+        "provider_owner_sha256": recorded(owner.__file__),
+    }
 
 
 def qualify(request: Request) -> tuple[bool, Path]:
@@ -1202,9 +1204,8 @@ def qualify(request: Request) -> tuple[bool, Path]:
     evidence.chmod(0o700)
     draft = None
     runtime_owner = None
+    run = None
     try:
-        if sha256(Path(owner.__file__)) != OWNER_SHA256:
-            raise RuntimeError("mcp_provider_owner_not_admitted")
         provider_request = owner.Request(
             request.prime_path,
             request.kernel_entry,
@@ -1225,7 +1226,10 @@ def qualify(request: Request) -> tuple[bool, Path]:
             immutable=True,
         )
         cleanup = owner.Observation(
-            "owned_cleanup", "FAILED", ("case-finalization.json",), failure
+            "owned_cleanup",
+            "FAILED",
+            ("case-finalization.json",),
+            run.cleanup_failure_reason(failure) if run else failure,
         )
         if draft is None:
             observations = tuple(
@@ -1245,7 +1249,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
                     "observations": [asdict(item) for item in observations],
                     "cleanup": asdict(cleanup),
                 },
-                {"driver_sha256": sha256(Path(__file__)), "provider_owner_sha256": OWNER_SHA256},
+                {},
             )
         else:
             result = replace(
