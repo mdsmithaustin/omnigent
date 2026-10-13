@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -8,25 +9,33 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
+import httpx
 import psutil
 import pytest
 
-from omnigent.harnesses.prime_native import bridge, process
+from omnigent.harnesses.prime_native import bridge, main, process
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.harnesses.prime_native.process import build_prime_launch
+from omnigent.inner.datamodel import TerminalEnvSpec
 from omnigent.native import native_bridge_common
 from omnigent.native.owner_claim import read_owner_claim
+from omnigent.runner.native.orchestration import NativeLaunchContext
+from tests.native_source_helpers import native_source_server as native_source_server
 from tests.test_prime_native import _prime_daemon, _PrimeDaemon
 from tests.test_prime_native import admitted_wrapper_paths as admitted_wrapper_paths
 from tests.test_prime_native import private_prime_roots as private_prime_roots
+from tests.test_prime_native_launch_recovery import launch_paths as launch_paths
 
 _STOP_SIGNALS = pytest.mark.parametrize(
     "signum", [signal.SIGTERM, signal.SIGHUP], ids=["SIGTERM", "SIGHUP"]
 )
 
 _SIGNAL_AT_POINT = r"""
-import errno, json, os, subprocess, sys
+import errno, json, os, signal, subprocess, sys
+signal.signal(signal.SIGTERM, signal.SIG_DFL)
+signal.signal(signal.SIGHUP, signal.SIG_DFL)
 from pathlib import Path
 import filelock, psutil
 from omnigent.harnesses.pi_native import bridge as pi_bridge
@@ -100,6 +109,32 @@ def _terminal_alive(record: dict[str, float]) -> bool:
         return False
 
 
+def _signalled_wrapper_command(
+    point: str,
+    signum: signal.Signals,
+    spawned_record: Path,
+    failing_record: str,
+    runtime_root: str,
+    token: str,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-c",
+        _SIGNAL_AT_POINT,
+        str(bridge._DATA_ROOT),
+        str(bridge._COMPACT_ROOT),
+        point,
+        str(int(signum)),
+        str(spawned_record),
+        failing_record,
+        runtime_root,
+        token,
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+    ]
+
+
 def _run_wrapper_signalled_at(
     paths: PrimeRuntimePaths,
     tmp_path: Path,
@@ -118,22 +153,14 @@ def _run_wrapper_signalled_at(
         config=Path("c"),
         environ={"OMNIGENT_DATA_DIR": str(tmp_path)},
     )
-    command = [
-        sys.executable,
-        "-c",
-        _SIGNAL_AT_POINT,
-        str(bridge._DATA_ROOT),
-        str(bridge._COMPACT_ROOT),
+    command = _signalled_wrapper_command(
         point,
-        str(int(signum)),
-        str(spawned_record),
+        signum,
+        spawned_record,
         failing_record,
         str(paths.root),
         process.reserve_prime_launch(paths).token,
-        sys.executable,
-        "-c",
-        "import time; time.sleep(60)",
-    ]
+    )
     terminal = None
     try:
         with (
@@ -269,6 +296,86 @@ def test_signal_then_terminal_record_failure_stops_terminal_and_releases_runtime
             "owner_record": False,
         }
     assert process.reserve_prime_launch(paths).state == "pending"
+
+
+@pytest.mark.parametrize(
+    ("point", "failing_record", "terminal_spawned"),
+    [("owner.pid", "", False), ("popen", "terminal.json", True)],
+    ids=["held-stop", "terminal-record-fails"],
+)
+def test_failed_release_leaves_runtime_to_orphan_recovery(
+    admitted_wrapper_paths: PrimeRuntimePaths,
+    tmp_path: Path,
+    point: str,
+    failing_record: str,
+    terminal_spawned: bool,
+) -> None:
+    paths = admitted_wrapper_paths
+    with _prime_daemon(paths, tmp_path, response="survive") as daemon:
+        observed = _run_wrapper_signalled_at(
+            paths, tmp_path, daemon, point, signal.SIGTERM, failing_record=failing_record
+        )
+    observed["orphans_stopped"] = process.stop_orphaned_runtimes()
+    observed["owner_record"] = (paths.root / "owner.pid").exists()
+    assert observed == {
+        "wrapper_returncode": 1,
+        "terminal_spawned": terminal_spawned,
+        "terminal_alive": False,
+        "terminal_record": False,
+        "reservation": None,
+        "shutdown_sent": True,
+        "orphans_stopped": 1,
+        "owner_record": False,
+    }
+    assert process.reserve_prime_launch(paths).state == "pending"
+
+
+async def test_launcher_reports_a_terminal_stopped_before_it_started(
+    launch_paths: PrimeRuntimePaths, tmp_path: Path, native_source_server
+) -> None:
+    wrapper_returncodes: list[int] = []
+
+    async def run_wrapper(*, spec: TerminalEnvSpec, **_: object) -> Mock:
+        command = _signalled_wrapper_command(
+            "owner.pid", signal.SIGHUP, tmp_path / "spawned.json", "", spec.args[2], spec.args[3]
+        )
+        wrapper = await asyncio.to_thread(
+            subprocess.run, command, env={**os.environ, **spec.env}, timeout=30, check=False
+        )
+        wrapper_returncodes.append(wrapper.returncode)
+        return Mock()
+
+    registry = AsyncMock()
+    registry.launch_required_terminal.side_effect = run_wrapper
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: native_source_server.respond(request, {"workspace": str(tmp_path)})
+        ),
+        base_url="http://omnigent.test",
+    ) as client:
+        context = NativeLaunchContext(
+            session_id="conv_prime_stopped_launch",
+            resource_registry=registry,
+            publish_event=lambda *_: None,
+            server_client=client,
+        )
+        with pytest.raises(RuntimeError) as caught:
+            await main.launch_prime_terminal(context)
+    assert {
+        "error": str(caught.value),
+        "notes": getattr(caught.value, "__notes__", []),
+        "wrapper_returncodes": wrapper_returncodes,
+        "terminal_closed": registry.terminal_registry.close_launch.await_count,
+        "reservation": (launch_paths.root / "launch.pending.json").exists(),
+        "owner_record": (launch_paths.root / "owner.pid").exists(),
+    } == {
+        "error": "Prime terminal stopped before its launch completed.",
+        "notes": [],
+        "wrapper_returncodes": [-signal.SIGHUP & 0xFF],
+        "terminal_closed": 1,
+        "reservation": False,
+        "owner_record": False,
+    }
 
 
 def _ignore_stop(_signum: int, _frame: object) -> None:
