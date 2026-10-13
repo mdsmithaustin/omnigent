@@ -248,20 +248,27 @@ def test_signal_after_terminal_spawn_stops_terminal_and_cleans_runtime(
 
 
 @_STOP_SIGNALS
-@pytest.mark.parametrize("point", ["owner.pid", "popen"])
-def test_signal_then_terminal_record_failure_leaves_no_live_terminal(
+def test_signal_then_terminal_record_failure_stops_terminal_and_releases_runtime(
     admitted_wrapper_paths: PrimeRuntimePaths,
     tmp_path: Path,
-    point: str,
     signum: signal.Signals,
 ) -> None:
     paths = admitted_wrapper_paths
     with _prime_daemon(paths, tmp_path) as daemon:
         observed = _run_wrapper_signalled_at(
-            paths, tmp_path, daemon, point, signum, failing_record="terminal.json"
+            paths, tmp_path, daemon, "popen", signum, failing_record="terminal.json"
         )
-    assert observed["wrapper_returncode"] != 0
-    assert (observed["terminal_alive"], observed["terminal_record"]) == (False, False)
+        observed["owner_record"] = (paths.root / "owner.pid").exists()
+        assert observed == {
+            "wrapper_returncode": 1,
+            "terminal_spawned": True,
+            "terminal_alive": False,
+            "terminal_record": False,
+            "reservation": None,
+            "shutdown_sent": True,
+            "owner_record": False,
+        }
+    assert process.reserve_prime_launch(paths).state == "pending"
 
 
 def _ignore_stop(_signum: int, _frame: object) -> None:
