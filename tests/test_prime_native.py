@@ -1223,6 +1223,15 @@ def _wrapper_command(paths: PrimeRuntimePaths, *child_command: str) -> list[str]
     ]
 
 
+def _wait_for_terminal_record(paths: PrimeRuntimePaths, wrapper: subprocess.Popen[bytes]) -> None:
+    terminal = paths.root / "terminal.json"
+    deadline = time.monotonic() + 30
+    while not terminal.is_file() and wrapper.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if not terminal.is_file():
+        pytest.fail(f"Prime wrapper never wrote {terminal} (exit code {wrapper.returncode})")
+
+
 @pytest.fixture
 def admitted_wrapper_paths() -> Iterator[PrimeRuntimePaths]:
     from omnigent.native.admission import native_owner
@@ -1296,10 +1305,7 @@ def test_terminal_wrapper_owns_runtime_until_terminal_exits(
             env={**os.environ, **launch.env},
         )
         try:
-            for _ in range(100):
-                if (paths.root / "terminal.json").is_file():
-                    break
-                time.sleep(0.02)
+            _wait_for_terminal_record(paths, wrapper)
             claim = read_owner_claim(paths.root)
             assert claim is not None and claim.pid == wrapper.pid
             assert bridge.prune_orphaned_bridge_dirs() == 0
@@ -1340,10 +1346,7 @@ def test_stale_wrapper_finalization_leaves_replacement_records_and_terminal(
     )
     replacement = None
     try:
-        for _ in range(100):
-            if (paths.root / "terminal.json").is_file():
-                break
-            time.sleep(0.01)
+        _wait_for_terminal_record(paths, wrapper)
         with process.native_bridge_common.bridge_dir_preparation_lock(paths.root):
             time.sleep(0.5)
             replacement = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -1391,10 +1394,7 @@ def test_public_stop_and_wrapper_finalization_do_not_deadlock(
             env={**os.environ, **launch.env},
         )
         try:
-            for _ in range(100):
-                if (paths.root / "terminal.json").is_file():
-                    break
-                time.sleep(0.01)
+            _wait_for_terminal_record(paths, wrapper)
             reservation = process._read_launch_reservation(paths)
             assert reservation is not None
             process.complete_prime_launch(paths, reservation)

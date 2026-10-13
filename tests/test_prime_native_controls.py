@@ -279,6 +279,7 @@ const pi = {
   getThinkingLevel: () => level,
 };
 require(process.argv[1])(pi);
+const EXPIRY_MS = 1000;
 let sequence = 0;
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 async function tick() { for (const timer of timers) timer(); await flush(); }
@@ -710,7 +711,7 @@ global.fetch = async (url, options) => {{
   return baseFetch(url, options);
 }};
 const id = enqueue("{kind}", {{ provider: "other", modelId: "fixture", level: "high",
-  expiresAt: Date.now() + 80 }});
+  expiresAt: Date.now() + EXPIRY_MS }});
 await tick();
 assert.equal((await waitResult(id)).status, "unknown");
 assert.equal({"ctx.model.provider" if kind == "model" else "level"},
@@ -746,7 +747,7 @@ posted.length = 0;
 pi.setModel = async model => {{ ctx.model = model; return true; }};
 pi.setThinkingLevel = value => {{ level = value; }};
 const id = enqueue("{kind}", {{ provider: "{provider}", modelId: "fixture", level: "{effort}",
-  expiresAt: Date.now() + 80 }});
+  expiresAt: Date.now() + EXPIRY_MS }});
 await tick();
 assert.equal(fs.existsSync(path.join(primeControlsDir, "results", `${{id}}.json`)), false);
 if ({str(not missing).lower()}) {{
@@ -788,7 +789,7 @@ pi.setModel = async model => {{
   return {setter_result};
 }};
 const id = enqueue("model", {{ provider: "other", modelId: "fixture",
-  expiresAt: Date.now() + 80 }});
+  expiresAt: Date.now() + EXPIRY_MS }});
 await tick();
 assert.equal((await waitResult(id)).status, "unknown");
 assert.equal(level, "low");
@@ -828,7 +829,7 @@ const startup = handlers.session_start({}, ctx);
 await flush();
 pi.setModel = async model => { ctx.model = model; return true; };
 const id = enqueue("model", { provider: "other", modelId: "fixture",
-  expiresAt: Date.now() + 80 });
+  expiresAt: Date.now() + EXPIRY_MS });
 await tick();
 release(); await startup;
 assert.equal(events("external_model_change").at(-1).data.model, "other/fixture");
