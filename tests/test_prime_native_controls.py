@@ -895,10 +895,10 @@ pi.setModel = model => {
   return new Promise(resolve => { release = () => { ctx.model = model; resolve(true); }; });
 };
 const first = enqueue("model", { provider: "other", modelId: "fixture",
-  expiresAt: Date.now() + 40 });
+  expiresAt: Date.now() + EXPIRY_MS });
 await tick();
 const second = enqueue("effort", { level: "low" }); await tick();
-await new Promise(resolve => setTimeout(resolve, 60));
+await new Promise(resolve => setTimeout(resolve, EXPIRY_MS + 20));
 assert.equal(level, "medium");
 assert.equal(ctx.model.provider, "verify");
 assert.equal((await request("interrupt")).status, "interrupt_accepted");
