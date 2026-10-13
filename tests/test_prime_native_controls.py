@@ -710,8 +710,7 @@ global.fetch = async (url, options) => {{
   if (JSON.parse(options.body).type === failedType) {{ {failure} }}
   return baseFetch(url, options);
 }};
-const id = enqueue("{kind}", {{ provider: "other", modelId: "fixture", level: "high",
-  expiresAt: Date.now() + EXPIRY_MS }});
+const id = enqueue("{kind}", {{ provider: "other", modelId: "fixture", level: "high" }});
 await tick();
 assert.equal((await waitResult(id)).status, "unknown");
 assert.equal({"ctx.model.provider" if kind == "model" else "level"},
