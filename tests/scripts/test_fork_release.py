@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
@@ -11,12 +12,43 @@ import tarfile
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
 
+
+def _load_script(name: str) -> ModuleType:
+    # Loaded by path: tests/scripts can shadow the top-level ``scripts`` namespace.
+    path = Path(__file__).resolve().parents[2] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_{name}_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_fork_release = _load_script("fork_release")
+read_pin = _fork_release.read_pin
+
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/fork_release.py"
 VERSION = "0.17.0+mdsmithaustin.1"
+RELEASE_IDENTITIES = [
+    (
+        "v0.17.0",
+        "0.17.0+mdsmithaustin.6",
+        "mdsmithaustin/v0.17.0-r6",
+        "Omnigent 0.17.0, mdsmithaustin revision 6",
+    ),
+    (
+        "v0.18.2",
+        "0.18.2+mdsmithaustin.12",
+        "mdsmithaustin/v0.18.2-r12",
+        "Omnigent 0.18.2, mdsmithaustin revision 12",
+    ),
+]
 JOBS = ("source", "lint", "python", "web", "addons", "build")
 POLICY_FILES = (
     ".github/fork-release.json",
@@ -312,21 +344,31 @@ def test_workflow_matrix_partitions_changed_tests_from_payload_anchor(tmp_path, 
 
 
 @pytest.fixture
-def release(tmp_path: Path):
+def release(tmp_path: Path, request):
+    upstream_tag, version, tag, title = getattr(
+        request,
+        "param",
+        (
+            "v0.17.0",
+            VERSION,
+            "mdsmithaustin/v0.17.0-r1",
+            "Omnigent 0.17.0, mdsmithaustin revision 1",
+        ),
+    )
     root = tmp_path / "repo"
     root.mkdir()
     command(root, "git", "init", "-q")
     command(root, "git", "config", "user.email", "fixture@example.com")
     command(root, "git", "config", "user.name", "Release fixture")
     (root / "runtime.py").write_text("stable = True\n")
-    (root / ".gitignore").write_text(".cache/\n")
+    (root / ".gitignore").write_text(".cache/\n__pycache__/\n")
     base = commit(root, "stable")
     (root / "runtime.py").write_text("stable = True\naddon = True\n")
     payload = commit(root, "addon")
     pin = {
         "upstream": {
             "repository": "omnigent-ai/omnigent",
-            "tag": "v0.17.0",
+            "tag": upstream_tag,
             "commit": base,
             "release_id": 42,
             "published_at": "2026-10-06T02:02:33Z",
@@ -340,7 +382,7 @@ def release(tmp_path: Path):
             }
         ],
         "payload_commit": payload,
-        "version": VERSION,
+        "version": version,
         "profile": "python-distributions-v1",
     }
     for name in POLICY_FILES:
@@ -355,7 +397,7 @@ def release(tmp_path: Path):
         {
             "release": {
                 "id": 42,
-                "tag_name": "v0.17.0",
+                "tag_name": upstream_tag,
                 "draft": False,
                 "prerelease": False,
                 "published_at": "2026-10-06T02:02:33Z",
@@ -424,6 +466,8 @@ else:
         "env": environment,
         "tmp": tmp_path,
         "api": api_file,
+        "tag": tag,
+        "title": title,
     }
 
 
@@ -445,6 +489,51 @@ def check(release) -> subprocess.CompletedProcess[str]:
 def amend_pin(release) -> None:
     write_json(release["root"] / ".github/fork-release.json", release["pin"])
     release["source"] = commit(release["root"], "update policy pin")
+
+
+@pytest.mark.parametrize("release", RELEASE_IDENTITIES, indirect=True)
+def test_release_identity_uses_validated_pin_without_changing_version(release):
+    pin = read_pin((release["root"] / ".github/fork-release.json").read_bytes())
+    assert pin.release_tag == release["tag"]
+    assert pin.release_title == release["title"]
+    assert pin.version == release["pin"]["version"]
+
+
+@pytest.mark.parametrize("release", RELEASE_IDENTITIES, indirect=True)
+def test_workflow_identity_emits_validated_release_tag(release):
+    workflow = yaml.safe_load(
+        (SCRIPT.parent.parent / ".github/workflows/fork-release.yml").read_bytes()
+    )
+    step = next(
+        step for step in workflow["jobs"]["source"]["steps"] if step.get("id") == "identity"
+    )
+    shutil.copy2(SCRIPT, release["root"] / "scripts/fork_release.py")
+    release["source"] = commit(release["root"], "use real source verifier")
+    python = release["tmp"] / "bin/python"
+    python.symlink_to(sys.executable)
+    output = release["tmp"] / "github-output"
+    checked = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        cwd=release["root"],
+        env={
+            **release["env"],
+            "SOURCE_SHA": release["source"],
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_OUTPUT": str(output),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {
+        "tag": release["tag"],
+        "source_sha": release["source"],
+        "run_id": "123",
+        "run_attempt": "1",
+    }
+    assert json.loads(checked.stdout)["pin"]["version"] == release["pin"]["version"]
 
 
 def test_complete_policy_tail_and_ignored_build_output_pass(release):
@@ -790,6 +879,7 @@ def test_workflow_runs_certification_only_for_a_release_ready_line(release):
 
 @pytest.fixture
 def artifacts(release):
+    version = release["pin"]["version"]
     directory = release["tmp"] / "dist"
     directory.mkdir()
     evidence = release["tmp"] / "evidence"
@@ -809,19 +899,19 @@ def artifacts(release):
     }.items():
         normalized = package.replace("-", "_")
         metadata = (
-            f"Metadata-Version: 2.4\nName: {package}\nVersion: {VERSION}\n"
-            + "".join(f"Requires-Dist: {sibling}=={VERSION}\n" for sibling in siblings)
+            f"Metadata-Version: 2.4\nName: {package}\nVersion: {version}\n"
+            + "".join(f"Requires-Dist: {sibling}=={version}\n" for sibling in siblings)
             + "\n"
         )
-        files = {f"{normalized}-{VERSION}.dist-info/METADATA": metadata.encode()}
+        files = {f"{normalized}-{version}.dist-info/METADATA": metadata.encode()}
         if package == "omnigent":
             files.update(
                 {"omnigent/server/static/web-ui/" + name: data for name, data in ui.items()}
             )
-        with zipfile.ZipFile(directory / f"{normalized}-{VERSION}-py3-none-any.whl", "w") as wheel:
+        with zipfile.ZipFile(directory / f"{normalized}-{version}-py3-none-any.whl", "w") as wheel:
             for name, contents in files.items():
                 wheel.writestr(name, contents)
-        prefix = f"{normalized}-{VERSION}/"
+        prefix = f"{normalized}-{version}/"
         files = {prefix + "PKG-INFO": metadata.encode()}
         if package == "omnigent":
             files.update(
@@ -830,7 +920,7 @@ def artifacts(release):
                     for name, data in ui.items()
                 }
             )
-        with tarfile.open(directory / f"{normalized}-{VERSION}.tar.gz", "w:gz") as sdist:
+        with tarfile.open(directory / f"{normalized}-{version}.tar.gz", "w:gz") as sdist:
             for name, contents in files.items():
                 member = tarfile.TarInfo(name)
                 member.size = len(contents)
@@ -965,6 +1055,7 @@ def prepare_publisher(release, artifacts):
         GITHUB_RUN_ID="123",
         GITHUB_RUN_ATTEMPT="1",
         FORK_RELEASE_PUBLISH="true",
+        FORK_RELEASE_TAG=release["tag"],
     )
     return directory, evidence
 
@@ -972,6 +1063,8 @@ def prepare_publisher(release, artifacts):
 @pytest.mark.parametrize(
     "case",
     [
+        "tag",
+        "legacy-tag",
         "repository",
         "automatic",
         "disabled",
@@ -984,7 +1077,11 @@ def prepare_publisher(release, artifacts):
 def test_publisher_rejects_wrong_target_or_bytes_without_writing(release, artifacts, case):
     directory, evidence = prepare_publisher(release, artifacts)
     state = json.loads(release["api"].read_text())
-    if case == "repository":
+    if case == "tag":
+        release["env"]["FORK_RELEASE_TAG"] = "v0.17.0"
+    elif case == "legacy-tag":
+        release["env"]["FORK_RELEASE_TAG"] = "fork/v" + release["pin"]["version"]
+    elif case == "repository":
         release["env"]["GITHUB_REPOSITORY"] = "omnigent-ai/omnigent"
     elif case == "automatic":
         release["env"]["GITHUB_EVENT_NAME"] = "push"
@@ -1017,12 +1114,15 @@ def test_publisher_rejects_wrong_target_or_bytes_without_writing(release, artifa
         str(evidence),
     )
     assert result.returncode == 1
+    if case in {"tag", "legacy-tag"}:
+        assert "requested fork tag differs" in result.stderr
     calls = [
         json.loads(line) for line in Path(release["env"]["FIXTURE_CALLS"]).read_text().splitlines()
     ]
     assert [call for call in calls if call[:2] == ["release", "create"]] == []
 
 
+@pytest.mark.parametrize("release", RELEASE_IDENTITIES, indirect=True)
 def test_matching_existing_release_is_idempotent(release, artifacts):
     directory, evidence = prepare_publisher(release, artifacts)
     existing = release["tmp"] / "existing"
@@ -1053,9 +1153,15 @@ def test_matching_existing_release_is_idempotent(release, artifacts):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "Existing fork release matches certified bytes\n"
+    calls = [
+        json.loads(line) for line in Path(release["env"]["FIXTURE_CALLS"]).read_text().splitlines()
+    ]
+    assert [call for call in calls if call[:2] == ["release", "create"]] == []
+    assert next(call for call in calls if call[:2] == ["release", "download"])[2] == release["tag"]
 
 
-def test_new_release_uses_fork_tag(release, artifacts):
+@pytest.mark.parametrize("release", RELEASE_IDENTITIES, indirect=True)
+def test_new_release_promotes_checked_files_and_verifies_downloads(release, artifacts):
     directory, evidence = prepare_publisher(release, artifacts)
     existing = release["tmp"] / "new-assets"
     existing.mkdir()
@@ -1075,28 +1181,14 @@ def test_new_release_uses_fork_tag(release, artifacts):
     calls = [
         json.loads(line) for line in Path(release["env"]["FIXTURE_CALLS"]).read_text().splitlines()
     ]
-    (create,) = [call for call in calls if call[:2] == ["release", "create"]]
-    assert create[2] == "fork/v" + VERSION
-    assert create[create.index("--title") + 1] == "fork/v" + VERSION
-
-
-def test_new_release_promotes_checked_files_and_verifies_downloads(release, artifacts):
-    directory, evidence = prepare_publisher(release, artifacts)
-    existing = release["tmp"] / "new-assets"
-    existing.mkdir()
-    release["env"]["FIXTURE_EXISTING"] = str(existing)
-    result = cli(
-        release,
-        "publish",
-        "--certificate",
-        str(evidence / "certificate.json"),
-        "--artifacts",
-        str(directory),
-        "--evidence",
-        str(evidence),
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "Published certified fork bytes\n"
+    created = next(call for call in calls if call[:2] == ["release", "create"])
+    assert created[2] == release["tag"]
+    assert created[created.index("--title") + 1] == release["title"]
+    version = release["pin"]["version"]
+    wheel = existing / f"omnigent-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel) as archive:
+        metadata = archive.read(f"omnigent-{version}.dist-info/METADATA").decode()
+    assert f"\nVersion: {version}\n" in metadata
     for path in [
         *directory.iterdir(),
         *(evidence / name for name in ("certificate.json", "ui-inventory.json", "SHA256SUMS")),

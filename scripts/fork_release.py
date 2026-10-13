@@ -124,6 +124,17 @@ class ReleasePin:
     version: str
     profile: Literal["python-distributions-v1"]
 
+    @property
+    def release_tag(self) -> str:
+        return f"mdsmithaustin/{self.upstream.tag}-r{self.version.rsplit('.', 1)[1]}"
+
+    @property
+    def release_title(self) -> str:
+        return (
+            f"Omnigent {self.upstream.tag[1:]}, "
+            f"mdsmithaustin revision {self.version.rsplit('.', 1)[1]}"
+        )
+
 
 @dataclass(frozen=True)
 class CheckedSource:
@@ -621,8 +632,9 @@ def publish(certificate: Path, directory: Path, evidence: Path) -> None:
         "publisher source/run mismatch",
     )
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel"))
+    checked = check_source(root, source)
     require(
-        canonical(asdict(check_source(root, source))) == canonical(receipt["source"]),
+        canonical(asdict(checked)) == canonical(receipt["source"]),
         "published source pin differs",
     )
     require(certificate.name == "certificate.json", "unexpected certificate asset name")
@@ -638,7 +650,8 @@ def publish(certificate: Path, directory: Path, evidence: Path) -> None:
         f"{entry['sha256']}  {entry['filename']}\n" for entry in receipt["artifacts"]
     )
     require((evidence / "SHA256SUMS").read_text() == checksum, "published checksums differ")
-    tag = "fork/v" + receipt["source"]["pin"]["version"]
+    tag = checked.pin.release_tag
+    require(os.environ.get("FORK_RELEASE_TAG") == tag, "requested fork tag differs")
     ref = optional_api(f"repos/{FORK}/git/ref/tags/{tag}")
     if ref is not None:
         require(
@@ -665,7 +678,7 @@ def publish(certificate: Path, directory: Path, evidence: Path) -> None:
             "--target",
             source,
             "--title",
-            tag,
+            checked.pin.release_title,
             "--notes",
             "Certified Python distributions and bundled UI. "
             "See certificate.json for scope and checks.",

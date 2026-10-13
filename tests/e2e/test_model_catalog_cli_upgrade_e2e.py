@@ -29,6 +29,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -218,7 +219,7 @@ class _CatalogRig:
         self.bin_dir = bin_dir
         self.extra_env = extra_env
         self.base_url = ""
-        self.host_id = ""
+        self.host_id = uuid.uuid4().hex
         self._server: subprocess.Popen[bytes] | None = None
         self._host: subprocess.Popen[bytes] | None = None
         self._client = httpx.Client(trust_env=False, timeout=10.0)
@@ -247,15 +248,20 @@ class _CatalogRig:
             }
         )
         env.update(self.extra_env)
+        env.update(
+            OMNIGENT_HOST_ID=self.host_id,
+            OMNIGENT_HOST_NAME=f"catalog-{self.host_id}",
+            OMNIGENT_LOG_LEVEL="INFO",
+        )
         return env
 
     def start_server(self) -> None:
-        """Boot the rig server and wait for ``/health``."""
         port = _free_port()
         self.base_url = f"http://127.0.0.1:{port}"
         for sub in ("home", "config-home", "data"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-        log = open(self.root / "server.log", "w")  # noqa: SIM115 — subprocess lifetime
+        (self.root / "server.log").write_text("")
+        log = open(self.root / "server.log", "a")  # noqa: SIM115 — subprocess lifetime
         self._server = subprocess.Popen(
             [
                 sys.executable,
@@ -271,12 +277,19 @@ class _CatalogRig:
                 "--artifact-location",
                 str(self.root / "artifacts"),
             ],
-            env=self._env(),
+            env={**self._env(), "OMNIGENT_PROCESS_LOG_FILE": str(self.root / "server.log")},
             stdout=log,
             stderr=subprocess.STDOUT,
         )
+        log.close()
+        self._record("server launched")
         self._wait(
-            lambda: self._get_ok(f"{self.base_url}/health"),
+            # Uvicorn emits this only after the listener has successfully bound.
+            lambda: (
+                f"Uvicorn running on {self.base_url}"
+                in (self.root / "server.log").read_text(errors="replace")
+                and self._get_ok(f"{self.base_url}/health")
+            ),
             timeout=_SERVER_HEALTH_TIMEOUT_S,
             what="the rig server /health",
             proc=self._server,
@@ -286,6 +299,22 @@ class _CatalogRig:
     def start_host(self) -> None:
         """Boot (or reboot) the rig host daemon and wait for it to register."""
         self.stop_host()
+        assert self._server is not None
+
+        def _disconnected() -> bool:
+            hosts = self._get_json(f"{self.base_url}/v1/hosts").get("hosts")
+            return hosts is not None and not any(
+                host.get("host_id") == self.host_id and host.get("status") == "online"
+                for host in hosts
+            )
+
+        self._wait(
+            _disconnected,
+            timeout=_HOST_ONLINE_TIMEOUT_S,
+            what="the old rig host to disconnect",
+            proc=self._server,
+            log_path=self.root / "server.log",
+        )
         log = open(self.root / "host.log", "a")  # noqa: SIM115 — subprocess lifetime
         self._host = subprocess.Popen(
             [
@@ -295,18 +324,16 @@ class _CatalogRig:
                 "--server",
                 self.base_url,
             ],
-            env=self._env(),
-            stdout=subprocess.DEVNULL,
+            env={**self._env(), "OMNIGENT_PROCESS_LOG_FILE": str(self.root / "host.log")},
+            stdout=log,
             stderr=log,
         )
+        log.close()
+        self._record("host launched")
 
         def _online() -> bool:
-            hosts = self._get_json(f"{self.base_url}/v1/hosts").get("hosts", [])
-            online = [h for h in hosts if h.get("status") == "online"]
-            if online:
-                self.host_id = str(online[0]["host_id"])
-                return True
-            return False
+            host = self._get_json(f"{self.base_url}/v1/hosts/{self.host_id}")
+            return host.get("host_id") == self.host_id and host.get("status") == "online"
 
         self._wait(
             _online,
@@ -331,6 +358,13 @@ class _CatalogRig:
         names: list[str] = []
         while time.monotonic() < deadline:
             payload = self._get_json(url)
+            self._record(
+                "picker response",
+                models=[
+                    {key: row.get(key) for key in ("id", "displayName", "isDefault")}
+                    for row in payload.get("models") or []
+                ],
+            )
             names = [
                 str(row.get("displayName") or row.get("id")) for row in payload.get("models") or []
             ]
@@ -358,6 +392,12 @@ class _CatalogRig:
             return False
 
     def _get_json(self, url: str) -> dict[str, Any]:
+        for proc, what, log_path in (
+            (self._server, "rig server", self.root / "server.log"),
+            (self._host, "rig host", self.root / "host.log"),
+        ):
+            if proc is not None:
+                self._check_process(proc, what, log_path)
         try:
             response = self._client.get(url)
         except httpx.HTTPError:
@@ -366,6 +406,33 @@ class _CatalogRig:
             return {}
         payload = response.json()
         return payload if isinstance(payload, dict) else {}
+
+    def _record(self, event: str, **fields: Any) -> None:
+        observation = {
+            "event": event,
+            "test": os.environ.get("PYTEST_CURRENT_TEST"),
+            "server_url": self.base_url,
+            "server_pid": self._server.pid if self._server else None,
+            "host_id": self.host_id,
+            "host_pid": self._host.pid if self._host else None,
+            "source": str(Path(__file__).resolve()),
+            "python": sys.executable,
+            "bin_dir": str(self.bin_dir),
+            "codex_executable": self.extra_env.get("OMNIGENT_CODEX_PATH"),
+            "codex_home": self.extra_env.get("CODEX_HOME"),
+            "catalog_stores": [
+                str(path) for path in (self.root / "data/cache/model-catalogs").glob("*.json")
+            ],
+            **fields,
+        }
+        with (self.root / "server.log").open("a") as log:
+            log.write(f"catalog-rig {json.dumps(observation)}\n")
+
+    def _check_process(self, proc: subprocess.Popen[bytes], what: str, log_path: Path) -> None:
+        if proc.poll() is not None:
+            self._record("process exited", process=what, exit_code=proc.returncode)
+            tail = log_path.read_text(errors="replace")[-3000:] if log_path.exists() else ""
+            raise RuntimeError(f"{what}: process exited early; log tail:\n{tail}")
 
     def _wait(
         self,
@@ -378,12 +445,12 @@ class _CatalogRig:
     ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                tail = log_path.read_text(errors="replace")[-3000:] if log_path.exists() else ""
-                raise RuntimeError(f"{what}: process exited early; log tail:\n{tail}")
+            self._check_process(proc, what, log_path)
             if predicate():
+                self._check_process(proc, what, log_path)
                 return
             time.sleep(1.0)
+        self._record("readiness timed out", waiting_for=what)
         tail = log_path.read_text(errors="replace")[-3000:] if log_path.exists() else ""
         raise RuntimeError(f"timed out waiting for {what}; log tail:\n{tail}")
 
