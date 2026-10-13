@@ -157,10 +157,27 @@ The probe qualifies root relayed tool denial. It does not prove confinement of a
 `scripts/provider_probe.py` uses configured xAI credentials and
 `xai/grok-4.7`. It creates fresh private runtimes and copies the auth file into
 one owned staging file. The adapter links each conversation's `agent/auth.json`
-to that staging file. The probe rejects a session login that is a copy or links
-anywhere else. Removing a session link never touches its target. The probe preserves
+to that staging file. At admission the probe rejects a session login that is a
+copy or links anywhere else. Removing a session link never touches its target. The probe preserves
 the original auth file and checks unrelated Prime process identities. It does
 not inspect pending input in unrelated terminals.
+
+Prime saves refreshed tokens into the staging file, which cleanup deletes.
+Before deleting each credential copy that is a regular file, the probe hashes
+it in-process and compares it with the recorded hash of the `--auth-source`
+login. This covers the staging file and a session login that Prime replaced
+with a regular file. It never logs credential contents. On a mismatch, cleanup
+prints a `FAILED` line and marks `owned_cleanup` as `FAILED` with the reason
+`staged_auth_rewritten`. It records the error in `cleanup.json` if cleanup
+reaches that write. If a later cleanup step raises, `case-finalization.json`
+retains the rewrite error and `owned_cleanup` keeps that reason through owner
+exit. The probe still deletes the copy, retains the runtime directory for
+diagnosis, and runs no further cases.
+The manifest records `"stopped": "staged_auth_rewritten"`. If the provider
+rotates refresh tokens, the login saved in the `--auth-source` file is no
+longer valid. Sign in to Prime again to refresh that file before the next run.
+A copy the probe cannot read is still deleted and reported as a separate
+`staged login check` error.
 
 The probe supervises a public foreground host with its private clock settings.
 It requires the native CLI to reuse that exact host. Automatic host-daemon
@@ -465,6 +482,11 @@ The flag does not exclude hostile same-UID writers in the final check/syscall wi
 ```sh
 PYTHONPATH="$PWD" uv run --no-sync python .agents/skills/verify-prime-native/scripts/mcp_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python --auth-source /absolute/path/to/auth.json --evidence-parent /absolute/path/to/private-evidence --cooperative-cleanup
 ```
+
+The MCP probe uses the same staged-login cleanup checks and
+`staged_auth_rewritten` failure as the
+[finite-wait workflow](#qualify-authenticated-finite-waits). Follow its login
+recovery instructions before the next run.
 
 Use the printed receipt path directly. Fresh runs place `result.json`,
 `manifest.json`, and `completion.json` in one `provider-mcp-*` directory under

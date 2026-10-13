@@ -57,6 +57,7 @@ REPO = Path(__file__).resolve().parents[4]
 FINALIZATION_ERRORS = (Exception, KeyboardInterrupt, SystemExit)
 # Covers the host startup maintenance delay plus its Prime orphan stage.
 MAINTENANCE_RECLAIM_TIMEOUT_S = 30
+STAGED_AUTH_REWRITTEN = "staged_auth_rewritten"
 
 
 @dataclass(frozen=True)
@@ -2251,6 +2252,7 @@ class _OwnedRun:
         self.runner: ProcessIdentity | None = None
         self.source_before = None
         self.auth_signature = None
+        self.login_rewritten = False
         self.baseline: list[dict] = []
         self.config_path: Path | None = None
         self.config: dict = {}
@@ -4508,6 +4510,8 @@ class _OwnedRun:
                                 != str(self.prime / "auth.json")
                             ):
                                 raise RuntimeError("owned_credential_copy_is_symlink")
+                            if self.auth_signature and not stat.S_ISLNK(metadata.st_mode):
+                                self._check_staged_login(descriptor, path.name, errors)
                             target.copy_absence_required = True
                             os.unlink(path.name, dir_fd=descriptor)
                         try:
@@ -4531,6 +4535,29 @@ class _OwnedRun:
         finally:
             bridge._DATA_ROOT = previous
         return removed
+
+    def _check_staged_login(self, directory: int, name: str, errors: list[str]) -> None:
+        try:
+            login = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(login, "rb") as handle:
+                digest = hashlib.sha256(handle.read()).digest()
+        except OSError as exc:
+            errors.append("staged login check: " + type(exc).__name__ + ": " + sanitize(str(exc)))
+            return
+        if digest == self.auth_signature[2] or self.login_rewritten:
+            return
+        self.login_rewritten = True
+        message = (
+            f"{STAGED_AUTH_REWRITTEN}: Prime rewrote the probe's login copy during the run."
+            " If the provider rotates refresh tokens, the login saved in"
+            f" {self.request.auth_source} is no longer valid. Sign in to Prime again to"
+            " refresh that file before the next run."
+        )
+        errors.append(message)
+        print("FAILED " + message, flush=True)
+
+    def cleanup_failure_reason(self, default: str) -> str:
+        return STAGED_AUTH_REWRITTEN if self.login_rewritten else default
 
     def _delete_owned_session(self, result: dict, *, unavailable: bool = False) -> None:
         session = self.session_id
@@ -4880,13 +4907,18 @@ class _OwnedRun:
                 "owned_cleanup",
                 "FAILED" if errors else "VERIFIED",
                 ("cleanup.json",),
-                "cleanup_error" if errors else "exact_owned_absence",
+                self.cleanup_failure_reason("cleanup_error") if errors else "exact_owned_absence",
             )
         try:
             result = self._cleanup_live(external_settlement)
         except FINALIZATION_ERRORS as exc:
             self.runtime_owner.errors.append(
                 "cleanup failed: " + type(exc).__name__ + ": " + sanitize(str(exc))
+            )
+            self.runtime_owner.errors.extend(
+                error
+                for error in (self.cleanup_errors or [])
+                if error not in self.runtime_owner.errors
             )
             raise
         if result.status != "VERIFIED":
@@ -5229,11 +5261,6 @@ class _OwnedRun:
         def source_integrity() -> dict:
             after = source_snapshot(REPO)
             write_json(self.evidence / "source-after.json", asdict(after))
-            if (
-                sha256(Path(__file__))
-                != json.loads((self.evidence / "artifact.json").read_text())["driver_sha256"]
-            ):
-                raise RuntimeError("provider_probe_source_drift")
             return assert_same_sources(self.source_before, after)
 
         if self.source_before:
@@ -5303,7 +5330,7 @@ class _OwnedRun:
             "owned_cleanup",
             "VERIFIED" if passed else "FAILED",
             ("cleanup.json",),
-            "exact_owned_absence" if passed else "cleanup_error",
+            "exact_owned_absence" if passed else self.cleanup_failure_reason("cleanup_error"),
         )
 
     def qualify(self) -> _CaseDraft:
@@ -5361,7 +5388,7 @@ class _OwnedRun:
                     "owned_cleanup",
                     "FAILED",
                     ("cleanup-finalization.json",),
-                    "cleanup_finalization_failed",
+                    self.cleanup_failure_reason("cleanup_finalization_failed"),
                 )
         failure = self.first_failure
         if failure:
@@ -5427,6 +5454,7 @@ def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) 
     evidence = Path(tempfile.mkdtemp(prefix=f"{profile.name}-{kind}-", dir=parent))
     draft = None
     runtime_owner = None
+    run = None
     try:
         evidence.chmod(0o700)
         aggregate = parent / "manifest.json"
@@ -5454,7 +5482,12 @@ def _run_case(request: Request, profile: ClockProfile, kind: str, parent: Path) 
             },
             immutable=True,
         )
-        cleanup = Observation("owned_cleanup", "FAILED", ("case-finalization.json",), failure)
+        cleanup = Observation(
+            "owned_cleanup",
+            "FAILED",
+            ("case-finalization.json",),
+            run.cleanup_failure_reason(failure) if run else failure,
+        )
         if draft is None:
             result = CaseResult(evidence / "result.json", ("case_finalization",), (), cleanup)
             draft = _CaseDraft(result, {"failure": failure, "request": asdict(request)}, {})
@@ -5493,6 +5526,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
         "waits": ((RUNNER, "idle"), (RUNNER, "positive"), (PANE, "idle"), (PANE, "positive")),
     }
     results = []
+    stopped = None
     for profile, kind in cases[request.case]:
         result = _run_case(request, profile, kind, parent)
         results.append(result)
@@ -5504,6 +5538,9 @@ def qualify(request: Request) -> tuple[bool, Path]:
                 "runs": [str(item.receipt) for item in results],
             },
         )
+        if result.cleanup.reason == STAGED_AUTH_REWRITTEN:
+            stopped = STAGED_AUTH_REWRITTEN
+            break
     matched_deployments = False
     deployment_signatures = []
     for result in results:
@@ -5524,9 +5561,16 @@ def qualify(request: Request) -> tuple[bool, Path]:
             signature == deployment_signatures[0] for signature in deployment_signatures
         )
     wrong = None
-    if request.case == "waits" and request.expected_memory is None and len(results) == 4:
+    if (
+        request.case == "waits"
+        and request.expected_memory is None
+        and len(results) == 4
+        and stopped is None
+    ):
         wrong = _run_case(replace(request, expected_memory="WRONG"), RUNNER, "positive", parent)
         results.append(wrong)
+        if wrong.cleanup.reason == STAGED_AUTH_REWRITTEN:
+            stopped = STAGED_AUTH_REWRITTEN
     wrong_verified = False
     if wrong:
         wrong_artifact = (
@@ -5581,6 +5625,7 @@ def qualify(request: Request) -> tuple[bool, Path]:
             "status": "VERIFIED" if passed else "FAILED",
             "request": asdict(request),
             "required_runs": expected_count,
+            "stopped": stopped,
             "matched_deployments": matched_deployments,
             "runs": [
                 {
