@@ -2123,6 +2123,263 @@ def test_provider_removes_only_session_login_links_to_the_staging_copy(
     _assert_synthetic_sentinels(before)
 
 
+def _staged_login_run(probe, tmp_path, monkeypatch):
+    from omnigent.harnesses.prime_native import bridge
+
+    request, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    source = request.auth_source
+    staged = source.read_bytes()
+    (run.prime / "auth.json").write_bytes(staged)
+    run.auth_signature = (
+        source.stat().st_ino,
+        source.stat().st_mode,
+        hashlib.sha256(staged).digest(),
+    )
+    monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact-parent")
+    paths = bridge.PrimeRuntimePaths(bridge._COMPACT_ROOT / "owned")
+    paths.prepare()
+    link = paths.agent_dir / "auth.json"
+    link.symlink_to(run.prime / "auth.json")
+    run.register_owned_credential(link)
+    return request, owner, run, before, link
+
+
+@pytest.mark.parametrize("prime_save", [None, "through_link", "rename_at_staged_path"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_fails_when_prime_rewrites_the_staged_login(
+    tmp_path, monkeypatch, capsys, prime_save
+):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    source = request.auth_source
+    staged = source.read_bytes()
+    rotated = json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
+    if prime_save == "through_link":
+        link.write_text(rotated)
+    elif prime_save == "rename_at_staged_path":
+        target = link.resolve()
+        temporary = target.with_name(".auth.json.fake-save.tmp")
+        temporary.write_text(rotated)
+        os.replace(temporary, target)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+        assert not link.is_symlink()
+        assert not (run.prime / "auth.json").exists()
+        if prime_save:
+            message = (
+                "staged_auth_rewritten: Prime rewrote the probe's login copy during the run."
+                " If the provider rotates refresh tokens, the login saved in"
+                f" {source} is no longer valid. Sign in to Prime again to refresh"
+                " that file before the next run."
+            )
+            assert (cleanup.status, cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+            assert errors == [message]
+            assert "FAILED " + message in capsys.readouterr().out
+        else:
+            assert (cleanup.status, cleanup.reason) == ("VERIFIED", "exact_owned_absence")
+            assert errors == []
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    assert source.read_bytes() == staged
+    assert "FAKE-ROTATED" not in "".join(
+        path.read_text(errors="replace") for path in run.evidence.rglob("*") if path.is_file()
+    )
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_removes_an_unreadable_staged_login(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    _, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    (run.prime / "auth.json").chmod(0)
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+        assert not link.is_symlink()
+        assert not (run.prime / "auth.json").exists()
+        assert cleanup.status == "FAILED"
+        assert [error.split(":")[:2] for error in errors] == [
+            ["staged login check", " PermissionError"]
+        ]
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_keeps_the_login_rewrite_when_later_cleanup_raises(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    staged = request.auth_source.read_bytes()
+    link.write_text(
+        json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED-REFRESH-TOKEN"}})
+    )
+
+    def allocate(request, evidence):
+        owner.evidence = run.evidence = evidence
+        return owner
+
+    def fail_capture():
+        raise RuntimeError("runtime_capture_failed")
+
+    monkeypatch.setattr(probe._RuntimeOwner, "allocate", allocate)
+    monkeypatch.setattr(probe, "_OwnedRun", lambda *args: run)
+    monkeypatch.setattr(run, "start", lambda: None)
+    monkeypatch.setattr(run, "seed_memory", lambda: None)
+    monkeypatch.setattr(run, "_capture_owned_logs", fail_capture)
+
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+
+    finalization = json.loads((result.receipt.parent / "case-finalization.json").read_text())
+    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+    assert next(item for item in result.observations if item.claim == "owned_cleanup") == (
+        result.cleanup
+    )
+    assert "runtime_capture_failed" in finalization["error"]
+    assert "staged_auth_rewritten:" in finalization["error"]
+    assert len([error for error in owner.errors if "staged_auth_rewritten:" in error]) == 1
+    assert owner.closed is True
+    assert run.runtime.is_dir()
+    assert not link.is_symlink()
+    assert not (run.prime / "auth.json").exists()
+    assert request.auth_source.read_bytes() == staged
+    _assert_synthetic_sentinels(before)
+
+
+@pytest.mark.parametrize("rewritten_case", [0, 3, 4])
+def test_provider_qualify_stops_live_cases_after_a_login_rewrite(
+    tmp_path, monkeypatch, rewritten_case
+):
+    probe = _provider_probe()
+    started = []
+
+    def fake_case(request, profile, kind, parent):
+        rewritten = len(started) == rewritten_case
+        started.append((profile.name, kind, request.expected_memory))
+        evidence = parent / f"{len(started)}-{profile.name}-{kind}"
+        evidence.mkdir()
+        cleanup = probe.Observation(
+            "owned_cleanup",
+            "FAILED" if rewritten else "VERIFIED",
+            ("cleanup.json",),
+            "staged_auth_rewritten" if rewritten else "exact_owned_absence",
+        )
+        result = probe.CaseResult(evidence / "result.json", ("launch",), (cleanup,), cleanup)
+        return probe._publish_case(probe._CaseDraft(result, {}, {}))
+
+    monkeypatch.setattr(probe, "_run_case", fake_case)
+    request = probe.Request(
+        tmp_path / "no-prime",
+        tmp_path / "no-kernel",
+        tmp_path / "synthetic-source",
+        tmp_path,
+        "waits",
+        cooperative_cleanup=True,
+    )
+
+    passed, manifest = probe.qualify(request)
+
+    planned = [
+        ("runner", "idle", None),
+        ("runner", "positive", None),
+        ("pane", "idle", None),
+        ("pane", "positive", None),
+        ("runner", "positive", "WRONG"),
+    ]
+    assert passed is False
+    assert started == planned[: rewritten_case + 1]
+    value = json.loads(manifest.read_text())
+    assert value["status"] == "FAILED"
+    assert value["stopped"] == "staged_auth_rewritten"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_case_keeps_the_login_rewrite_when_the_owner_receipt_fails(tmp_path, monkeypatch):
+    probe = _provider_probe()
+    request, owner, run, before, link = _staged_login_run(probe, tmp_path, monkeypatch)
+    target = link.resolve()
+    temporary = target.with_name(".auth.json.fake-save.tmp")
+    temporary.write_text(json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED"}}))
+    os.replace(temporary, target)
+    original_write = probe.write_json
+
+    def allocate(request, evidence):
+        owner.evidence = run.evidence = evidence
+        return owner
+
+    def deny_owner_receipt(path, *args, **kwargs):
+        if path.name == "runtime-owner.json":
+            raise OSError("synthetic owner receipt denied")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(probe._RuntimeOwner, "allocate", allocate)
+    monkeypatch.setattr(probe, "_OwnedRun", lambda *args: run)
+    monkeypatch.setattr(run, "start", lambda: None)
+    monkeypatch.setattr(run, "seed_memory", lambda: None)
+    monkeypatch.setattr(probe, "write_json", deny_owner_receipt)
+
+    result = probe._run_case(request, probe.RUNNER, "selector", tmp_path)
+
+    receipt = json.loads(result.receipt.read_text())
+    assert (result.cleanup.status, result.cleanup.reason) == ("FAILED", "staged_auth_rewritten")
+    assert receipt["cleanup"]["reason"] == "staged_auth_rewritten"
+    assert "synthetic owner receipt denied" in receipt["failure"]
+    assert not (run.prime / "auth.json").exists()
+    _assert_synthetic_sentinels(before)
+
+
+def _probe_source_checkout(tmp_path):
+    import adapter_probe
+
+    checkout = tmp_path / "source-checkout"
+    for relative in (
+        *adapter_probe.PROBE_DRIVERS,
+        *adapter_probe.ENVIRONMENT_ARTIFACTS,
+        "omnigent/__init__.py",
+    ):
+        path = checkout / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic source\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    return checkout
+
+
+@pytest.mark.parametrize("edited", ["provider_probe.py", "mcp_probe.py"])
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_provider_cleanup_fails_when_a_probe_driver_changes_mid_run(tmp_path, monkeypatch, edited):
+    probe = _provider_probe()
+    _, owner, run, before = _synthetic_owned_run(probe, tmp_path)
+    checkout = _probe_source_checkout(tmp_path)
+    monkeypatch.setattr(probe, "REPO", checkout)
+    run.source_before = probe.source_snapshot(checkout)
+    (checkout / ".agents/skills/verify-prime-native/scripts" / edited).write_text("edited\n")
+    settlement = probe._ExternalSettlement(owner.allocation_id, "no_fixture", ())
+    try:
+        cleanup = run.cleanup(settlement)
+        errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+    finally:
+        with contextlib.suppress(RuntimeError, OSError):
+            owner.__exit__(None, None, None)
+    assert cleanup.status == "FAILED"
+    assert [error.split(":")[0] for error in errors] == ["source integrity"]
+    assert "scripts/" + edited in errors[0]
+    _assert_synthetic_sentinels(before)
+
+
+def test_source_snapshot_covers_every_probe_driver():
+    probe = _adapter_probe()
+    scripts = ".agents/skills/verify-prime-native/scripts/"
+
+    covered = set(probe.source_snapshot(probe.REPO).by_path())
+
+    assert {scripts + "provider_probe.py", scripts + "mcp_probe.py"} <= covered
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_provider_known_compact_retirement_remains_independent(tmp_path, monkeypatch):
     from omnigent.harnesses.prime_native import bridge

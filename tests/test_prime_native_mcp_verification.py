@@ -746,6 +746,76 @@ def test_real_fixture_recorded_identity_close(probe, run, monkeypatch, condition
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
+def test_mcp_keeps_the_login_rewrite_when_the_owner_receipt_fails(probe, tmp_path, monkeypatch):
+    import hashlib
+    import shutil
+
+    req = request(probe, tmp_path)
+    original_write = probe.owner.write_json
+
+    def rewritten_case(run):
+        staged = req.auth_source.read_bytes()
+        (run.prime / "auth.json").write_bytes(staged)
+        run.auth_signature = (0, 0, hashlib.sha256(staged).digest())
+        temporary = run.prime / ".auth.json.fake-save.tmp"
+        temporary.write_text(json.dumps({"xai": {"type": "oauth", "refresh": "FAKE-ROTATED"}}))
+        os.replace(temporary, run.prime / "auth.json")
+        errors = []
+        run.remove_owned_credentials(errors)
+        run.runtime_owner.errors.extend(errors)
+        cleanup = probe.owner.Observation("owned_cleanup", "FAILED", ("cleanup.json",), "x")
+        result = probe.owner.CaseResult(
+            run.evidence / "result.json", probe.REQUIRED, (cleanup,), cleanup
+        )
+        return probe.owner._CaseDraft(result, {}, {})
+
+    def deny_owner_receipt(path, *args, **kwargs):
+        if path.name == "runtime-owner.json":
+            raise OSError("synthetic owner receipt denied")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(probe._McpRun, "qualify_mcp", rewritten_case)
+    monkeypatch.setattr(probe.owner, "write_json", deny_owner_receipt)
+
+    passed, receipt = probe.qualify(req)
+
+    finalization = json.loads((receipt.parent / "case-finalization.json").read_text())
+    shutil.rmtree(finalization["runtime"])
+    cleanup = json.loads(receipt.read_text())["cleanup"]
+    assert passed is False
+    assert (cleanup["status"], cleanup["reason"]) == ("FAILED", "staged_auth_rewritten")
+    assert "synthetic owner receipt denied" in finalization["error"]
+
+
+@pytest.mark.parametrize("edited", ["provider_probe.py", "mcp_probe.py"])
+def test_mcp_cleanup_fails_when_a_probe_driver_changes_mid_run(
+    probe, run, tmp_path, monkeypatch, edited
+):
+    import adapter_probe
+
+    checkout = tmp_path / "source-checkout"
+    for relative in (
+        *adapter_probe.PROBE_DRIVERS,
+        *adapter_probe.ENVIRONMENT_ARTIFACTS,
+        "omnigent/__init__.py",
+    ):
+        path = checkout / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic source\n")
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    monkeypatch.setattr(probe.owner, "REPO", checkout)
+    run.source_before = probe.owner.source_snapshot(checkout)
+    (checkout / ".agents/skills/verify-prime-native/scripts" / edited).write_text("edited\n")
+
+    cleanup = run.cleanup(run.fixture.close())
+
+    errors = json.loads((run.evidence / "cleanup.json").read_text())["errors"]
+    assert cleanup.status == "FAILED"
+    assert [error.split(":")[0] for error in errors] == ["source integrity"]
+    assert "scripts/" + edited in errors[0]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Requires admitted Darwin vnode events")
 def test_mcp_first_failure_survives_owner_exit_failure(probe, tmp_path, monkeypatch):
     def fail_start(run):
         raise RuntimeError("first synthetic scenario failure")
@@ -781,37 +851,27 @@ def test_live_generation_cannot_be_restarted_before_stop(probe, run):
     assert run.runtime.is_dir()
 
 
-@pytest.mark.parametrize(
-    "stale_pin",
-    [
-        "0" * 64,
-        "a4ac20a5c467e8b867d281759b2c193dd0b6d659cc6cd87fc3a8d2f62fba36ed",
-        "45b233b559bb9b5206d8db51b4d638dff15fb32872ac2dc64f3a6814ae57c10c",
-        "c4d86b911fd5b793ec24453c666b43c14a6736164478051f3b005085cf2847c3",
-    ],
-    ids=["unknown", "previous-provider", "pre-retirement-provider", "pre-final-error-provider"],
-)
-def test_mcp_rejects_stale_owner_before_allocation(probe, tmp_path, monkeypatch, stale_pin):
-    req = request(probe, tmp_path)
-    allocations = []
-    monkeypatch.setattr(probe, "OWNER_SHA256", stale_pin)
-    monkeypatch.setattr(
-        probe.owner._RuntimeOwner, "allocate", lambda *args: allocations.append(args)
-    )
-    passed, receipt = probe.qualify(req)
-    assert passed is False
-    assert allocations == []
-    assert "mcp_provider_owner_not_admitted" in receipt.read_text()
-    assert json.loads((receipt.parent / "completion.json").read_text())["passed"] is False
+def test_mcp_records_probe_hashes_from_the_source_snapshot(probe, run, monkeypatch):
+    from adapter_probe import SourceArtifact, SourceSnapshot
 
+    scripts = ".agents/skills/verify-prime-native/scripts/"
 
-def test_mcp_current_owner_pin_reaches_provider_boundary(probe, run, monkeypatch):
-    def stop_at_provider(subject):
-        raise RuntimeError("synthetic_provider_boundary")
+    def provider_preflight(subject):
+        subject.source_before = SourceSnapshot(
+            (
+                SourceArtifact(scripts + "mcp_probe.py", 1, "mcp-at-snapshot"),
+                SourceArtifact(scripts + "provider_probe.py", 1, "provider-at-snapshot"),
+            )
+        )
+        (subject.prime / "settings.json").write_text("{}")
 
-    monkeypatch.setattr(probe.owner._OwnedRun, "preflight", stop_at_provider)
-    with pytest.raises(RuntimeError, match="synthetic_provider_boundary"):
-        run.preflight()
+    monkeypatch.setattr(probe.owner._OwnedRun, "preflight", provider_preflight)
+
+    run.preflight()
+
+    artifact = json.loads((run.evidence / "mcp-artifact.json").read_text())
+    assert artifact["driver_sha256"] == "mcp-at-snapshot"
+    assert artifact["provider_owner_sha256"] == "provider-at-snapshot"
 
 
 @pytest.mark.parametrize("poll_pass", [1, 2])
