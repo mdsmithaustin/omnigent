@@ -323,10 +323,9 @@ async def test_prime_reverse_uuid_files_follow_runner_admission(monkeypatch, tmp
                 await asyncio.sleep(0.005)
 
         first = asyncio.create_task(setting("high"))
-        for _ in range(100):
-            if list(request_dir.glob("*.json")):
-                break
-            await asyncio.sleep(0.005)
+        async with asyncio.timeout(30):
+            while not list(request_dir.glob("*.json")):
+                await asyncio.sleep(0.005)
         second = asyncio.create_task(setting("low"))
         await asyncio.sleep(0.03)
         consumer = asyncio.create_task(consume())
