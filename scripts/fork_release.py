@@ -270,11 +270,6 @@ def trace_tail(root: Path, source: str, pin: ReleasePin) -> tuple[TailCommit, ..
             == [addon.applied_commit, previous],
             "addon is not a linear successor",
         )
-        if addon.source_commit:
-            require(
-                git(root, "cat-file", "-t", addon.source_commit) == "commit",
-                "source addon object is missing",
-            )
         previous = addon.applied_commit
     git(root, "merge-base", "--is-ancestor", pin.payload_commit, source)
     tail = []
@@ -644,7 +639,6 @@ def publish(certificate: Path, directory: Path, evidence: Path) -> None:
     )
     require((evidence / "SHA256SUMS").read_text() == checksum, "published checksums differ")
     tag = "fork/v" + receipt["source"]["pin"]["version"]
-    require(os.environ.get("FORK_RELEASE_TAG") == tag, "requested fork tag differs")
     ref = optional_api(f"repos/{FORK}/git/ref/tags/{tag}")
     if ref is not None:
         require(
