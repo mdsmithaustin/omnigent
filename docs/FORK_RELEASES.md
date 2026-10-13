@@ -2,7 +2,7 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is upstream `0.17.0` plus fork addon revision `6`. Once published, its GitHub release tag is `fork/v` followed by that version. The `fork/` prefix avoids the upstream `v*` release triggers. Distribution names remain compatible with existing imports. Revision `.6` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
+The stamped version in [`pyproject.toml`](../pyproject.toml) remains `0.17.0+mdsmithaustin.6`, upstream `0.17.0` plus fork addon revision `6`. Once published, its GitHub release tag is `mdsmithaustin/v0.17.0-r6` and its title is `Omnigent 0.17.0, mdsmithaustin revision 6`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. Revision `.6` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
 
 Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
@@ -24,11 +24,11 @@ python scripts/fork_release.py check-line --source-sha "$(git rev-parse HEAD)"
 
 It prints the upstream tag, the inventoried count, the pending SHAs, and `release_ready`. Ordinary feature PRs leave `main` pending, which is expected.
 
-Releases are cut from `main` and recorded by `fork/v*` tags. The branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not push to them or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch with `git rebase origin/main`, never by merging `main` into it.
+Releases are cut from `main` and recorded by `mdsmithaustin/vX.Y.Z-rN` tags. Existing `fork/v*` tags and the branches `release/v0.17.0-mdsmithaustin.1` through `.3` are historical records. Do not move those tags, push to those branches, or create new release branches. `main` is the repository default branch, so pull requests target it. Repository settings enforce the line: merge commits are disabled, so pull requests land by squash or rebase, and the `main source line` ruleset requires linear history and blocks force-pushes and deletion of `main`. Repository admins bypass it only to replace `main` during an upstream sync. `check-line` also runs on pull request heads, so update a feature branch with `git rebase origin/main`, never by merging `main` into it.
 
 ## Check the source
 
-Use a clean checkout of a release-ready `main` commit or a `fork/v*` tag with its full Git history. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
+Use a clean checkout of a release-ready `main` commit or a `mdsmithaustin/vX.Y.Z-rN` tag with its full Git history. For an existing `fork/v*` release, use its historical source and verifier. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
 
 Run these commands from the repository root. Any nonzero exit means the check failed.
 
@@ -179,7 +179,7 @@ Cut revision `N` as two pull requests to `main`. Replace `N` with the next posit
 
    It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
 
-The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `fork/v0.17.0+mdsmithaustin.N` on that commit.
+The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.17.0-rN` on that commit with the title `Omnigent 0.17.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.17.0+mdsmithaustin.N`.
 
 ## Sync to a new upstream tag
 
@@ -207,4 +207,4 @@ Each Git, generation, stamping, inventory, and verification command must exit ze
    git push --force-with-lease="main:${old_main_sha}" origin sync/v0.18.0:main
    ```
 
-Releases then continue as `0.18.0+mdsmithaustin.N`. The archive branch and existing `fork/v0.17.0+mdsmithaustin.*` tags keep earlier certificates verifiable. Never move an existing fork tag.
+Python distribution versions then continue as `0.18.0+mdsmithaustin.N`. GitHub releases use tags `mdsmithaustin/v0.18.0-rN` and titles `Omnigent 0.18.0, mdsmithaustin revision N`. The archive branch and existing `fork/v0.17.0+mdsmithaustin.*` tags keep earlier certificates verifiable. Never move an existing fork tag.

@@ -78,11 +78,20 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python scripts/fork_release.py check-source --source-sha "$SOURCE_SHA"
+          python - <<'PYCODE'
+          from dataclasses import asdict
+          import json
+          import os
+          from pathlib import Path
+          from scripts.fork_release import check_source
+          source = check_source(Path.cwd(), os.environ["SOURCE_SHA"])
+          print(json.dumps(asdict(source), sort_keys=True))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"tag={source.pin.release_tag}", file=output)
+          PYCODE
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "run_attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
-          python -c 'import json, os; version=json.load(open(".github/fork-release.json"))["version"]; print("tag=fork/v"+version, file=open(os.environ["GITHUB_OUTPUT"], "a"))'
 
       - uses: ./.github/actions/setup-uv
         if: steps.line.outputs.release_ready == 'true'
