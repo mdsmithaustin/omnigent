@@ -2,13 +2,13 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) remains `0.17.0+mdsmithaustin.6`, upstream `0.17.0` plus fork addon revision `6`. Once published, its GitHub release tag is `mdsmithaustin/v0.17.0-r6` and its title is `Omnigent 0.17.0, mdsmithaustin revision 6`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. Revision `.6` retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `.2`. Existing `.2` fork state is reused. Revision `.1` remains available with its original shared defaults.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.1`, upstream `0.18.0` plus fork addon revision `1`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r1` and its title is `Omnigent 0.18.0, mdsmithaustin revision 1`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
 
-Revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
+On the `0.17.0` line, revision `.3` repairs native Codex startup when the server requires authenticated runner proof. Admission and validation use the runner's existing HTTP client, including credential refresh and runner identity. Policy-hook headers remain separate, and the server's ownership checks still apply. This repair does not change the `native_skill_routing` opt-in or establish a token or speed benefit.
 
-Revision `.5` supersedes `.4`, which was certified but not published. For Prime runtime deletion, admission tombstone retention, and rollback compatibility, see [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
+Revision `0.17.0+mdsmithaustin.5` supersedes `.4`, which was certified but not published. For Prime runtime deletion, admission tombstone retention, and rollback compatibility, see [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
 
-Revision `.6` introduces [shared Prime authentication](PRIME_NATIVE.md#launch-and-reattach). Before rolling back, follow [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
+Revision `0.17.0+mdsmithaustin.6` introduces [shared Prime authentication](PRIME_NATIVE.md#launch-and-reattach). Before rolling back, follow [Prime Native state and compatibility](PRIME_NATIVE.md#state-and-compatibility).
 
 The certificate records source and artifact integrity under the reviewed workflow. It does not establish independent third-party approval. It excludes live Prime runtime qualification, desktop and mobile applications, Docker and provider images, and byte-identical rebuilds. The build embeds timestamps, so the certificate hashes the actual released bytes.
 
@@ -137,7 +137,7 @@ Use separate virtual environments for upstream and the fork. Port `6768` must be
 
 ```sh
 uv venv --python 3.12 /tmp/omnigent-upstream-install
-(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.17.0')
+(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.18.0')
 /tmp/omnigent-fork-install/bin/python -I scripts/verify_fork_coexistence.py \
     --upstream-python /tmp/omnigent-upstream-install/bin/python \
     --fork-python /tmp/omnigent-fork-install/bin/python \
@@ -165,21 +165,21 @@ Cut revision `N` as two pull requests to `main`. Replace `N` with the next posit
 1. Stamp the version. This is an ordinary pending commit. Each command must exit zero.
 
    ```sh
-   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.17.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.18.0+mdsmithaustin.N
    uv lock
    python scripts/normalize_uv_lock_registry.py uv.lock
-   uv run --no-sync python scripts/update_versions.py check --expect 0.17.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py check --expect 0.18.0+mdsmithaustin.N
    ```
 
 2. After the first PR merges, inventory the pending commits on a branch from `main`.
 
    ```sh
-   python scripts/fork_release.py inventory --version 0.17.0+mdsmithaustin.N
+   python scripts/fork_release.py inventory --version 0.18.0+mdsmithaustin.N
    ```
 
    It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
 
-The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.17.0-rN` on that commit with the title `Omnigent 0.17.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.17.0+mdsmithaustin.N`.
+The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.18.0-rN` on that commit with the title `Omnigent 0.18.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.18.0+mdsmithaustin.N`.
 
 ## Sync to a new upstream tag
 
