@@ -1,0 +1,13 @@
+{
+  "addons": [],
+  "payload_commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
+  "profile": "python-distributions-v1",
+  "upstream": {
+    "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
+    "published_at": "2026-10-13T08:34:10Z",
+    "release_id": 411397222,
+    "repository": "omnigent-ai/omnigent",
+    "tag": "v0.18.0"
+  },
+  "version": "0.18.0+mdsmithaustin.1"
+}
