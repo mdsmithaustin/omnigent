@@ -1,7 +1,7 @@
 # Local fork defaults
 
 Starting with `0.17.0+mdsmithaustin.2`, the fork uses separate defaults from
-upstream `0.17.0`. This applies to the certified Python distributions in
+upstream. Revisions on the `0.18.0` line keep them. This applies to the certified Python distributions in
 separate virtual environments. Distribution names and the `omnigent` and
 `omni` commands stay the same.
 
