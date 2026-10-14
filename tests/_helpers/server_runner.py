@@ -103,7 +103,8 @@ class ServerRunner:
         """Include captured output and rolling process logs in startup failures."""
         paths = set(self.root.glob("*.log"))
         for home in (self.runner_home, self.server_home):
-            paths.update((home / USER_DIRNAME / "logs").rglob("*.log"))
+            # isolated_process_env pins OMNIGENT_DATA_DIR, so logs stay under .omnigent.
+            paths.update((home / ".omnigent" / "logs").rglob("*.log"))
         tails = []
         for path in sorted(paths):
             try:
@@ -265,7 +266,14 @@ def server_runner(
             poll_interval=poll_interval,
         )
         # Register before process callbacks so direct children terminate first.
-        for scope in (root, stack.runner_home / USER_DIRNAME, stack.server_home / USER_DIRNAME):
+        for scope in (
+            root,
+            *(
+                home / name
+                for home in (stack.runner_home, stack.server_home)
+                for name in (".omnigent", USER_DIRNAME)
+            ),
+        ):
             resources.callback(_reap, scope)
         stack.start_server(wait_ready=wait_ready)
         yield stack
