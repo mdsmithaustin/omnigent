@@ -11,7 +11,6 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
-from omnigent.installation_defaults import USER_DIRNAME
 from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 from tests._helpers.native_session import NativeHarness, create_native_session
 from tests._helpers.server_runner import server_runner
@@ -77,9 +76,7 @@ def test_offline_native_host_preserves_failed_turn_and_retry(
         assert stack.host is not None
         stack.host.kill()
         stack.host.wait(timeout=10.0)
-        _, survivors = reap_leaked_omnigent_processes(
-            stack.runner_home / USER_DIRNAME, timeout=2.0
-        )
+        _, survivors = reap_leaked_omnigent_processes(stack.runner_home / ".omnigent", timeout=2.0)
         assert not survivors
         _wait_until(
             lambda: any(
