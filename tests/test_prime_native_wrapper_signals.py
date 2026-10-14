@@ -378,6 +378,67 @@ async def test_launcher_reports_a_terminal_stopped_before_it_started(
     }
 
 
+@pytest.mark.parametrize(
+    ("terminal", "expected"),
+    [
+        (None, {"outcome": "returned", "shutdown_sent": True, "terminal_record": False}),
+        ("this-launch", {"outcome": "returned", "shutdown_sent": True, "terminal_record": False}),
+        (
+            "other-launch",
+            {
+                "outcome": "Prime launch reservation changed; runtime retained.",
+                "shutdown_sent": False,
+                "terminal_record": True,
+            },
+        ),
+    ],
+    ids=["no-terminal", "this-launch-terminal", "other-launch-terminal"],
+)
+def test_abandon_after_wrapper_release_stops_only_its_own_launch(
+    admitted_wrapper_paths: PrimeRuntimePaths,
+    tmp_path: Path,
+    terminal: str | None,
+    expected: dict[str, object],
+) -> None:
+    paths = admitted_wrapper_paths
+    reservation = process.reserve_prime_launch(paths)
+    (paths.root / "launch.pending.json").unlink()
+    if terminal is not None:
+        token = reservation.token if terminal == "this-launch" else "other-launch"
+        (paths.root / "terminal.json").write_text(
+            json.dumps({"pid": 99_999_999, "created_at": 1.0, "launch_token": token})
+        )
+    with _prime_daemon(paths, tmp_path) as daemon:
+        try:
+            process.abandon_prime_launch(paths, reservation, dispatched=True)
+            outcome = "returned"
+        except RuntimeError as exc:
+            outcome = str(exc)
+        observed = {
+            "outcome": outcome,
+            "shutdown_sent": daemon.command_path.exists(),
+            "terminal_record": (paths.root / "terminal.json").exists(),
+        }
+    assert observed == expected
+
+
+def test_complete_waits_for_terminal_while_launch_is_reserved(
+    admitted_wrapper_paths: PrimeRuntimePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = admitted_wrapper_paths
+    reservation = process.reserve_prime_launch(paths)
+    monkeypatch.setattr(process, "_LAUNCH_IDENTITY_TIMEOUT_S", 0.3)
+    with pytest.raises(RuntimeError) as caught:
+        process.complete_prime_launch(paths, reservation)
+    assert {
+        "error": str(caught.value),
+        "reservation": (paths.root / "launch.pending.json").exists(),
+    } == {
+        "error": "Prime terminal identity did not become live; runtime retained.",
+        "reservation": True,
+    }
+
+
 def _ignore_stop(_signum: int, _frame: object) -> None:
     pass
 
