@@ -621,6 +621,8 @@ def complete_prime_launch(paths: PrimeRuntimePaths, reservation: PrimeLaunchRese
         with native_bridge_common.bridge_dir_preparation_lock(paths.root):
             paths.validate_existing()
             current = _read_launch_reservation(paths)
+            if current is None and _read_terminal_identity(paths) is None:
+                raise RuntimeError("Prime terminal stopped before its launch completed.")
             if (
                 current is None
                 or current.token != reservation.token
@@ -661,7 +663,7 @@ def abandon_prime_launch(
         current = _read_launch_reservation(paths)
         if current is None:
             terminal = _read_terminal_identity(paths)
-            if terminal is not None and terminal.launch_token == reservation.token:
+            if terminal is None or terminal.launch_token == reservation.token:
                 _stop_prime_runtime(paths)
                 return
             raise RuntimeError("Prime launch reservation changed; runtime retained.")
@@ -1058,62 +1060,105 @@ def stop_all_runtimes() -> None:
         raise RuntimeError("; ".join(errors))
 
 
+class _TerminalSignalForwarder:
+    def __init__(self) -> None:
+        self._terminal: subprocess.Popen[bytes] | None = None
+        self.pending: list[int] = []
+        self._previous: dict[int, signal._HANDLER] = {}
+
+    def install(self) -> None:
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            self._previous[signum] = signal.signal(signum, self.forward)
+
+    def restore(self) -> None:
+        for signum, handler in self._previous.items():
+            signal.signal(signum, handler)
+
+    def forward(self, signum: int, _frame: object) -> None:
+        if self._terminal is None:
+            self.pending.append(signum)
+            return
+        with contextlib.suppress(ProcessLookupError):
+            self._terminal.send_signal(signum)
+
+    def publish(self, terminal: subprocess.Popen[bytes]) -> None:
+        self._terminal = terminal
+        for signum in self.pending:
+            self.forward(signum, None)
+
+
 def main() -> int:
     paths = PrimeRuntimePaths(Path(sys.argv[1]))
     token = sys.argv[2]
-    from omnigent.harnesses.pi_native.bridge import _atomic_json
+    from omnigent.harnesses.pi_native.bridge import _atomic_json, config_path
+    from omnigent.native.admission import native_owner, validate_native_sync
+    from omnigent.native.source_owner import NativeAdmission
 
-    with native_bridge_common.bridge_dir_preparation_lock(paths.root):
-        paths.validate_existing()
-        reservation = _read_launch_reservation(paths)
-        if (
-            reservation is None
-            or not reservation.fenced
-            or reservation.token != token
-            or reservation.state != "pending"
-        ):
-            raise RuntimeError("Prime launch authority was revoked or replaced.")
-        wrapper = _process_identity(psutil.Process(os.getpid()))
-        if wrapper is None:
-            raise RuntimeError("Prime wrapper identity could not be observed.")
-        _write_launch_reservation(paths, replace(reservation, state="claimed", wrapper=wrapper))
-        paths.prepare()
-        owner_claim.write_owner_claim(paths.root)
-        from omnigent.harnesses.pi_native.bridge import config_path
-        from omnigent.native.admission import native_owner, validate_native_sync
-        from omnigent.native.source_owner import NativeAdmission
-
-        config = json.loads(config_path(paths.root).read_text())
-        admission = NativeAdmission.model_validate(config["nativeAdmission"])
-        local_owner = native_owner(admission.source_id, "prime-native")
-        if (
-            admission.owner.model_copy(update={"coordinator": local_owner.coordinator})
-            != local_owner
-        ):
-            raise RuntimeError("Prime launch names a different native owner environment.")
-        validate_native_sync(
-            admission, server_url=config["serverUrl"], headers=config["authHeaders"]
-        )
-        child = subprocess.Popen(sys.argv[3:])
-        terminal = psutil.Process(child.pid)
-        terminal_identity = _TerminalIdentity(child.pid, terminal.create_time(), token)
-        record: dict[str, object] = {
-            "pid": terminal_identity.pid,
-            "created_at": terminal_identity.created_at,
-            "launch_token": token,
-        }
-        _atomic_json(paths.terminal_file, record)
-
-    def forward_signal(signum: int, _frame: object) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            child.send_signal(signum)
-
-    signal.signal(signal.SIGTERM, forward_signal)
-    signal.signal(signal.SIGHUP, forward_signal)
+    terminal_signals = _TerminalSignalForwarder()
     try:
-        return child.wait()
+        with native_bridge_common.bridge_dir_preparation_lock(paths.root):
+            paths.validate_existing()
+            reservation = _read_launch_reservation(paths)
+            if (
+                reservation is None
+                or not reservation.fenced
+                or reservation.token != token
+                or reservation.state != "pending"
+            ):
+                raise RuntimeError("Prime launch authority was revoked or replaced.")
+            wrapper = _process_identity(psutil.Process(os.getpid()))
+            if wrapper is None:
+                raise RuntimeError("Prime wrapper identity could not be observed.")
+            config = json.loads(config_path(paths.root).read_text())
+            admission = NativeAdmission.model_validate(config["nativeAdmission"])
+            local_owner = native_owner(admission.source_id, "prime-native")
+            if (
+                admission.owner.model_copy(update={"coordinator": local_owner.coordinator})
+                != local_owner
+            ):
+                raise RuntimeError("Prime launch names a different native owner environment.")
+            validate_native_sync(
+                admission, server_url=config["serverUrl"], headers=config["authHeaders"]
+            )
+            terminal_signals.install()
+            _write_launch_reservation(
+                paths, replace(reservation, state="claimed", wrapper=wrapper)
+            )
+            paths.prepare()
+            owner_claim.write_owner_claim(paths.root)
+            if terminal_signals.pending:
+                try:
+                    _stop_prime_runtime(paths)
+                finally:
+                    _launch_reservation_path(paths).unlink()
+                return -terminal_signals.pending[0]
+            child = subprocess.Popen(sys.argv[3:])
+            try:
+                terminal = psutil.Process(child.pid)
+                terminal_identity = _TerminalIdentity(child.pid, terminal.create_time(), token)
+                record: dict[str, object] = {
+                    "pid": terminal_identity.pid,
+                    "created_at": terminal_identity.created_at,
+                    "launch_token": token,
+                }
+                _atomic_json(paths.terminal_file, record)
+            except BaseException:
+                if terminal_signals.pending:
+                    child.kill()
+                    child.wait()
+                    try:
+                        _stop_prime_runtime(paths)
+                    finally:
+                        _launch_reservation_path(paths).unlink()
+                raise
+
+        try:
+            terminal_signals.publish(child)
+            return child.wait()
+        finally:
+            _finalize_wrapper_runtime(paths, terminal_identity)
     finally:
-        _finalize_wrapper_runtime(paths, terminal_identity)
+        terminal_signals.restore()
 
 
 if __name__ == "__main__":
