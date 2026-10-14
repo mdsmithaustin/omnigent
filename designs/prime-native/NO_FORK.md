@@ -16,8 +16,10 @@ Launch records a private reservation before its first asynchronous preparation
 step. Closure remains unqualified while that owner is launching, so Stop cannot
 report verified shutdown before an unregistered terminal starts. After terminal dispatch,
 the reservation clears only when a recorded terminal identity is live, or when
-the wrapper takes a stop before its terminal is recorded. That wrapper stops the
-private runtime and leaves any runtime it could not stop to orphan maintenance. Failed
+the wrapper receives a stop signal after it claims the launch and before its
+terminal is recorded. That wrapper stops the private runtime and leaves any
+runtime it could not stop to orphan maintenance. A stop signal before the claim
+only ends the wrapper and leaves the reservation pending. Failed
 dispatch cleanup retains uncertain ownership for a later scoped stop. Orphan
 maintenance can remove a dead owner's stale reservation after it proves runtime
 absence, while it preserves a live recorded terminal.
