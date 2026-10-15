@@ -185,3 +185,60 @@ def test_harness_extra_is_a_real_pyproject_extra(extra: str) -> None:
         f"{extra!r} is not a declared optional-dependencies extra in "
         f"pyproject.toml (have: {sorted(extras)})"
     )
+
+
+_REQUIRES = [
+    "httpx<1,>=0.27",
+    'cursor-sdk<2,>=1.4; extra == "cursor"',
+    'cursor-helper>=0.1; extra == "cursor" and python_version >= "3.9"',
+    'psycopg[binary]<4,>=3.1; extra == "cockroachdb"',
+    'omnigent-slack==0.18.0+mdsmithaustin.2; extra == "slack"',
+]
+
+
+@pytest.mark.parametrize("uv_tool", [False, True])
+def test_fork_build_installs_only_the_extra_requirements(
+    monkeypatch: pytest.MonkeyPatch, uv_tool: bool
+) -> None:
+    """Reinstalling ``omnigent[extra]`` would pull upstream omnigent from PyPI over the fork."""
+    monkeypatch.setattr(extra_install, "_is_fork_build", lambda: True)
+    monkeypatch.setattr(extra_install, "_omnigent_requires", lambda: _REQUIRES)
+    monkeypatch.setattr(extra_install, "_is_uv_tool_install", lambda: uv_tool)
+    monkeypatch.setattr(extra_install.shutil, "which", lambda name: "/usr/bin/uv")
+    monkeypatch.setattr(extra_install.sys, "executable", "/fork/venv/bin/python")
+
+    assert extra_install.extra_install_command("cursor") == [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        "/fork/venv/bin/python",
+        "cursor-sdk<2,>=1.4",
+        "cursor-helper>=0.1",
+    ]
+
+
+def test_fork_build_without_uv_uses_pip_for_the_extra_requirements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(extra_install, "_is_fork_build", lambda: True)
+    monkeypatch.setattr(extra_install, "_omnigent_requires", lambda: _REQUIRES)
+    monkeypatch.setattr(extra_install, "_is_uv_tool_install", lambda: False)
+    monkeypatch.setattr(extra_install.shutil, "which", lambda name: None)
+    monkeypatch.setattr(extra_install.sys, "executable", "/fork/venv/bin/python")
+
+    assert extra_install.extra_install_command("slack") == [
+        "/fork/venv/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "omnigent-slack==0.18.0+mdsmithaustin.2",
+    ]
+
+
+def test_fork_build_rejects_an_unknown_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(extra_install, "_is_fork_build", lambda: True)
+    monkeypatch.setattr(extra_install, "_omnigent_requires", lambda: _REQUIRES)
+
+    with pytest.raises(ValueError, match="no extra named 'nope'"):
+        extra_install.extra_install_command("nope")
