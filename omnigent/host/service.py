@@ -40,6 +40,14 @@ class HostService:
     log_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class InstalledHostService:
+    """The command and environment recorded in an installed service definition."""
+
+    command: tuple[str, ...]
+    environment: Mapping[str, str]
+
+
 def _service_for_current_platform() -> HostService:
     """Return the current platform's per-user service description."""
     system = platform.system()
@@ -111,6 +119,31 @@ def _systemd_quote(value: str, *, escape_dollar: bool = False) -> str:
     if escape_dollar:
         escaped = escaped.replace("$", "$$")
     return f'"{escaped}"'
+
+
+_SYSTEMD_QUOTED_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _systemd_unquote(value: str) -> str:
+    """Invert :func:`_systemd_quote` for one quoted value."""
+    return re.sub(r"\\(.)", r"\1", value.replace("$$", "$").replace("%%", "%"))
+
+
+def _parse_systemd_unit(content: bytes) -> InstalledHostService:
+    """Read the command and environment back out of :func:`_systemd_unit` output."""
+    command: tuple[str, ...] = ()
+    environment: dict[str, str] = {}
+    for line in content.decode().splitlines():
+        key, _, rest = line.partition("=")
+        values = [_systemd_unquote(v) for v in _SYSTEMD_QUOTED_RE.findall(rest)]
+        if key == "ExecStart":
+            command = tuple(values)
+        elif key == "Environment" and values:
+            name, _, value = values[0].partition("=")
+            environment[name] = value
+    if not command:
+        raise HostServiceError("The host service unit has no ExecStart command.")
+    return InstalledHostService(command, environment)
 
 
 def _systemd_unit(
@@ -300,6 +333,24 @@ def enable_user_host_service(
         _enable_systemd(service, content)
     _record_service(service)
     return service
+
+
+def read_user_host_service() -> InstalledHostService | None:
+    """Return the current user's installed host service, or ``None`` if absent."""
+    service = _service_for_current_platform()
+    try:
+        content = service.path.read_bytes()
+    except FileNotFoundError:
+        return None
+    if service.kind == "systemd_user":
+        return _parse_systemd_unit(content)
+    try:
+        payload = plistlib.loads(content)
+        return InstalledHostService(
+            tuple(payload["ProgramArguments"]), dict(payload.get("EnvironmentVariables", {}))
+        )
+    except (plistlib.InvalidFileException, KeyError, TypeError, ValueError) as exc:
+        raise HostServiceError(f"Cannot read {service.path}: {exc}") from exc
 
 
 def disable_user_host_service() -> HostService:
