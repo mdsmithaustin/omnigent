@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from omnigent.onboarding import harness_install
+from omnigent.onboarding import extra_install, harness_install
 
 
 @pytest.fixture(autouse=True)
@@ -17,3 +17,9 @@ def _clear_probe_caches() -> None:
     """
     harness_install._LOGIN_PROBE_CACHE.clear()
     harness_install._VERSION_PROBE_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def _upstream_extra_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin extra installs to the upstream command shapes; fork tests opt in."""
+    monkeypatch.setattr(extra_install, "_is_fork_build", lambda: False)
