@@ -23,6 +23,7 @@ import { LIVE_ITEM_PREFIX } from "@/lib/blocks";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ConversationScrollLockContext } from "@/components/ai-elements/conversation";
 import type { RenderItem } from "@/lib/renderItems";
+import { skillAdmissionNeedsAttention } from "@/lib/skillCommandDelivery";
 import type { SessionStatus } from "@/lib/types";
 import type { ActiveResponse } from "@/store/types";
 import { cn } from "@/lib/utils";
@@ -451,7 +452,9 @@ function partitionTurn(items: RenderItem[]): TurnPartition {
       isPendingElicitation(item) ||
       isPersistentToolCard(item) ||
       isInProgressTool(item) ||
-      (item.kind === "slash_command" && item.slashKind === "skill" && item.delivery)
+      (item.kind === "slash_command" &&
+        item.slashKind === "skill" &&
+        skillAdmissionNeedsAttention(item.delivery))
     ) {
       segments.push({ kind: "exempt", item, index: i });
       continue;
