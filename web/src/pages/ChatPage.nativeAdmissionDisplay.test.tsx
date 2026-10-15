@@ -230,13 +230,12 @@ function coldReload() {
   return mountChat();
 }
 
-function expectVisibleAdmission(invocationId: string) {
+function expectQuietAcceptedAdmission() {
   expect(screen.getByRole("button", { name: /Worked/ })).toHaveAttribute("aria-expanded", "false");
   expect(screen.getByText("RECOVERY_NATIVE_DONE EFFECT_edf9f79f312ae1a8")).toBeVisible();
-  expect(screen.queryByText("Admitted; completion not confirmed")).toBeVisible();
-  expect(screen.getAllByTestId("slash-command-card")).toHaveLength(1);
-  fireEvent.click(screen.getByText("Invocation details"));
-  expect(screen.getByText(invocationId)).toBeVisible();
+  expect(screen.queryByText("Admitted; completion not confirmed")).toBeNull();
+  expect(screen.queryByTestId("slash-command-card")).toBeNull();
+  expect(screen.queryByText("Invocation details")).toBeNull();
 }
 
 async function recoverOriginal() {
@@ -293,16 +292,16 @@ describe("native admission in the real transcript", () => {
     expect(messages).toEqual([]);
   });
 
-  it("keeps the accepted original card visible with Worked closed after recovery, reload and reconnect", async () => {
+  it("folds the accepted original card into Worked after recovery, reload and reconnect", async () => {
     const { mounted, event } = await recoverOriginal();
-    expectVisibleAdmission(event.data.stable_id);
+    expectQuietAcceptedAdmission();
     expect(screen.queryByRole("button", { name: "Check delivery" })).toBeNull();
     expect(posts).toHaveLength(1);
     mounted.unmount();
     coldReload();
     await screen.findByText("RECOVERY_NATIVE_DONE EFFECT_edf9f79f312ae1a8");
     expect(screen.queryByText("Skill recovery")).toBeNull();
-    expectVisibleAdmission(event.data.stable_id);
+    expectQuietAcceptedAdmission();
     const requestsBeforeReconnect = historyRequests.length;
     const stream = streams.at(-1)!;
     await act(async () => stream.close());
@@ -311,8 +310,7 @@ describe("native admission in the real transcript", () => {
       "aria-expanded",
       "false",
     );
-    expect(screen.getByText("Admitted; completion not confirmed")).toBeVisible();
-    expect(screen.getAllByTestId("slash-command-card")).toHaveLength(1);
+    expectQuietAcceptedAdmission();
     expect(screen.queryByRole("button", { name: "Check delivery" })).toBeNull();
     expect(readSkillSubmissions(conversationId)[0]?.event).toEqual(event);
     expect(readSkillSubmissions(conversationId)[0]?.delivery?.invocation_id).toBe(

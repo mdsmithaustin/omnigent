@@ -80,8 +80,7 @@ describe("SlashCommandCard", () => {
 it.each([
   ["unknown", false, "Admission unknown"],
   ["rejected", false, "Rejected before admission"],
-  ["accepted", false, "Admitted; completion not confirmed"],
-  ["accepted", true, "Historical copy"],
+  ["unknown", true, "Historical copy"],
 ] as const)("shows saved %s admission with historical=%s", (status, historical, label) => {
   const props = {
     kind: "skill" as const,
@@ -101,6 +100,26 @@ it.each([
   } else {
     expect(screen.getByRole("button", { name: "Check delivery" })).toBeEnabled();
   }
+});
+
+it.each([false, true])("hides accepted admission with historical=%s", (historical) => {
+  const { container } = render(
+    <SlashCommandCard
+      kind="skill"
+      name="review"
+      arguments=""
+      output={null}
+      delivery={{
+        invocation_id: "ab".repeat(16),
+        fingerprint: "cd".repeat(32),
+        status: "accepted",
+        historical,
+      }}
+    />,
+  );
+  expect(container.textContent).toContain("review");
+  expect(container.textContent).not.toContain("Admitted");
+  expect(container.textContent).not.toContain("Invocation details");
 });
 
 it.each([
