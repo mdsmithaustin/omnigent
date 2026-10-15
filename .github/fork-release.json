@@ -617,9 +617,57 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-2-63-dd8f89bde0e0",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.2 (#63)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "f16a9bf06fb353cd409603abf544ab5ef6633afd",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-2-6-f16a9bf06fb3",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.2 (#64)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ff65400b24ae71a71123316ba4cf074e3af7bda3",
+      "name": "test-guardrails-capture-the-blank-db-debug-line-ff65400b24ae",
+      "reason": "test(guardrails): capture the blank-DB debug line on its own logger (#67)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "089b820cb54d500e7fea6a0f7f8850729cb88be2",
+      "name": "fix-web-show-skill-admission-only-when-delivery-089b820cb54d",
+      "reason": "fix(web): show skill admission only when delivery needs attention (#66)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "30f803e024eef69f158287cf757433e550658814",
+      "name": "feat-update-check-track-the-fork-s-github-releas-30f803e024ee",
+      "reason": "feat(update-check): track the fork's GitHub Releases on fork builds (#68)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8c87df6d63b9eca86f458303c7abd29e1c60ba0d",
+      "name": "fix-prime-native-accept-newer-prime-releases-tha-8c87df6d63b9",
+      "reason": "fix(prime-native): accept newer Prime releases that still load extensions (#65)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "38db72098f29cf42f00391bfea8a3a8516b1ad9e",
+      "name": "feat-upgrade-install-newer-fork-releases-on-fork-38db72098f29",
+      "reason": "feat(upgrade): install newer fork releases on fork builds (#69)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b15bda4010a911233e7c2192d694fa0a778bde32",
+      "name": "fix-onboarding-install-only-an-extra-s-packages-b15bda4010a9",
+      "reason": "fix(onboarding): install only an extra's packages on fork builds (#70)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a0b8b1fb54b954ad8b65aaa9a118108fdb1121cd",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-3-71-a0b8b1fb54b9",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.3 (#71)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "dd8f89bde0e0225270f20238694aea22a73cd510",
+  "payload_commit": "a0b8b1fb54b954ad8b65aaa9a118108fdb1121cd",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -628,5 +676,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.2"
+  "version": "0.18.0+mdsmithaustin.3"
 }
