@@ -2,7 +2,7 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.2`, upstream `0.18.0` plus fork addon revision `2`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r2` and its title is `Omnigent 0.18.0, mdsmithaustin revision 2`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.3`, upstream `0.18.0` plus fork addon revision `3`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r3` and its title is `Omnigent 0.18.0, mdsmithaustin revision 3`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
 
 Revision `.2` follows the `0.18.0` sync with three fixes. Stopping a native session while its host is offline returns HTTP 503 instead of reporting success, so the turn and later input keep working ([Native Stop](NATIVE_STOP.md)). The install ledger records its own version instead of running another `omnigent` from `PATH`. E2E helpers read the isolated stack's logs from its pinned data directory.
 
@@ -124,7 +124,7 @@ Successful output includes `8 distributions; scoped integrity, not independent a
 Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork upgrade` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Each command must exit zero.
 
 ```sh
-version=0.18.0+mdsmithaustin.2
+version=0.18.0+mdsmithaustin.3
 venv="$HOME/.local/share/omnigent-fork/$version"
 uv venv --python 3.12 "$venv"
 uv pip install --python "$venv/bin/python" dist/*.whl
