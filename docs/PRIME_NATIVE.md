@@ -172,13 +172,22 @@ Conversation state lives under `$OMNIGENT_DATA_DIR/prime-native/`, or
 its own settings and models, temporary directory, daemon socket, and saved
 sessions. Authentication follows the shared-login behavior described under
 [Launch and reattach](#launch-and-reattach). When that socket path would exceed
-the Unix limit, Omnigent uses a private digest directory under `/tmp/mdp-<uid>/`. Stop retains saved
-sessions. Conversation DELETE attempts adapter-state removal after shutdown.
+the Unix limit, Omnigent uses a private digest directory under `/tmp/mdp-<uid>/`.
+Stop retains saved sessions. Conversation DELETE attempts adapter-state removal after shutdown.
 Runner cleanup is best effort. A successful response can leave state when the
 runner is unavailable or removal fails; it does not prove observed retirement.
 Removing a conversation's auth link leaves the host login intact. Runtime
 validation allows a symlink only at `agent/auth.json`; other runtime files
 still reject symlinks.
+
+Every fork installation for the same user shares `/tmp/mdp-<uid>/`. Each
+digest is derived from the conversation's runtime path under its installation's
+data directory, so installations never share a runtime directory. No
+per-installation level is added because the socket-path headroom is small. A
+cleanup sweep stops another installation's runtime only after its owner and
+terminal have exited, and never deletes that installation's directory. Only
+the owning installation removes a runtime directory, after its server confirms
+the conversation was deleted.
 
 Releases that predate shared authentication reject the auth link. After a
 rollback to such a release, linked conversations cannot launch or delete their
