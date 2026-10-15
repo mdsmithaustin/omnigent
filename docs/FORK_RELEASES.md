@@ -131,7 +131,9 @@ uv pip install --python /tmp/omnigent-fork-install/bin/python dist/*.whl
 
 The CLI must print the version recorded in the verified certificate. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
 
-Install future fork updates from their verified fork assets. `omni upgrade` for a wheel installation uses package-index releases or prints an index installation command. `omni upgrade --nightly` selects upstream GitHub tags. Those channels can replace the fork addons. This release process does not change the runtime updater.
+Install future fork updates from their verified fork assets. A fork build, one whose version carries the `+mdsmithaustin.N` local segment, checks for updates against the published GitHub Releases of `mdsmithaustin/omnigent` instead of a package index. Drafts, prereleases, and tags outside `mdsmithaustin/vX.Y.Z-rN` are ignored. For a fork installed from the release distributions, the CLI update notice names the newer fork version, its release page, and this section. It uses the same cache and four-hour cadence as the index check, so a machine makes about one unauthenticated GitHub API call per window, also after a failed call. `omni upgrade` queries GitHub directly instead of reading that cache.
+
+`omni upgrade --check` reports the newest fork release. It exits zero when the build is current and non-zero when a newer fork release exists or GitHub is unreachable. `omni upgrade` does not install fork releases yet, so it points here when one is available. It refuses `--nightly` and `--target-version`, which would install upstream omnigent over the fork, before stopping any local server. A fork installed from a `git+` URL re-pulls its own ref on a plain upgrade and refuses `--nightly` and `--target-version`. A build without the fork's local version segment keeps the upstream package-index and nightly behaviour.
 
 ## Verify local coexistence
 

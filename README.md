@@ -233,6 +233,10 @@ The check queries your configured package index — honoring `UV_INDEX_URL` /
 `PIP_INDEX_URL` and your `uv.toml` / `pip.conf` (default PyPI), so private
 mirrors work out of the box; override with `OMNIGENT_INDEX_URL` if needed.
 
+Fork builds (versions ending in `+mdsmithaustin.N`) check the fork's GitHub
+Releases instead and are installed from verified release assets; see
+[Build and install certified fork releases](docs/FORK_RELEASES.md#verify-and-install-downloaded-distributions).
+
 </details>
 
 <details>

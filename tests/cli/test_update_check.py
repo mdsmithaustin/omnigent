@@ -2499,3 +2499,158 @@ def test_read_installed_wheel_info_reads_pipx_metadata(
     assert info.installer == "pip"
     assert info.detected_installer == "pipx"
     assert info.extras == ("all",)
+
+
+# ------------------------------------------------------------------
+# Fork builds track the fork's GitHub Releases, not the package index
+# ------------------------------------------------------------------
+
+_FORK_VERSION = "0.18.0+mdsmithaustin.2"
+
+
+def _fork_release(version: str) -> object:
+    from packaging.version import Version
+
+    from omnigent.fork_releases import ForkRelease
+
+    return ForkRelease(
+        version=Version(version), tag="unused", html_url="https://example.test", assets={}
+    )
+
+
+def test_fork_wheel_check_names_fork_release_and_install_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("OMNIGENT_NO_UPDATE_CHECK", raising=False)
+    _point_cache_at(tmp_path, monkeypatch)
+    _write_cache(
+        _CacheEntry(
+            last_check_epoch=time.time(),
+            commits_behind=0,
+            kind="fork",
+            latest_version="0.18.0+mdsmithaustin.10",
+        )
+    )
+    dist = _write_fake_dist_info(tmp_path, installer="uv", version="0.18.0+mdsmithaustin.9")
+    monkeypatch.setattr("omnigent.update_check._get_distribution", lambda: dist)
+
+    _run_installed_wheel_check()
+
+    err = _strip_rich_panel(capsys.readouterr().err)
+    assert "omnigent 0.18.0+mdsmithaustin.10 is out (you have 0.18.0+mdsmithaustin.9)" in err
+    assert (
+        "https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r10" in err
+    )
+    assert "docs/FORK_RELEASES.md" in err
+    assert "Run omni upgrade" not in err
+    refreshed = _read_cache()
+    assert refreshed is not None
+    assert refreshed.last_notified_version == "0.18.0+mdsmithaustin.10"
+
+
+@pytest.mark.parametrize(
+    ("kind", "latest"),
+    [
+        ("fork", _FORK_VERSION),
+        # A package-index entry from before this build tracked fork releases.
+        ("wheel", "0.19.0"),
+    ],
+)
+def test_fork_wheel_check_quiet_unless_fork_channel_is_newer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    latest: str,
+) -> None:
+    monkeypatch.delenv("OMNIGENT_NO_UPDATE_CHECK", raising=False)
+    _point_cache_at(tmp_path, monkeypatch)
+    _write_cache(
+        _CacheEntry(
+            last_check_epoch=time.time(), commits_behind=0, kind=kind, latest_version=latest
+        )
+    )
+    spawned: list[bool] = []
+    monkeypatch.setattr(
+        "omnigent.update_check._spawn_background_refresh", lambda: spawned.append(True)
+    )
+    dist = _write_fake_dist_info(tmp_path, installer="uv", version=_FORK_VERSION)
+    monkeypatch.setattr("omnigent.update_check._get_distribution", lambda: dist)
+
+    _run_installed_wheel_check()
+
+    assert capsys.readouterr().err == ""
+    assert spawned == ([] if kind == "fork" else [True])
+
+
+def test_fork_refresh_queries_fork_releases_not_the_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OMNIGENT_NO_UPDATE_CHECK", raising=False)
+    _point_cache_at(tmp_path, monkeypatch)
+    _write_cache(
+        _CacheEntry(
+            last_check_epoch=time.time() - 10_000,
+            commits_behind=0,
+            kind="fork",
+            latest_version="0.18.0+mdsmithaustin.3",
+            last_notified_version="0.18.0+mdsmithaustin.3",
+        )
+    )
+    dist = _write_fake_dist_info(tmp_path, installer="uv", version=_FORK_VERSION)
+    monkeypatch.setattr("omnigent.update_check._get_distribution", lambda: dist)
+    monkeypatch.setattr("omnigent.update_check._find_repo_root", lambda: None)
+
+    def _no_index(*_a: object, **_k: object) -> str:
+        raise AssertionError("fork build queried the package index")
+
+    monkeypatch.setattr("omnigent.update_check.fetch_latest_version", _no_index)
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release",
+        lambda **_k: _fork_release("0.18.0+mdsmithaustin.4"),
+    )
+
+    from omnigent.update_check import refresh_update_cache
+
+    refresh_update_cache()
+
+    refreshed = _read_cache()
+    assert refreshed is not None
+    assert (refreshed.kind, refreshed.latest_version, refreshed.last_notified_version) == (
+        "fork",
+        "0.18.0+mdsmithaustin.4",
+        "0.18.0+mdsmithaustin.3",
+    )
+
+
+def test_fork_refresh_failure_still_waits_out_the_staleness_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed GitHub lookup must not retry on every command (rate limits)."""
+    monkeypatch.delenv("OMNIGENT_NO_UPDATE_CHECK", raising=False)
+    _point_cache_at(tmp_path, monkeypatch)
+    old = time.time() - 10_000
+    _write_cache(
+        _CacheEntry(
+            last_check_epoch=old,
+            commits_behind=0,
+            kind="fork",
+            latest_version="0.18.0+mdsmithaustin.3",
+        )
+    )
+    dist = _write_fake_dist_info(tmp_path, installer="uv", version=_FORK_VERSION)
+    monkeypatch.setattr("omnigent.update_check._get_distribution", lambda: dist)
+    monkeypatch.setattr("omnigent.update_check._find_repo_root", lambda: None)
+    monkeypatch.setattr("omnigent.fork_releases.latest_fork_release", lambda **_k: None)
+
+    from omnigent.update_check import refresh_update_cache
+
+    refresh_update_cache()
+
+    refreshed = _read_cache()
+    assert refreshed is not None
+    assert refreshed.kind == "fork"
+    assert refreshed.latest_version == "0.18.0+mdsmithaustin.3"
+    assert not _is_stale(refreshed)
