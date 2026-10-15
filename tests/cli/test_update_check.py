@@ -2524,6 +2524,8 @@ def test_fork_wheel_check_names_fork_release_and_install_steps(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("OMNIGENT_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.delenv("OMNIGENT_WRAPPER_COMMAND", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
     _point_cache_at(tmp_path, monkeypatch)
     _write_cache(
         _CacheEntry(
@@ -2544,10 +2546,34 @@ def test_fork_wheel_check_names_fork_release_and_install_steps(
         "https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r10" in err
     )
     assert "docs/FORK_RELEASES.md" in err
+    assert f"Upgrade: {sys.prefix}/bin/omnigent upgrade" in err
     assert "Run omni upgrade" not in err
     refreshed = _read_cache()
     assert refreshed is not None
     assert refreshed.last_notified_version == "0.18.0+mdsmithaustin.10"
+
+
+def test_fork_notice_names_the_fork_launcher_once_it_runs_this_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from omnigent.update_check import _print_fork_notice
+
+    monkeypatch.delenv("OMNIGENT_WRAPPER_COMMAND", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    launcher = tmp_path / ".local/bin/omnigent-fork"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(Path(sys.prefix) / "bin/omnigent")
+
+    _print_fork_notice("0.18.0+mdsmithaustin.2", "0.18.0+mdsmithaustin.3")
+
+    err = _strip_rich_panel(capsys.readouterr().err)
+    assert "Upgrade: omnigent-fork upgrade" in err
+    assert (
+        "Release: https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r3"
+        in err
+    )
 
 
 @pytest.mark.parametrize(
