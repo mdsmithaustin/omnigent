@@ -587,9 +587,39 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-1-24f3143746a6",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.1",
       "source_commit": null
+    },
+    {
+      "applied_commit": "e87f8af26fd1e7454ac76cf0ddff14b35fb275f1",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-1-e87f8af26fd1",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.1",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2c38770c4fb1f3ffe43bca83378367e39f54185d",
+      "name": "test-e2e-read-isolated-stack-logs-from-its-pinne-2c38770c4fb1",
+      "reason": "test(e2e): read isolated-stack logs from its pinned data dir (#62)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0fc1bf8886cc0c8ba3861327bf3765f046f7acc5",
+      "name": "fix-sessions-refuse-native-stop-while-the-host-r-0fc1bf8886cc",
+      "reason": "fix(sessions): refuse native Stop while the host runner is unreachable (#61)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "59bcb1c199d050f50f2afdc8226ba2d1c4606ca8",
+      "name": "fix-install-ledger-record-the-running-version-in-59bcb1c199d0",
+      "reason": "fix(install-ledger): record the running version instead of executing omnigent from PATH (#60)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "dd8f89bde0e0225270f20238694aea22a73cd510",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-2-63-dd8f89bde0e0",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.2 (#63)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "24f3143746a6035108a4b8d4fdb927dc044edfbf",
+  "payload_commit": "dd8f89bde0e0225270f20238694aea22a73cd510",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -598,5 +628,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.1"
+  "version": "0.18.0+mdsmithaustin.2"
 }
