@@ -65,6 +65,7 @@ def test_catalog_uses_configured_executable_and_ambient_prime_config(
         f"#!{os.sys.executable}\n"
         "import os, sys\n"
         "if sys.argv[1:] == ['--version']: print('0.9.6')\n"
+        "elif sys.argv[1:] == ['--help']: print('  -e, --extension <path>')\n"
         "else:\n"
         " assert sys.argv[1:] == ['model', 'list']\n"
         " assert os.environ['PRIME_AGENT_CODING_AGENT_DIR'] == '/ambient-prime'\n"
