@@ -665,9 +665,27 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-3-71-a0b8b1fb54b9",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.3 (#71)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "dc1de4a132c3444e8424bada4963deae8f166d01",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-3-7-dc1de4a132c3",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.3 (#72)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ef5edb60f35ffc337e004965864f3b045fee879f",
+      "name": "fix-upgrade-accept-fork-release-assets-whose-url-ef5edb60f35f",
+      "reason": "fix(upgrade): accept fork release assets whose URL encodes the version's + (#73)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b97c4db2721425274e63e8066a1b710f6450cde4",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-4-74-b97c4db27214",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.4 (#74)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "a0b8b1fb54b954ad8b65aaa9a118108fdb1121cd",
+  "payload_commit": "b97c4db2721425274e63e8066a1b710f6450cde4",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -676,5 +694,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.3"
+  "version": "0.18.0+mdsmithaustin.4"
 }
