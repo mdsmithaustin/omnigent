@@ -124,13 +124,12 @@ def test_saved_native_skill_admission_survives_recovery_and_reload(
         expect(answer).to_be_visible(timeout=20_000)
         expect(worked).to_have_attribute("aria-expanded", "false")
         expect(panel).to_have_count(0)
-        expect(transcript.get_by_test_id("slash-command-card")).to_be_visible()
-        expect(transcript.get_by_test_id("slash-command-card")).to_have_count(1)
+        # An accepted delivery needs no attention, so the command folds into Worked.
+        expect(transcript.get_by_test_id("slash-command-card")).to_have_count(0)
         expect(
             transcript.get_by_text("Admitted; completion not confirmed", exact=True)
-        ).to_be_visible()
-        transcript.get_by_text("Invocation details", exact=True).click()
-        expect(transcript.get_by_text(invocation_id, exact=True)).to_be_visible()
+        ).to_have_count(0)
+        expect(transcript.get_by_text("Invocation details", exact=True)).to_have_count(0)
         expect(transcript.get_by_role("button", name="Ran 1 shell command")).to_have_count(0)
         expect(
             transcript.get_by_text("Write independent recovery nonce", exact=True)
@@ -154,10 +153,11 @@ def test_saved_native_skill_admission_survives_recovery_and_reload(
     worked.click()
     expect(worked).to_have_attribute("aria-expanded", "true")
     expect(transcript.get_by_role("button", name="Ran 1 shell command")).to_be_visible()
+    expect(transcript.get_by_test_id("slash-command-card")).to_have_count(1)
+    expect(transcript.get_by_text("Admitted; completion not confirmed", exact=True)).to_have_count(
+        0
+    )
     worked.click()
     expect(worked).to_have_attribute("aria-expanded", "false")
-    expect(
-        transcript.get_by_text("Admitted; completion not confirmed", exact=True)
-    ).to_be_visible()
     assert command_posts == []
     assert httpx.get(f"{mock_llm_server_url}/stats", timeout=5.0).json() == initial_model_requests

@@ -10,6 +10,13 @@ export const skillCommandDeliverySchema = z.object({
 
 export type SkillCommandDelivery = z.infer<typeof skillCommandDeliverySchema>;
 
+/** An accepted delivery is the normal case; only other outcomes need the user's attention. */
+export function skillAdmissionNeedsAttention(
+  delivery: SkillCommandDelivery | undefined,
+): delivery is SkillCommandDelivery {
+  return delivery !== undefined && delivery.status !== "accepted";
+}
+
 export function skillAdmissionLabel(delivery: SkillCommandDelivery): string {
   if (delivery.historical) return "Historical copy";
   switch (delivery.status) {

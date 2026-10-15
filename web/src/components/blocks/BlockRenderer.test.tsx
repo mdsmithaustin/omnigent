@@ -563,10 +563,9 @@ describe("BlockRenderer dispatch", () => {
     });
 
     it.each([
-      ["accepted", false, "Admitted; completion not confirmed"],
       ["rejected", false, "Rejected before admission"],
       ["unknown", false, "Admission unknown"],
-      ["accepted", true, "Historical copy"],
+      ["unknown", true, "Historical copy"],
     ] as const)(
       "keeps %s admission (historical=%s) visible outside Worked",
       (status, historical, label) => {
@@ -615,31 +614,40 @@ describe("BlockRenderer dispatch", () => {
       },
     );
 
-    it.each(["skill", "command"] as const)(
-      "keeps legacy %s without delivery inside Worked",
-      (slashKind) => {
-        const items: RenderItem[] = [
-          {
-            kind: "slash_command",
-            itemId: "legacy_command",
-            slashKind,
-            name: "legacy-command",
-            arguments: "",
-            output: null,
-          },
-          tool(1, "Bash"),
-          { kind: "text", itemId: "answer", text: "Legacy answer.", final: true },
-        ];
-        render(<BlockRenderer items={items} sessionStatus="idle" />);
-        const fold = screen.getByRole("button", { name: "Worked" });
-        expect(fold).toHaveAttribute("aria-expanded", "false");
-        expect(screen.queryByTestId("slash-command-card")).toBeNull();
-        expect(screen.getByText("Legacy answer.")).toBeVisible();
-        fireEvent.click(fold);
-        expect(screen.getByText("legacy-command")).toBeVisible();
-        expect(screen.queryByText("Invocation details")).toBeNull();
-      },
-    );
+    const accepted = (historical: boolean) => ({
+      invocation_id: "ab".repeat(16),
+      fingerprint: "cd".repeat(32),
+      status: "accepted" as const,
+      historical,
+    });
+    it.each([
+      ["legacy skill", "skill", undefined],
+      ["legacy command", "command", undefined],
+      ["accepted skill", "skill", accepted(false)],
+      ["historical accepted skill", "skill", accepted(true)],
+    ] as const)("keeps %s inside Worked", (_case, slashKind, delivery) => {
+      const items: RenderItem[] = [
+        {
+          kind: "slash_command",
+          itemId: "legacy_command",
+          slashKind,
+          name: "legacy-command",
+          arguments: "",
+          output: null,
+          delivery,
+        },
+        tool(1, "Bash"),
+        { kind: "text", itemId: "answer", text: "Legacy answer.", final: true },
+      ];
+      render(<BlockRenderer items={items} sessionStatus="idle" />);
+      const fold = screen.getByRole("button", { name: "Worked" });
+      expect(fold).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByTestId("slash-command-card")).toBeNull();
+      expect(screen.getByText("Legacy answer.")).toBeVisible();
+      fireEvent.click(fold);
+      expect(screen.getByText("legacy-command")).toBeVisible();
+      expect(screen.queryByText("Invocation details")).toBeNull();
+    });
 
     it("keeps an assistant message visible before a folded tool run", () => {
       const items: RenderItem[] = [
