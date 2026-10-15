@@ -214,10 +214,10 @@ PR_HOST_ATTEMPTED=1
 	> "$PR_ROOT/evidence/host-start.txt"
 cat "$PR_ROOT/evidence/host-start.txt"
 PR_SELECTED="$PR_MISSING"
-PR_DIAGNOSTIC='Prime Native requires prime-agent 0.9.6. Set OMNIGENT_PRIME_PATH or install it on PATH.'
+PR_DIAGNOSTIC='Prime Native requires prime-agent 0.9.6 or newer. Set OMNIGENT_PRIME_PATH or install it on PATH.'
 if [ "$PR_CASE" = version ]; then
 	PR_SELECTED="$PR_FIXTURE"
-	PR_DIAGNOSTIC="Prime Native requires prime-agent 0.9.6; found '0.9.5'."
+	PR_DIAGNOSTIC="Prime Native requires prime-agent 0.9.6 or newer; found '0.9.5'."
 fi
 PR_EXIT=0
 owns_server_listener
@@ -320,7 +320,7 @@ env -i PATH='/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin' PYTHONPATH='/var/f
 The command exited 1 with this diagnostic.
 
 ```text
-Prime Native requires prime-agent 0.9.6. Set OMNIGENT_PRIME_PATH or install it on PATH.
+Prime Native requires prime-agent 0.9.6 or newer. Set OMNIGENT_PRIME_PATH or install it on PATH.
 ```
 
 ### Controlled unsupported version
@@ -334,7 +334,7 @@ env -i PATH='/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin' PYTHONPATH='/var/f
 The command exited 1 with this diagnostic.
 
 ```text
-Prime Native requires prime-agent 0.9.6; found '0.9.5'.
+Prime Native requires prime-agent 0.9.6 or newer; found '0.9.5'.
 ```
 
 Public host status reported zero sessions in both attempts. The controlled

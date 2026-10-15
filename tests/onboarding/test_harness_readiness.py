@@ -125,6 +125,10 @@ def _all_clis_installed(monkeypatch: pytest.MonkeyPatch) -> None:
             else:
                 version = "9.9.9\n"
             return subprocess.CompletedProcess(args=argv, returncode=0, stdout=version, stderr="")
+        if argv[1:] == ["--help"] and argv[0].endswith("prime-agent"):
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="  -e, --extension <path>\n", stderr=""
+            )
         if argv[:3] == ["gh", "auth", "token"]:
             # Copilot readiness falls back to the ``gh`` CLI login when no token
             # is configured. Report "logged out" so these tests stay about CLI

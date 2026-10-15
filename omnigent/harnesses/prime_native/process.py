@@ -23,6 +23,7 @@ from typing import Literal, TypedDict
 
 import click
 import psutil
+from packaging.version import InvalidVersion, Version
 from pydantic import TypeAdapter
 
 from omnigent._platform import IS_WINDOWS, resolve_cli_binary
@@ -37,7 +38,17 @@ from omnigent.harnesses.prime_native.bridge import (
 from omnigent.native import native_bridge_common, owner_claim
 from omnigent.native.source_owner import NativeAdmission, NativeStop
 
-QUALIFIED_VERSION = "0.9.6"
+MINIMUM_VERSION = "0.9.6"
+
+
+def meets_minimum_version(version: object) -> bool:
+    """Whether *version* parses as Prime ``MINIMUM_VERSION`` or newer."""
+    try:
+        return isinstance(version, str) and Version(version) >= Version(MINIMUM_VERSION)
+    except InvalidVersion:
+        return False
+
+
 _DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
 _DAEMON_SCHEMA_ID = "protocol-7-schema-30-f908f493c9e1"
 _DAEMON_SCHEMA_REVISION = 30
@@ -132,16 +143,25 @@ def resolve_prime_executable() -> str:
     executable = resolve_cli_binary(command, which=shutil.which)
     if executable is None:
         raise click.ClickException(
-            "Prime Native requires prime-agent 0.9.6. "
+            f"Prime Native requires prime-agent {MINIMUM_VERSION} or newer. "
             "Set OMNIGENT_PRIME_PATH or install it on PATH."
         )
     result = subprocess.run(
         [executable, "--version"], capture_output=True, text=True, timeout=10, check=True
     )
-    if result.stdout.strip() != QUALIFIED_VERSION:
+    version = result.stdout.strip()
+    if not meets_minimum_version(version):
         raise click.ClickException(
-            f"Prime Native requires prime-agent {QUALIFIED_VERSION}; "
-            f"found {result.stdout.strip()!r}."
+            f"Prime Native requires prime-agent {MINIMUM_VERSION} or newer; found {version!r}."
+        )
+    # The adapter's transcript bridge is a Prime extension; releases without it cannot host one.
+    help_text = subprocess.run(
+        [executable, "--help"], capture_output=True, text=True, timeout=10, check=True
+    ).stdout
+    if "--extension" not in help_text:
+        raise click.ClickException(
+            f"Prime Native needs a prime-agent with extension support (--extension); "
+            f"{version} has none. Install a 0.9.x release or point OMNIGENT_PRIME_PATH at one."
         )
     return executable
 
@@ -756,7 +776,7 @@ def _validate_daemon_hello(
         or hello.get("protocol") != _DAEMON_PROTOCOL
         or hello.get("schemaId") != _DAEMON_SCHEMA_ID
         or hello.get("schemaRevision") != _DAEMON_SCHEMA_REVISION
-        or hello.get("appVersion") != QUALIFIED_VERSION
+        or not meets_minimum_version(hello.get("appVersion"))
         or hello.get("socketPath") != expected_path
         or hello.get("supervisorSocketPath") != expected_path
     ):
