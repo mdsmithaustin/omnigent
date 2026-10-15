@@ -275,6 +275,16 @@ def test_read_user_host_service_reports_undecodable_definition(
         service.read_user_host_service()
 
 
+def test_read_user_host_service_reports_malformed_plist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    definition = _host_service_definition(tmp_path, monkeypatch, "Darwin")
+    definition.write_bytes(definition.read_bytes()[:40])
+
+    with pytest.raises(service.HostServiceError, match=f"Cannot read {definition}"):
+        service.read_user_host_service()
+
+
 @pytest.mark.parametrize("system", ["Darwin", "Linux"])
 def test_read_user_host_service_round_trips_enabled_definition(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str

@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from xml.parsers.expat import ExpatError
 
 from omnigent.installation_defaults import LAUNCHD_HOST_LABEL, SYSTEMD_HOST_UNIT
 from omnigent.process_logging import data_dir
@@ -348,7 +349,7 @@ def read_user_host_service() -> InstalledHostService | None:
         )
     except FileNotFoundError:
         return None
-    except (OSError, plistlib.InvalidFileException, KeyError, TypeError, ValueError) as exc:
+    except (OSError, ExpatError, KeyError, TypeError, ValueError) as exc:
         raise HostServiceError(f"Cannot read {service.path}: {exc}") from exc
 
 
