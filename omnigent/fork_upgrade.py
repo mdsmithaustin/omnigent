@@ -18,7 +18,9 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
+from omnigent.cli_invocation import cli_invocation
 from omnigent.fork_releases import ForkRelease
 from omnigent.host.service import InstalledHostService
 from omnigent.installation_defaults import RELEASE_REPOSITORY
@@ -88,6 +90,19 @@ def fork_venv(home: Path, version: str) -> Path:
     return home / ".local/share/omnigent-fork" / version
 
 
+def fork_launcher(home: Path) -> Path:
+    """The fork's own entry point, kept apart from an upstream ``omni``/``omnigent``."""
+    return home / ".local/bin/omnigent-fork"
+
+
+def upgrade_command(*, home: Path, prefix: Path) -> str:
+    """The upgrade command for the install at *prefix*, via the fork launcher if it runs it."""
+    launcher = fork_launcher(home)
+    runs_here = launcher.exists() and launcher.resolve().parent.parent == prefix.resolve()
+    entry = launcher.name if runs_here else str(prefix / "bin/omnigent")
+    return f"{cli_invocation(name=entry)} upgrade"
+
+
 def _venv_root(program: str) -> Path:
     return Path(program).parent.parent.resolve()
 
@@ -111,6 +126,11 @@ def classify_service(
     return ServicePlan(state, program, dict(installed.environment))
 
 
+def _release_asset_urls(tag: str, name: str) -> tuple[str, ...]:
+    # GitHub spells the tag's slash raw in browser_download_url; accept it encoded too.
+    return tuple(f"{_DOWNLOAD_PREFIX}{t}/{name}" for t in (tag, quote(tag, safe="")))
+
+
 def plan_fork_upgrade(
     release: ForkRelease,
     *,
@@ -126,9 +146,10 @@ def plan_fork_upgrade(
         url = release.assets.get(name)
         if url is None:
             raise ForkUpgradeError(f"Release {release.tag} has no {name} asset.")
-        if not url.startswith(_DOWNLOAD_PREFIX):
+        if url not in _release_asset_urls(release.tag, name):
             raise ForkUpgradeError(
-                f"Refusing {name} from {url}: not a {RELEASE_REPOSITORY} asset."
+                f"Refusing {name} from {url}: not the {name} asset of "
+                f"{RELEASE_REPOSITORY} release {release.tag}."
             )
         downloads[name] = url
     return ForkUpgradePlan(
@@ -137,7 +158,7 @@ def plan_fork_upgrade(
         downloads=downloads,
         venv=fork_venv(home, version),
         previous_venv=current_prefix,
-        launcher=home / ".local/bin/omnigent-fork",
+        launcher=fork_launcher(home),
         service=service,
     )
 
@@ -274,16 +295,20 @@ def _carried_assignments(environment: Mapping[str, str]) -> str:
     )
 
 
+def _local_enable_command(omnigent: Path, environment: Mapping[str, str]) -> str:
+    enable = f"{omnigent} {shlex.join(_LOCAL_ENABLE)}"
+    carried = _carried_assignments(environment)
+    return f"{carried} {enable}" if carried else enable
+
+
 def rollback_commands(plan: ForkUpgradePlan) -> list[str]:
     """The shell commands that return to the previous venv."""
     old = plan.previous_venv / "bin/omnigent"
     commands = []
     if plan.service.state is ServiceState.CURRENT_LOCAL:
-        enable = f"{old} {shlex.join(_LOCAL_ENABLE)}"
-        carried = _carried_assignments(plan.service.environment)
         commands += [
             f"{plan.venv / 'bin/omnigent'} host disable",
-            f"{carried} {enable}" if carried else enable,
+            _local_enable_command(old, plan.service.environment),
         ]
     return [*commands, f"ln -sfn {old} {plan.launcher}"]
 
@@ -336,7 +361,8 @@ def switch_to_fork_venv(
             outcome = (
                 "re-enabled the previous service"
                 if restored
-                else "the host service is now disabled"
+                else "the host service is now disabled. Re-enable it with: "
+                + _local_enable_command(old, service.environment)
             )
             raise ForkUpgradeError(
                 f"Enabling the host service from {plan.venv} failed; {outcome}. "

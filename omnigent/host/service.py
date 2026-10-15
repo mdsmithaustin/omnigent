@@ -340,16 +340,15 @@ def read_user_host_service() -> InstalledHostService | None:
     service = _service_for_current_platform()
     try:
         content = service.path.read_bytes()
-    except FileNotFoundError:
-        return None
-    if service.kind == "systemd_user":
-        return _parse_systemd_unit(content)
-    try:
+        if service.kind == "systemd_user":
+            return _parse_systemd_unit(content)
         payload = plistlib.loads(content)
         return InstalledHostService(
             tuple(payload["ProgramArguments"]), dict(payload.get("EnvironmentVariables", {}))
         )
-    except (plistlib.InvalidFileException, KeyError, TypeError, ValueError) as exc:
+    except FileNotFoundError:
+        return None
+    except (OSError, plistlib.InvalidFileException, KeyError, TypeError, ValueError) as exc:
         raise HostServiceError(f"Cannot read {service.path}: {exc}") from exc
 
 

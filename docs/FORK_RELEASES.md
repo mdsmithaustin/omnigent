@@ -121,40 +121,43 @@ python scripts/fork_release.py verify --certificate evidence/certificate.json --
 
 Successful output includes `8 distributions; scoped integrity, not independent approval`. Checksums alone do not authenticate the publisher. Trust the reviewed source and workflow identity, then verify the downloaded bytes.
 
-Create an isolated environment and install all four local wheels. Each command must exit zero.
+Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omni upgrade` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Each command must exit zero.
 
 ```sh
-uv venv --python 3.12 /tmp/omnigent-fork-install
-uv pip install --python /tmp/omnigent-fork-install/bin/python dist/*.whl
-/tmp/omnigent-fork-install/bin/omnigent --version
+version=0.18.0+mdsmithaustin.2
+venv="$HOME/.local/share/omnigent-fork/$version"
+uv venv --python 3.12 "$venv"
+uv pip install --python "$venv/bin/python" dist/*.whl
+"$venv/bin/omnigent" --version
+mkdir -p ~/.local/bin && ln -sfn "$venv/bin/omnigent" ~/.local/bin/omnigent-fork
 ```
 
-The CLI must print the version recorded in the verified certificate. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
+Run the fork as `omnigent-fork` from then on, with `~/.local/bin` on `PATH`. It stays separate from `~/.local/bin/omni` and `~/.local/bin/omnigent`, which an upstream install may own. The CLI must print the version recorded in the verified certificate. Open the installed application and confirm the bundled UI loads. Test Prime sessions separately with [the Prime verification skill](../.agents/skills/verify-prime-native/SKILL.md) when you need live runtime evidence.
 
-Install future fork updates from their verified fork assets. A fork build, one whose version carries the `+mdsmithaustin.N` local segment, checks for updates against the published GitHub Releases of `mdsmithaustin/omnigent` instead of a package index. Drafts, prereleases, and tags outside `mdsmithaustin/vX.Y.Z-rN` are ignored. For a fork installed from the release distributions, the CLI update notice names the newer fork version, its release page, and this section. It uses the same cache and four-hour cadence as the index check, so a machine makes about one unauthenticated GitHub API call per window, also after a failed call. `omni upgrade` queries GitHub directly instead of reading that cache.
+Install future fork updates from their verified fork assets. A fork build, one whose version carries the `+mdsmithaustin.N` local segment, checks for updates against the published GitHub Releases of `mdsmithaustin/omnigent` instead of a package index. Drafts, prereleases, and tags outside `mdsmithaustin/vX.Y.Z-rN` are ignored. For a fork installed from the release distributions, the CLI update notice names the newer fork version, the upgrade command, its release page, and this section. The command is `omnigent-fork upgrade` when `~/.local/bin/omnigent-fork` runs this install, and otherwise the full path of this install's `omnigent`. It uses the same cache and four-hour cadence as the index check, so a machine makes about one unauthenticated GitHub API call per window, also after a failed call. `omni upgrade` queries GitHub directly instead of reading that cache.
 
 `omni upgrade --check` reports the newest fork release. It exits zero when the build is current and non-zero when a newer fork release exists or GitHub is unreachable. It refuses `--nightly` and `--target-version`, which would install upstream omnigent over the fork, before stopping any local server.
 
-On a fork installed from the release wheels, `omni upgrade` installs the newest fork release beside the current one. `--dry-run` prints the plan and changes nothing. On a terminal it asks for confirmation unless `--force` is given. It first prepares the new install, which changes nothing in use:
+`omni upgrade` takes this path on any fork install that is neither a `git+` install nor an editable install: a `uv tool` or `pipx` install or a plain venv. The current environment, `sys.prefix` of the running CLI, is the previous venv kept for rollback, wherever it lives. Run the upgrade through the fork's own entry point, `omnigent-fork upgrade` or the install's full path, because `omni` on `PATH` may be upstream. It installs the newest fork release beside the current one. `--dry-run` prints the plan and changes nothing. On a terminal it asks for confirmation unless `--force` is given. It first prepares the new install, which changes nothing in use:
 
-1. Download the four wheels, `SHA256SUMS` and `certificate.json` from that release of `mdsmithaustin/omnigent` into a temporary directory.
-2. Verify that `certificate.json` names the release version, that `SHA256SUMS` lists exactly the certificate's artifact hashes, and that every wheel matches its `SHA256SUMS` entry. This is the part of `verify` that holds without the source checkout. Any mismatch stops the upgrade.
+1. Download the four wheels, `SHA256SUMS` and `certificate.json` into a temporary directory. Each asset URL must be `https://github.com/mdsmithaustin/omnigent/releases/download/TAG/NAME` for the resolved release tag and that asset's name; any other URL stops the upgrade.
+2. Verify that `certificate.json` names the release version, that `SHA256SUMS` lists exactly the certificate's artifact hashes, and that every wheel matches its `SHA256SUMS` entry. This is the part of `verify` that holds without the source checkout. Any mismatch stops the upgrade. `SHA256SUMS` and `certificate.json` come from the same release as the wheels, so this check proves the files agree with that certificate, not who published them. Trust rests on the repository's release permissions; for stronger evidence, compare the certificate's run ID with the reviewed workflow run as described above.
 3. Run `uv venv --python 3.12 ~/.local/share/omnigent-fork/VERSION` and `uv pip install` the four wheels, then require that venv's `omnigent --version` to print the release version. `uv` must be on `PATH`. A failed install removes that new directory. An existing directory is reused only when it already holds the release version; otherwise the upgrade stops and asks you to move it aside.
 
-Only then does it switch. It drains and stops the local server. If the fork host service (`com.mdsmithaustin.omni.host` or `omni-mdsmithaustin-host.service`) runs the current install in local mode, it runs the current `omnigent host disable`, then the new venv's `omnigent host enable --server '' --non-interactive` with the service's recorded environment, such as `OMNIGENT_FEATURES`. The empty `--server` keeps local mode even when the fork config names a `server:`. Disabling first avoids launchd's bootstrap error 5 for a loaded label. If the new enable fails, the upgrade re-enables the previous service and stops. A service that is absent, unreadable, remote, or runs another install is left unchanged and reported. Finally the upgrade atomically points `~/.local/bin/omnigent-fork` at the new venv's `omnigent`. It never touches `~/.local/bin/omni` or `~/.local/bin/omnigent`, which belong to an upstream install.
+Only then does it switch. It drains and stops the local server. If the fork host service (`com.mdsmithaustin.omni.host` or `omni-mdsmithaustin-host.service`) runs the current install in local mode, it runs the current `omnigent host disable`, then the new venv's `omnigent host enable --server '' --non-interactive` with the service's recorded environment, such as `OMNIGENT_FEATURES`. The empty `--server` keeps local mode even when the fork config names a `server:`. Disabling first avoids launchd's bootstrap error 5 for a loaded label. If the new enable fails, the upgrade re-enables the previous service and stops. If that re-enable also fails, the service is left disabled and its definition removed, and the error prints the exact command to re-enable it from the previous venv. Run that command yourself: a rerun of `omni upgrade` finds no service and does not restore it. A service that is absent, unreadable, remote, runs another install, or already runs the new release is left unchanged and reported. Finally the upgrade atomically points `~/.local/bin/omnigent-fork` at the new venv's `omnigent`. It never touches `~/.local/bin/omni` or `~/.local/bin/omnigent`, which belong to an upstream install.
 
-The previous venv is kept, and the upgrade prints the rollback commands: the new venv's `omnigent host disable`, the previous venv's `omnigent host enable --server '' --non-interactive` with the service's non-secret `OMNIGENT_*` variables, and an `ln -sfn` back to the previous `omnigent`. Export any provider credentials the service needs before running the enable command. The upgrade installs the four wheels without extras. Running `omni upgrade` again after a failure resumes from what is already in place. A fork installed from a `git+` URL re-pulls its own ref on a plain upgrade and refuses `--nightly` and `--target-version`. A build without the fork's local version segment keeps the upstream package-index and nightly behaviour.
+The previous venv is kept, and the upgrade prints the rollback commands. When it re-pointed a local-mode service, they start with the new venv's `omnigent host disable` and the previous venv's `omnigent host enable --server '' --non-interactive` with the service's non-secret `OMNIGENT_*` variables. They always end with an `ln -sfn` that points `omnigent-fork` back at the previous `omnigent`. Export any provider credentials the service needs before running the enable command. The upgrade installs the four wheels without extras. Running `omni upgrade` again after a failure resumes from what is already in place. A fork installed from a `git+` URL re-pulls its own ref on a plain upgrade and refuses `--nightly` and `--target-version`. A build without the fork's local version segment keeps the upstream package-index and nightly behaviour.
 
 ## Verify local coexistence
 
-Use separate virtual environments for upstream and the fork. Port `6768` must be available for the test listener. Run the maintained acceptance check from the reviewed fork checkout, with a new evidence directory. A nonzero exit, a false `qualified` receipt, or any `owned_survivors` means the check failed.
+Use separate virtual environments for upstream and the fork. `$venv` is the fork environment from the install step above. Port `6768` must be available for the test listener. Run the maintained acceptance check from the reviewed fork checkout, with a new evidence directory. A nonzero exit, a false `qualified` receipt, or any `owned_survivors` means the check failed.
 
 ```sh
 uv venv --python 3.12 /tmp/omnigent-upstream-install
 (cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.18.0')
-/tmp/omnigent-fork-install/bin/python -I scripts/verify_fork_coexistence.py \
+"$venv/bin/python" -I scripts/verify_fork_coexistence.py \
     --upstream-python /tmp/omnigent-upstream-install/bin/python \
-    --fork-python /tmp/omnigent-fork-install/bin/python \
+    --fork-python "$venv/bin/python" \
     --require-ui --evidence /tmp/omnigent-coexistence-check
 ```
 

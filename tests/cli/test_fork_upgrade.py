@@ -166,6 +166,53 @@ def test_plan_rejects_incomplete_or_foreign_assets(
         )
 
 
+@pytest.mark.parametrize("tag_in_url", [TAG, "mdsmithaustin%2Fv0.18.0-r3"])
+def test_plan_accepts_release_download_urls_of_its_own_tag(
+    tmp_path: Path, tag_in_url: str
+) -> None:
+    prefix = "https://github.com/mdsmithaustin/omnigent/releases/download"
+    release = ForkRelease(
+        Version(TARGET),
+        TAG,
+        "https://example.test",
+        {name: f"{prefix}/{tag_in_url}/{name}" for name in _release().assets},
+    )
+
+    plan = plan_fork_upgrade(
+        release,
+        current_version=CURRENT,
+        home=tmp_path,
+        current_prefix=tmp_path / "old-venv",
+        service=ServicePlan(ServiceState.ABSENT),
+    )
+
+    assert plan.downloads["SHA256SUMS"] == f"{prefix}/{tag_in_url}/SHA256SUMS"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Same repository, an older release's evidence.
+        "https://github.com/mdsmithaustin/omnigent/releases/download/mdsmithaustin/v0.18.0-r2/SHA256SUMS",
+        # Right release, another asset's bytes under this name.
+        f"{_DOWNLOAD}/certificate.json",
+    ],
+)
+def test_plan_rejects_assets_outside_the_release_tag(tmp_path: Path, url: str) -> None:
+    release = ForkRelease(
+        Version(TARGET), TAG, "https://example.test", {**_release().assets, "SHA256SUMS": url}
+    )
+
+    with pytest.raises(ForkUpgradeError, match=f"Refusing SHA256SUMS from {re.escape(url)}"):
+        plan_fork_upgrade(
+            release,
+            current_version=CURRENT,
+            home=tmp_path,
+            current_prefix=tmp_path / "old-venv",
+            service=ServicePlan(ServiceState.ABSENT),
+        )
+
+
 @pytest.mark.parametrize(
     ("command", "state"),
     [
@@ -423,6 +470,27 @@ def test_switch_restores_old_service_when_new_enable_fails(tmp_path: Path) -> No
 
     old = str(plan.previous_venv / "bin/omnigent")
     assert machine.calls[-1] == (old, "host", "enable", "--server", "", "--non-interactive")
+    assert not plan.launcher.exists()
+
+
+def test_switch_names_manual_reenable_when_restoring_old_service_fails(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    prepared = _prepared(tmp_path, _current_service(home))
+    plan = prepared.plan
+    machine = _Machine(tmp_path / "release", fail="host enable")
+
+    with pytest.raises(ForkUpgradeError) as caught:
+        switch_to_fork_venv(
+            prepared, stop_server=lambda: None, run=machine.run, environ={}, echo=print
+        )
+
+    old = plan.previous_venv / "bin/omnigent"
+    assert str(caught.value) == (
+        f"Enabling the host service from {plan.venv} failed; the host service is now "
+        "disabled. Re-enable it with: OMNIGENT_FEATURES=native_skill_routing "
+        f"{old} host enable --server '' --non-interactive. "
+        f"The launcher still points at {old}."
+    )
     assert not plan.launcher.exists()
 
 
