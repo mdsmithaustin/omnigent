@@ -16,6 +16,7 @@ from typing import NotRequired, TypedDict, cast
 
 from omnigent.installation_defaults import LAUNCHD_HOST_LABEL, SYSTEMD_HOST_UNIT, default_user_dir
 from omnigent.util.json_types import JsonObject as _JsonObject
+from omnigent.version import VERSION
 
 SCHEMA_VERSION = 1
 LEDGER_NAME = "install_ledger.json"
@@ -551,7 +552,7 @@ def new_ledger(*, source: str, strategy: str, deep: bool) -> InstallLedger:
         ledger_source=source,
         generator={
             "name": "omnigent",
-            "version": _version_for(shutil.which("omnigent")) or "unknown",
+            "version": VERSION,
             "strategy": strategy,
             "os": platform_name(),
             "wrote_at": now,
