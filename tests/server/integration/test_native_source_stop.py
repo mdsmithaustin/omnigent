@@ -113,6 +113,60 @@ async def test_legacy_owner_stop_attempts_shutdown_without_qualifying_fork(
     assert blocked.status_code == 409, blocked.text
 
 
+@pytest.mark.parametrize("runner_status", ["offline", "alive", "dead"])
+async def test_owner_stop_with_unreachable_runner_refuses_unless_runner_is_gone(
+    app, client, db_uri, monkeypatch, runner_status
+):
+    from types import SimpleNamespace
+
+    from omnigent.server.routes.sessions import routes_events
+
+    source_id, _ = await source_and_target(client)
+    store = SqlAlchemyConversationStore(db_uri)
+    store.replace_runner_id(source_id, "host-runner")
+    store.set_host_id(source_id, "cd" * 16, workspace="/host")
+    owner = NativeOwner(provider="claude-native", environment="fixture", runtime="tmux")
+    admission = store.admit_native(source_id, owner)
+    admitted = store.get_native_source(source_id)
+    host_stops = []
+
+    async def no_runner(*args, **kwargs):
+        return None
+
+    async def stop_host(*args):
+        host_stops.append(args[:3])
+        return False
+
+    async def query_status(host_conn, registry, runner_id):
+        assert runner_id == "host-runner"
+        return runner_status
+
+    connected = runner_status != "offline"
+    monkeypatch.setattr(native_stop, "_get_runner_client", no_runner)
+    monkeypatch.setattr(native_stop, "_stop_host_runner_intentionally", stop_host)
+    monkeypatch.setattr(native_stop, "_query_host_runner_status", query_status, raising=False)
+    monkeypatch.setattr(
+        app.state,
+        "host_registry",
+        SimpleNamespace(get=lambda host_id: object() if connected else None),
+        raising=False,
+    )
+    response = await client.post(
+        f"/v1/sessions/{source_id}/events", json={"type": "stop_session", "data": {}}
+    )
+    assert host_stops == [(source_id, "cd" * 16, "host-runner")]
+    assert source_id not in routes_events._interrupt_fenced_sessions
+    if runner_status == "dead":
+        assert response.status_code == 202, response.text
+        assert response.json()["native_stop"]["outcome"] == "unknown"
+        return
+    assert response.status_code == 503, response.text
+    store.validate_native_admission(admission)
+    assert store.get_native_source(source_id) == admitted
+    snapshot = await client.get(f"/v1/sessions/{source_id}")
+    assert snapshot.json().get("native_stop") is None
+
+
 async def source_and_target(client, *, user=None, wrapper=False):
     source_agent = await create_test_agent(
         client,
