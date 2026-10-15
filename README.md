@@ -227,7 +227,11 @@ The check queries your configured package index — honoring `UV_INDEX_URL` /
 mirrors work out of the box; override with `OMNIGENT_INDEX_URL` if needed.
 
 Fork builds (versions ending in `+mdsmithaustin.N`) check the fork's GitHub
-Releases instead and are installed from verified release assets; see
+Releases instead. `omnigent-fork upgrade` downloads a newer fork release from
+`github.com/mdsmithaustin/omnigent` release URLs, checks its wheels against the
+`SHA256SUMS` and `certificate.json` of that same release, installs it into its own
+venv, and keeps the previous one for rollback. That check proves the files agree
+with the certificate, not who published them; see
 [Build and install certified fork releases](docs/FORK_RELEASES.md#verify-and-install-downloaded-distributions).
 
 </details>
