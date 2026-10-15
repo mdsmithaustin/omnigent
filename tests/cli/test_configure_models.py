@@ -66,6 +66,14 @@ from omnigent.onboarding.provider_config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _upstream_extra_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These cases pin the upstream ``omnigent[extra]`` install commands."""
+    from omnigent.onboarding import extra_install
+
+    monkeypatch.setattr(extra_install, "_is_fork_build", lambda: False)
+
+
 @pytest.fixture()
 def isolated_config(tmp_path, monkeypatch):
     """Isolate config + secrets to a tmp dir with the file secret backend.
