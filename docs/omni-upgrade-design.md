@@ -113,8 +113,14 @@ itself (that responsibility moved to the command).
 A build whose version carries the fork's `+mdsmithaustin.N` local segment
 uses the fork's GitHub Releases as its source of truth
 (`omnigent/fork_releases.py`) under a separate `fork` cache kind. Its notice
-links the release and the verified install steps, and `omni upgrade` reports
-fork releases while refusing package-index and nightly installs. See
+links the release and the verified install steps. `omni upgrade` refuses
+package-index and nightly installs. On a fork installed from release wheels,
+it installs the newest fork release into a new venv
+(`omnigent/fork_upgrade.py`). It verifies the release assets and installs and
+checks the new venv before stopping the server. Then it re-points a host
+service that runs the current install in local mode, moves the
+`~/.local/bin/omnigent-fork` launcher, and keeps the previous venv for
+rollback. See
 [`FORK_RELEASES.md`](FORK_RELEASES.md#verify-and-install-downloaded-distributions).
 
 ## Decisions

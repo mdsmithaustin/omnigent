@@ -889,17 +889,21 @@ _FORK_INSTALL_DOC = (
 )
 
 
-def _fork_release(revision: int) -> object:
+def _fork_release(revision: int, *, with_assets: bool = False) -> object:
     from packaging.version import Version
 
     from omnigent.fork_releases import ForkRelease
+    from omnigent.fork_upgrade import wheel_names
 
+    version = f"0.18.0+mdsmithaustin.{revision}"
     tag = f"mdsmithaustin/v0.18.0-r{revision}"
+    download = "https://github.com/mdsmithaustin/omnigent/releases/download/" + tag
+    names = (*wheel_names(version), "SHA256SUMS", "certificate.json") if with_assets else ()
     return ForkRelease(
-        version=Version(f"0.18.0+mdsmithaustin.{revision}"),
+        version=Version(version),
         tag=tag,
         html_url=f"https://github.com/mdsmithaustin/omnigent/releases/tag/{tag}",
-        assets={},
+        assets={name: f"{download}/{name}" for name in names},
     )
 
 
@@ -976,8 +980,6 @@ def test_fork_upgrade_check_unreachable_fails(
         ["upgrade", "--nightly"],
         ["upgrade", "--nightly", "--check"],
         ["upgrade", "--target-version", "0.19.0"],
-        ["upgrade"],
-        ["update", "--dry-run"],
     ],
 )
 def test_fork_upgrade_refuses_upstream_installs_before_stopping_server(
@@ -994,6 +996,65 @@ def test_fork_upgrade_refuses_upstream_installs_before_stopping_server(
     assert "mdsmithaustin/omnigent" in output
     assert "v0.18.0+mdsmithaustin.3" in output
     assert _FORK_INSTALL_DOC in output
+
+
+def test_fork_upgrade_without_release_assets_points_at_manual_steps(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(3)
+    )
+
+    result = CliRunner().invoke(cli, ["upgrade"])
+
+    assert result.exit_code == 1, result.output
+    output = " ".join(result.output.split())
+    assert "Release mdsmithaustin/v0.18.0-r3 has no omnigent-0.18.0+mdsmithaustin.3" in output
+    assert _FORK_INSTALL_DOC in output
+
+
+def _fail_prepare(*_a: object, **_k: object) -> object:
+    from omnigent.fork_upgrade import ForkUpgradeError
+
+    raise ForkUpgradeError("SHA256SUMS differs from certificate.json.")
+
+
+def test_fork_upgrade_dry_run_prints_plan_and_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release",
+        lambda **_k: _fork_release(3, with_assets=True),
+    )
+    monkeypatch.setattr("omnigent.host.service.read_user_host_service", lambda: None)
+    monkeypatch.setattr("omnigent.fork_upgrade.prepare_fork_upgrade", _fail_prepare)
+
+    result = CliRunner().invoke(cli, ["update", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    venv = tmp_path / ".local/share/omnigent-fork/0.18.0+mdsmithaustin.3"
+    assert f"venv:     {venv}" in result.output
+    assert "service:  no host service is installed; leave it unchanged" in result.output
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fork_upgrade_preparation_failure_never_stops_the_server(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release",
+        lambda **_k: _fork_release(3, with_assets=True),
+    )
+    monkeypatch.setattr("omnigent.host.service.read_user_host_service", lambda: None)
+    monkeypatch.setattr("omnigent.fork_upgrade.prepare_fork_upgrade", _fail_prepare)
+
+    result = CliRunner().invoke(cli, ["upgrade", "--force"])
+
+    assert result.exit_code == 1, result.output
+    assert "Error: SHA256SUMS differs from certificate.json." in result.output
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_fork_git_install_refuses_target_version_instead_of_ignoring_it(

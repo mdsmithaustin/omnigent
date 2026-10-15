@@ -111,6 +111,7 @@ if TYPE_CHECKING:
 
     import httpx
 
+    from omnigent.fork_releases import ForkRelease
     from omnigent.install_ledger import InstallLedger
     from omnigent.onboarding.acp_auth import AcpAgentEntry
     from omnigent.server.smart_routing import LLMRoutingClient
@@ -5608,13 +5609,22 @@ def _upgrade_to_nightly(
     )
 
 
-def _upgrade_fork_build(current: str, *, check_only: bool, upstream_request: str | None) -> None:
-    """Report the fork release channel and refuse anything that would install upstream.
+def _upgrade_fork_build(
+    current: str,
+    *,
+    check_only: bool,
+    upstream_request: str | None,
+    dry_run: bool,
+    force: bool,
+) -> None:
+    """Install the newest fork release, refusing anything that would install upstream.
 
     :param current: The installed fork version, e.g. ``"0.18.0+mdsmithaustin.2"``.
     :param check_only: Only report; exit non-zero when a newer fork release exists.
     :param upstream_request: The requested upstream channel (``"--nightly"``,
         ``"--target-version X"``), or ``None`` for a plain upgrade.
+    :param dry_run: Print the install plan without changing anything.
+    :param force: Stop in-flight sessions immediately and skip the confirmation.
     """
     from packaging.version import Version
 
@@ -5633,8 +5643,8 @@ def _upgrade_fork_build(current: str, *, check_only: bool, upstream_request: str
         else "Couldn't reach GitHub to find the latest fork release."
     )
     install = (
-        f"`{cli_invocation(name='omni')} upgrade` can't install fork releases yet. "
-        f"Install one with the verified steps at {INSTALL_DOC_URL}"
+        f"Run `{cli_invocation(name='omni')} upgrade` without it to install the newest "
+        f"fork release, or follow the verified steps at {INSTALL_DOC_URL}"
     )
     if upstream_request is not None:
         raise click.ClickException(
@@ -5655,7 +5665,60 @@ def _upgrade_fork_build(current: str, *, check_only: bool, upstream_request: str
     )
     if check_only:
         raise SystemExit(1)
-    raise click.ClickException(install)
+    _install_fork_release(current, release, dry_run=dry_run, force=force)
+
+
+def _install_fork_release(
+    current: str, release: ForkRelease, *, dry_run: bool, force: bool
+) -> None:
+    """Install *release* into its own venv, then switch the launcher and host service."""
+    from omnigent import fork_upgrade
+    from omnigent.fork_releases import INSTALL_DOC_URL
+    from omnigent.host.service import HostServiceError, read_user_host_service
+
+    try:
+        service = fork_upgrade.classify_service(
+            read_user_host_service(),
+            current_prefix=Path(sys.prefix),
+            target_venv=fork_upgrade.fork_venv(Path.home(), str(release.version)),
+        )
+    except HostServiceError:
+        service = fork_upgrade.ServicePlan(fork_upgrade.ServiceState.UNREADABLE)
+    try:
+        plan = fork_upgrade.plan_fork_upgrade(
+            release,
+            current_version=current,
+            home=Path.home(),
+            current_prefix=Path(sys.prefix),
+            service=service,
+        )
+    except fork_upgrade.ForkUpgradeError as exc:
+        raise click.ClickException(
+            f"{exc} Install it with the steps at {INSTALL_DOC_URL}"
+        ) from exc
+    for line in fork_upgrade.describe_plan(plan):
+        click.echo(line)
+    if dry_run:
+        return
+    if not force and _stdin_is_tty():
+        click.confirm("Continue?", default=True, abort=True)
+    try:
+        prepared = fork_upgrade.prepare_fork_upgrade(plan)
+        click.echo(
+            f"Verified and installed omnigent {plan.version} in {plan.venv}."
+            if not prepared.reused
+            else f"Reusing {plan.venv}, which already holds omnigent {plan.version}."
+        )
+        fork_upgrade.switch_to_fork_venv(
+            prepared,
+            stop_server=lambda: _drain_and_stop_local_server(force=force),
+            echo=click.echo,
+        )
+    except fork_upgrade.ForkUpgradeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Upgraded to v{plan.version}. To roll back to v{current}, run:")
+    for command in fork_upgrade.rollback_commands(plan):
+        click.echo(f"    {command}")
 
 
 @cli.command("upgrade")
@@ -5798,7 +5861,11 @@ def upgrade(
         elif target_version:
             upstream_request = f"--target-version {target_version}"
         _upgrade_fork_build(
-            info.package_version, check_only=check_only, upstream_request=upstream_request
+            info.package_version,
+            check_only=check_only,
+            upstream_request=upstream_request,
+            dry_run=dry_run,
+            force=force,
         )
         return
 
