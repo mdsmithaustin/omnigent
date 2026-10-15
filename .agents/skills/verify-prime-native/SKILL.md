@@ -35,8 +35,8 @@ with `python -m omnigent` in the selected checkout. Doctor resolves an explicit
 `OMNIGENT_PRIME_PATH` fallback and global process-environment cleanup, so do not
 run the drive when that inspection is prohibited.
 
-Each metadata command has a 30-second timeout and must exit zero. Require exact
-`0.9.6` from `prime-agent --version`, `model` in `prime-agent --help`,
+Each metadata command has a 30-second timeout and must exit zero. Require
+`0.9.6` or newer from `prime-agent --version`, `model` in `prime-agent --help`,
 `List available models` in `prime-agent model list --help`, and `--server` in
 native help.
 

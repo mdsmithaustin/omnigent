@@ -1457,9 +1457,12 @@ def test_maintenance_skips_runtime_during_preparation(tmp_path: Path) -> None:
             holder.wait(timeout=5)
 
 
-def test_stop_sends_one_qualified_socket_shutdown_and_preserves_history(tmp_path: Path) -> None:
+@pytest.mark.parametrize("app_version", ["0.9.6", "0.10.0"])
+def test_stop_sends_one_qualified_socket_shutdown_and_preserves_history(
+    tmp_path: Path, app_version: str
+) -> None:
     paths = _shutdown_paths(tmp_path)
-    with _prime_daemon(paths, tmp_path) as daemon:
+    with _prime_daemon(paths, tmp_path, hello={"appVersion": app_version}) as daemon:
         stop_prime_runtime(paths)
         daemon.process.wait(timeout=5)
 
@@ -1493,7 +1496,7 @@ def test_stop_accepts_eof_after_command_only_when_runtime_disappears(tmp_path: P
     [
         {"protocol": {"name": "prime-agent.daemon", "version": 6}},
         {"schemaId": "protocol-7-schema-29-wrong", "schemaRevision": 29},
-        {"appVersion": "0.9.7"},
+        {"appVersion": "0.9.5"},
         {"socketPath": "/tmp/not-this-runtime.sock"},
         {"supervisorPid": os.getpid()},
     ],
@@ -2195,7 +2198,7 @@ def test_unqualified_shutdown_keeps_live_terminal(
             with pytest.raises(RuntimeError, match="unavailable on Windows"):
                 stop_prime_runtime(paths)
         else:
-            with _prime_daemon(paths, tmp_path, hello={"appVersion": "0.9.7"}):
+            with _prime_daemon(paths, tmp_path, hello={"appVersion": "0.9.5"}):
                 with pytest.raises(RuntimeError, match="runtime retained"):
                     stop_prime_runtime(paths)
         assert terminal.poll() is None
@@ -2281,14 +2284,45 @@ def test_stop_observes_a_private_process_that_appears_during_settlement(
     assert (paths.root / "terminal.json").read_text() == terminal
 
 
-def test_unqualified_version_fails_before_launch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("version", ["0.9.5", "0.9", "nightly", ""])
+def test_older_or_unreadable_version_fails_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
 ) -> None:
     binary = tmp_path / "prime-agent"
-    binary.write_text("#!/bin/sh\nprintf '0.9.7\\n'\n")
+    binary.write_text(f"#!/bin/sh\nprintf '{version}\\n'\n")
     binary.chmod(0o700)
     monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
-    with pytest.raises(click.ClickException, match=r"requires prime-agent 0\.9\.6"):
+    with pytest.raises(click.ClickException, match=r"requires prime-agent 0\.9\.6 or newer"):
+        process.resolve_prime_executable()
+
+
+def _fake_prime(tmp_path: Path, version: str, *, extensions: bool) -> Path:
+    binary = tmp_path / "prime-agent"
+    flag = "  -e, --extension <path>" if extensions else "  --skill <path>"
+    binary.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = --help ]; then printf '{flag}\\n'; else printf '{version}\\n'; fi\n"
+    )
+    binary.chmod(0o700)
+    return binary
+
+
+@pytest.mark.parametrize("version", ["0.9.6", "0.9.7", "0.10.0", "1.0.0"])
+def test_newer_version_with_extension_support_resolves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    binary = _fake_prime(tmp_path, version, extensions=True)
+    monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
+    assert process.resolve_prime_executable() == str(binary)
+
+
+def test_newer_version_without_extension_support_is_refused_by_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "OMNIGENT_PRIME_PATH", str(_fake_prime(tmp_path, "0.10.0", extensions=False))
+    )
+    with pytest.raises(click.ClickException, match=r"extension support \(--extension\); 0\.10\.0"):
         process.resolve_prime_executable()
 
 

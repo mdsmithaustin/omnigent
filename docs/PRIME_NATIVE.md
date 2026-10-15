@@ -7,8 +7,13 @@ is `prime-native-ui`.
 
 ## Launch and reattach
 
-Install Prime Agent **0.9.6** and `tmux`. This adapter requires that exact Prime
-version on macOS and Linux. Configure Prime's authentication before launching.
+Install Prime Agent **0.9.6 or newer** and `tmux` on macOS or Linux. A newer
+release is accepted when it still loads extensions (`--extension`), because the
+transcript bridge is a Prime extension. Prime 0.10.0, the Rust build, removed
+extensions, so the adapter refuses it with that reason; point
+`OMNIGENT_PRIME_PATH` at a 0.9.x binary instead. Releases after 0.9.6 are not
+separately qualified, and Stop still requires daemon protocol 7 and schema
+revision 30. Configure Prime's authentication before launching.
 For xAI, run `/login` in Prime and select the xAI subscription or API-key entry.
 Complete the selected flow as described in the
 [pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).

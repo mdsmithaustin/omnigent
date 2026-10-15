@@ -22,6 +22,8 @@ import httpx
 import pexpect
 import psutil
 
+from omnigent.harnesses.prime_native.process import MINIMUM_VERSION, meets_minimum_version
+
 REPO = Path(__file__).resolve().parents[4]
 PONG = "PRIME_NATIVE_PONG"
 
@@ -36,7 +38,7 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
         "checks": checks,
     }
     for name, argv, required in (
-        ("prime-version", [prime, "--version"], "0.9.6"),
+        ("prime-version", [prime, "--version"], f">={MINIMUM_VERSION}"),
         ("prime-help", [prime, "--help"], "model"),
         ("prime-model-help", [prime, "model", "list", "--help"], "List available models"),
         ("native-help", [sys.executable, "-m", "omnigent", "prime-native", "--help"], "--server"),
@@ -49,7 +51,7 @@ def doctor(prime: str, evidence: Path, env: dict[str, str]) -> None:
                 argv, env=env, cwd=REPO, capture_output=True, text=True, timeout=30
             )
             valid_output = (
-                result.stdout.strip() == required
+                meets_minimum_version(result.stdout.strip())
                 if name == "prime-version"
                 else required in result.stdout
             )
