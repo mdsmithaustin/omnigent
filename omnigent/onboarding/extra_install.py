@@ -59,6 +59,37 @@ def _installed_vcs_url() -> str | None:
     return info.vcs_url if info is not None else None
 
 
+def _is_fork_build() -> bool:
+    from omnigent.fork_releases import is_fork_version
+    from omnigent.version import VERSION
+
+    return is_fork_version(VERSION)
+
+
+def _omnigent_requires() -> list[str]:
+    import importlib.metadata
+
+    return importlib.metadata.distribution("omnigent").requires or []
+
+
+def _extra_requirements(extra: str) -> list[str]:
+    """Return the requirements *extra* adds to omnigent, markers resolved here."""
+    from packaging.requirements import Requirement
+
+    requirements = []
+    for raw in _omnigent_requires():
+        requirement = Requirement(raw)
+        marker = requirement.marker
+        if marker is None or marker.evaluate({"extra": ""}):
+            continue
+        if marker.evaluate({"extra": extra}):
+            requirement.marker = None
+            requirements.append(str(requirement))
+    if not requirements:
+        raise ValueError(f"omnigent has no extra named {extra!r}")
+    return requirements
+
+
 def extra_install_command(extra: str) -> list[str]:
     """Return the argv that installs *extra* into the running environment.
 
@@ -72,9 +103,20 @@ def extra_install_command(extra: str) -> list[str]:
        "omnigent[extra]"``
     4. fallback → ``<sys.executable> -m pip install "omnigent[extra]"``
 
+    A fork build instead installs only the extra's own requirements, with uv
+    when available, so the fork is never reinstalled from a package index.
+
     :param extra: The pip extra name, e.g. ``"cursor"``.
     :returns: The install argv.
     """
+    if _is_fork_build():
+        # The fork is not on any package index; a reinstall of ``omnigent[extra]``
+        # (e.g. ``uv tool install --force``) can replace it, so add only the extra's packages.
+        requirements = _extra_requirements(extra)
+        if shutil.which("uv") is not None:
+            return ["uv", "pip", "install", "--python", sys.executable, *requirements]
+        return [sys.executable, "-m", "pip", "install", *requirements]
+
     target = f"omnigent[{extra}]"
 
     if _is_uv_tool_install():
