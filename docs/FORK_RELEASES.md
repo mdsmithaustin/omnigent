@@ -2,7 +2,7 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.3`, upstream `0.18.0` plus fork addon revision `3`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r3` and its title is `Omnigent 0.18.0, mdsmithaustin revision 3`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.4`, upstream `0.18.0` plus fork addon revision `4`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r4` and its title is `Omnigent 0.18.0, mdsmithaustin revision 4`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
 
 Revision `.3` makes fork builds track fork releases. The update notice and `omnigent-fork upgrade --check` read the fork's GitHub Releases instead of PyPI, and `omnigent-fork upgrade` installs a newer fork release as described in [Verify and install downloaded distributions](#verify-and-install-downloaded-distributions). Installing a harness extra on a fork build installs only that extra's packages. Prime Native accepts Prime `0.9.6` or newer when the release still loads extensions. The skill admission card appears only when a delivery needs attention. Installs of `.2` or earlier predate the upgrade command, so move them to `.3` with the manual install steps below.
 
@@ -126,7 +126,7 @@ Successful output includes `8 distributions; scoped integrity, not independent a
 Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork upgrade` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Each command must exit zero.
 
 ```sh
-version=0.18.0+mdsmithaustin.3
+version=0.18.0+mdsmithaustin.4
 venv="$HOME/.local/share/omnigent-fork/$version"
 uv venv --python 3.12 "$venv"
 uv pip install --python "$venv/bin/python" dist/*.whl
