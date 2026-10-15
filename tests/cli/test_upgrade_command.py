@@ -1057,6 +1057,22 @@ def test_fork_upgrade_preparation_failure_never_stops_the_server(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_fork_refusal_names_this_install_not_the_path_omni(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None
+) -> None:
+    """``omni`` on PATH can be an upstream install, so the hint names this one."""
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(3)
+    )
+
+    result = CliRunner().invoke(cli, ["upgrade", "--nightly"])
+
+    output = " ".join(result.output.split())
+    assert result.exit_code == 1, result.output
+    assert "omni upgrade" not in output
+    assert "bin/omnigent upgrade" in output or "omnigent-fork upgrade" in output
+
+
 def test_fork_git_install_refuses_target_version_instead_of_ignoring_it(
     monkeypatch: pytest.MonkeyPatch, _fork_install: None
 ) -> None:

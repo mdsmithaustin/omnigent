@@ -5628,6 +5628,7 @@ def _upgrade_fork_build(
     """
     from packaging.version import Version
 
+    from omnigent import fork_upgrade
     from omnigent.fork_releases import INSTALL_DOC_URL, latest_fork_release
     from omnigent.installation_defaults import RELEASE_REPOSITORY
     from omnigent.update_check import _UPGRADE_INDEX_TIMEOUT_SECONDS
@@ -5643,7 +5644,8 @@ def _upgrade_fork_build(
         else "Couldn't reach GitHub to find the latest fork release."
     )
     install = (
-        f"Run `{cli_invocation(name='omni')} upgrade` without it to install the newest "
+        f"Run `{fork_upgrade.upgrade_command(home=Path.home(), prefix=Path(sys.prefix))}` "
+        "without it to install the newest "
         f"fork release, or follow the verified steps at {INSTALL_DOC_URL}"
     )
     if upstream_request is not None:
