@@ -234,3 +234,75 @@ def test_service_entry_maps_fatal_host_exit(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(cli, "main", _fatal)
 
     assert service_entry.main() == 0
+
+
+def _host_service_definition(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str) -> Path:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(service.platform, "system", lambda: system)
+    monkeypatch.setattr(service.os, "getuid", lambda: 501)
+    _capture_runs(monkeypatch)
+    service.enable_user_host_service(None, environment={})
+    return service._service_for_current_platform().path
+
+
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
+def test_read_user_host_service_reports_unreadable_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str
+) -> None:
+    definition = _host_service_definition(tmp_path, monkeypatch, system)
+    real_read_bytes = Path.read_bytes
+
+    def read_bytes(path: Path) -> bytes:
+        if path == definition:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+    with pytest.raises(service.HostServiceError, match="Permission denied"):
+        service.read_user_host_service()
+
+
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
+def test_read_user_host_service_reports_undecodable_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str
+) -> None:
+    definition = _host_service_definition(tmp_path, monkeypatch, system)
+    definition.write_bytes(b"ExecStart=\xff\xfe\n")
+
+    with pytest.raises(service.HostServiceError, match=f"Cannot read {definition}"):
+        service.read_user_host_service()
+
+
+def test_read_user_host_service_reports_malformed_plist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    definition = _host_service_definition(tmp_path, monkeypatch, "Darwin")
+    definition.write_bytes(definition.read_bytes()[:40])
+
+    with pytest.raises(service.HostServiceError, match=f"Cannot read {definition}"):
+        service.read_user_host_service()
+
+
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
+def test_read_user_host_service_round_trips_enabled_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(service.platform, "system", lambda: system)
+    monkeypatch.setattr(service.os, "getuid", lambda: 501)
+    monkeypatch.setattr(service.sys, "executable", "/opt/fork $1/bin/python")
+    _capture_runs(monkeypatch)
+    assert service.read_user_host_service() is None
+    environment = {"OMNIGENT_FEATURES": 'a,"b" 50% $HOME\\x', "PATH": "/usr/bin"}
+
+    service.enable_user_host_service(None, environment=environment)
+
+    assert service.read_user_host_service() == service.InstalledHostService(
+        command=("/opt/fork $1/bin/python", "-m", "omnigent.host.service_entry", "--local"),
+        environment=environment,
+    )

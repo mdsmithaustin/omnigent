@@ -29,8 +29,8 @@ Two install shapes are supported:
   next invocation. The notice fires once per new release (tracked via
   ``last_notified_version``) and points the user at ``omni upgrade``.
   A fork build (``+mdsmithaustin.N``) instead compares against the fork's
-  GitHub Releases (:mod:`omnigent.fork_releases`) and points at its
-  verified install steps.
+  GitHub Releases (:mod:`omnigent.fork_releases`) and points at the
+  fork's own upgrade command and release page.
 
 The dispatcher in ``maybe_show_update_notice`` picks the shape based on
 whether a ``.git/`` directory is reachable from this module's path.
@@ -982,18 +982,19 @@ def _print_fork_notice(current: str, latest: str) -> None:
     from rich.text import Text
 
     from omnigent.fork_releases import INSTALL_DOC_URL, release_url
+    from omnigent.fork_upgrade import upgrade_command
 
     console = Console(stderr=True)
     body = Text.assemble(
         ("Update available", "bold yellow"),
         " — omnigent ",
         (latest, "bold"),
-        f" is out (you have {current}).\n",
-        ("omni upgrade", "bold"),
-        " does not install fork releases yet; follow the verified install steps.",
+        f" is out (you have {current}).\nInstall it with the upgrade command below.",
     )
     console.print(Panel(body, border_style="yellow", expand=False))
-    # Outside the panel so long URLs stay whole and clickable.
+    # Outside the panel so long paths and URLs stay whole and clickable.
+    command = upgrade_command(home=Path.home(), prefix=Path(sys.prefix))
+    console.print(f"Upgrade: {command}", soft_wrap=True)
     console.print(f"Release: {release_url(latest)}", soft_wrap=True)
     console.print(f"Install steps: {INSTALL_DOC_URL}", soft_wrap=True)
 
