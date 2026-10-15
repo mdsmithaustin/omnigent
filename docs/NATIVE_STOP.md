@@ -22,6 +22,12 @@ runner shutdown and dedicated host-runner shutdown. It returns `unknown` even
 when those shutdown requests succeed, and different-agent fork stays blocked.
 If the legacy runner rejects Stop or its connection fails, the server returns
 HTTP 503 and removes the output fence so later turn output remains visible.
+If no Stop is pending, a host-bound runner is unreachable, and its host is
+offline, does not answer, or reports the runner alive, Stop returns HTTP 503 before
+revoking admission. The running turn and later input continue normally, except
+that a host which received the stop request without acknowledging it may still
+stop the runner later. Retry Stop once the runner can be reached. When the host reports the runner `dead`
+or `unknown`, Stop proceeds and records an `unknown` close.
 
 A pending close continues to exclude new native input and startup. It does not
 expire. An unqualified close whose actor has finished permits ordinary resume,
