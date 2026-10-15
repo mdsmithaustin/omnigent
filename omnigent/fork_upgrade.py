@@ -18,7 +18,7 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import unquote
 
 from omnigent.cli_invocation import cli_invocation
 from omnigent.fork_releases import ForkRelease
@@ -126,9 +126,9 @@ def classify_service(
     return ServicePlan(state, program, dict(installed.environment))
 
 
-def _release_asset_urls(tag: str, name: str) -> tuple[str, ...]:
-    # GitHub spells the tag's slash raw in browser_download_url; accept it encoded too.
-    return tuple(f"{_DOWNLOAD_PREFIX}{t}/{name}" for t in (tag, quote(tag, safe="")))
+def _is_release_asset_url(url: str, tag: str, name: str) -> bool:
+    # GitHub percent-encodes the "+" of a fork version in browser_download_url.
+    return unquote(url) == f"{_DOWNLOAD_PREFIX}{tag}/{name}"
 
 
 def plan_fork_upgrade(
@@ -146,7 +146,7 @@ def plan_fork_upgrade(
         url = release.assets.get(name)
         if url is None:
             raise ForkUpgradeError(f"Release {release.tag} has no {name} asset.")
-        if url not in _release_asset_urls(release.tag, name):
+        if not _is_release_asset_url(url, release.tag, name):
             raise ForkUpgradeError(
                 f"Refusing {name} from {url}: not the {name} asset of "
                 f"{RELEASE_REPOSITORY} release {release.tag}."

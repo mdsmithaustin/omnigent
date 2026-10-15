@@ -167,15 +167,20 @@ def test_plan_rejects_incomplete_or_foreign_assets(
 
 
 @pytest.mark.parametrize("tag_in_url", [TAG, "mdsmithaustin%2Fv0.18.0-r3"])
+@pytest.mark.parametrize("encode_name", [False, True])
 def test_plan_accepts_release_download_urls_of_its_own_tag(
-    tmp_path: Path, tag_in_url: str
+    tmp_path: Path, tag_in_url: str, encode_name: bool
 ) -> None:
+    # GitHub publishes wheel URLs as .../omnigent-0.18.0%2Bmdsmithaustin.3-py3-none-any.whl
     prefix = "https://github.com/mdsmithaustin/omnigent/releases/download"
     release = ForkRelease(
         Version(TARGET),
         TAG,
         "https://example.test",
-        {name: f"{prefix}/{tag_in_url}/{name}" for name in _release().assets},
+        {
+            name: f"{prefix}/{tag_in_url}/{name.replace('+', '%2B') if encode_name else name}"
+            for name in _release().assets
+        },
     )
 
     plan = plan_fork_upgrade(
@@ -187,6 +192,7 @@ def test_plan_accepts_release_download_urls_of_its_own_tag(
     )
 
     assert plan.downloads["SHA256SUMS"] == f"{prefix}/{tag_in_url}/SHA256SUMS"
+    assert plan.downloads[WHEELS[0]] == release.assets[WHEELS[0]]
 
 
 @pytest.mark.parametrize(
