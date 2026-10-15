@@ -28,6 +28,9 @@ Two install shapes are supported:
   process (:func:`refresh_update_cache`) that refreshes the cache for the
   next invocation. The notice fires once per new release (tracked via
   ``last_notified_version``) and points the user at ``omni upgrade``.
+  A fork build (``+mdsmithaustin.N``) instead compares against the fork's
+  GitHub Releases (:mod:`omnigent.fork_releases`) and points at its
+  verified install steps.
 
 The dispatcher in ``maybe_show_update_notice`` picks the shape based on
 whether a ``.git/`` directory is reachable from this module's path.
@@ -293,31 +296,40 @@ def _run_installed_wheel_check() -> None:
         # deltas instead; the passive PyPI nag is simply wrong here.
         return
 
+    kind = _wheel_cache_kind(info.package_version)
     cache = _read_cache()
     if (
         cache is not None
-        and cache.kind == "wheel"
+        and cache.kind == kind
         and cache.latest_version
         and _should_notify_release(cache.latest_version, info.package_version)
         and cache.latest_version != cache.last_notified_version
     ):
-        _print_pypi_notice(info.package_version, cache.latest_version)
+        notice = _print_fork_notice if kind == "fork" else _print_pypi_notice
+        notice(info.package_version, cache.latest_version)
         # Stamp the version we just nagged about so the notice fires
         # exactly once per new release (until an even newer one ships).
         _write_cache(
             _CacheEntry(
                 last_check_epoch=cache.last_check_epoch,
                 commits_behind=0,
-                kind="wheel",
+                kind=kind,
                 latest_version=cache.latest_version,
                 last_notified_version=cache.latest_version,
             )
         )
 
     # Refresh the cached "latest version" out of band when it is missing,
-    # stale, or was written by the (other-shape) clone path.
-    if cache is None or cache.kind != "wheel" or _is_stale(cache):
+    # stale, or was written by another channel.
+    if cache is None or cache.kind != kind or _is_stale(cache):
         _spawn_background_refresh()
+
+
+def _wheel_cache_kind(version: str) -> str:
+    """Name the release channel for an installed *version*: ``"fork"`` or ``"wheel"``."""
+    from omnigent.fork_releases import is_fork_version
+
+    return "fork" if is_fork_version(version) else "wheel"
 
 
 def _is_newer(latest: str, current: str) -> bool:
@@ -643,20 +655,28 @@ def refresh_update_cache() -> None:
         info = _read_installed_wheel_info()
         if info is None or info.is_editable:
             return
-        latest = fetch_latest_version()
-        if latest is None:
-            return
+        kind = _wheel_cache_kind(info.package_version)
         prev = _read_cache()
-        last_notified = (
-            prev.last_notified_version if prev is not None and prev.kind == "wheel" else ""
-        )
+        if prev is not None and prev.kind != kind:
+            prev = None
+        if kind == "fork":
+            from omnigent import fork_releases
+
+            release = fork_releases.latest_fork_release()
+            # Stamp failures too, so an unreachable or rate-limited GitHub is
+            # retried once per staleness window rather than on every command.
+            latest = str(release.version) if release else (prev.latest_version if prev else "")
+        else:
+            latest = fetch_latest_version()
+            if latest is None:
+                return
         _write_cache(
             _CacheEntry(
                 last_check_epoch=time.time(),
                 commits_behind=0,
-                kind="wheel",
+                kind=kind,
                 latest_version=latest,
-                last_notified_version=last_notified,
+                last_notified_version=prev.last_notified_version if prev else "",
             )
         )
 
@@ -949,6 +969,33 @@ def _print_pypi_notice(current: str, latest: str) -> None:
         " to update.",
     )
     console.print(Panel(body, border_style="yellow", expand=False))
+
+
+def _print_fork_notice(current: str, latest: str) -> None:
+    """Print the fork build's "update available" notice to stderr.
+
+    :param current: The installed version, e.g. ``"0.18.0+mdsmithaustin.2"``.
+    :param latest: The newer fork release, e.g. ``"0.18.0+mdsmithaustin.3"``.
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+
+    from omnigent.fork_releases import INSTALL_DOC_URL, release_url
+
+    console = Console(stderr=True)
+    body = Text.assemble(
+        ("Update available", "bold yellow"),
+        " — omnigent ",
+        (latest, "bold"),
+        f" is out (you have {current}).\n",
+        ("omni upgrade", "bold"),
+        " does not install fork releases yet; follow the verified install steps.",
+    )
+    console.print(Panel(body, border_style="yellow", expand=False))
+    # Outside the panel so long URLs stay whole and clickable.
+    console.print(f"Release: {release_url(latest)}", soft_wrap=True)
+    console.print(f"Install steps: {INSTALL_DOC_URL}", soft_wrap=True)
 
 
 # ------------------------------------------------------------------
@@ -1820,7 +1867,9 @@ def _probe_installed_distribution() -> tuple[str | None, str | None]:
     return version, commit
 
 
-def _upgrade_failure_message(code: int, extras: Collection[str] = ()) -> str:
+def _upgrade_failure_message(
+    code: int, extras: Collection[str] = (), *, fork_build: bool = False
+) -> str:
     """Describe a failed upgrade, after checking whether the install survived.
 
     uv and pipx replace the tool environment before the replacement is built,
@@ -1832,11 +1881,21 @@ def _upgrade_failure_message(code: int, extras: Collection[str] = ()) -> str:
     :param code: The installer's exit status.
     :param extras: Extras this install had, so the recovery line reinstalls
         the same shape.
+    :param fork_build: Recover from the fork's releases instead of upstream.
     :returns: The message body for the raised ``ClickException``.
     """
     version, _ = _probe_installed_distribution()
     if version is not None:
         return f"Upgrade command exited with status {code}; your previous install is intact."
+    if fork_build:
+        from omnigent.fork_releases import INSTALL_DOC_URL
+
+        return (
+            f"Upgrade command exited with status {code}, and omnigent is no longer "
+            "installed: the installer replaced the old environment before the new "
+            "build failed. Your agents, history and credentials are untouched; "
+            f"reinstall a verified fork release to get back:\n\n    {INSTALL_DOC_URL}"
+        )
     extra_flags = "".join(f" --extra {extra}" for extra in sorted(extras))
     return (
         f"Upgrade command exited with status {code}, and omnigent is no longer "

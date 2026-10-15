@@ -108,6 +108,15 @@ Most of steps 2/5 reuse helpers that already existed in `update_check.py`.
 The notice points at `omni upgrade`; it no longer runs an interactive upgrade
 itself (that responsibility moved to the command).
 
+## Fork builds
+
+A build whose version carries the fork's `+mdsmithaustin.N` local segment
+uses the fork's GitHub Releases as its source of truth
+(`omnigent/fork_releases.py`) under a separate `fork` cache kind. Its notice
+links the release and the verified install steps, and `omni upgrade` reports
+fork releases while refusing package-index and nightly installs. See
+[`FORK_RELEASES.md`](FORK_RELEASES.md#verify-and-install-downloaded-distributions).
+
 ## Decisions
 
 - **Source of truth**: the configured package index's Simple Repository API

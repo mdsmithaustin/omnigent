@@ -5371,6 +5371,7 @@ def _upgrade_vcs_install(
     :param pre: Pass the installer's allow-pre-releases flag (no-op for git).
     :param extra_overrides: Extras supplied by ``omni upgrade --extra``.
     """
+    from omnigent.fork_releases import is_fork_version
     from omnigent.update_check import (
         _build_upgrade_suggestion,
         _probe_installed_distribution,
@@ -5431,7 +5432,11 @@ def _upgrade_vcs_install(
     code = _run_upgrade_command(suggestion.command, console)
     if code != 0:
         raise click.ClickException(
-            _upgrade_failure_message(code, set(info.extras) | set(extra_overrides))
+            _upgrade_failure_message(
+                code,
+                set(info.extras) | set(extra_overrides),
+                fork_build=is_fork_version(info.package_version),
+            )
         )
 
     # Verify by commit, not exit code: a re-pull of a ref that hasn't moved (or
@@ -5603,6 +5608,56 @@ def _upgrade_to_nightly(
     )
 
 
+def _upgrade_fork_build(current: str, *, check_only: bool, upstream_request: str | None) -> None:
+    """Report the fork release channel and refuse anything that would install upstream.
+
+    :param current: The installed fork version, e.g. ``"0.18.0+mdsmithaustin.2"``.
+    :param check_only: Only report; exit non-zero when a newer fork release exists.
+    :param upstream_request: The requested upstream channel (``"--nightly"``,
+        ``"--target-version X"``), or ``None`` for a plain upgrade.
+    """
+    from packaging.version import Version
+
+    from omnigent.fork_releases import INSTALL_DOC_URL, latest_fork_release
+    from omnigent.installation_defaults import RELEASE_REPOSITORY
+    from omnigent.update_check import _UPGRADE_INDEX_TIMEOUT_SECONDS
+
+    release = latest_fork_release(timeout=_UPGRADE_INDEX_TIMEOUT_SECONDS, attempts=2)
+    tracks = (
+        f"This fork build tracks GitHub Releases of {RELEASE_REPOSITORY}, "
+        "not upstream omnigent releases."
+    )
+    latest = (
+        f"Latest fork release: v{release.version} ({release.html_url})."
+        if release is not None
+        else "Couldn't reach GitHub to find the latest fork release."
+    )
+    install = (
+        f"`{cli_invocation(name='omni')} upgrade` can't install fork releases yet. "
+        f"Install one with the verified steps at {INSTALL_DOC_URL}"
+    )
+    if upstream_request is not None:
+        raise click.ClickException(
+            f"Refusing {upstream_request}: it would replace this fork build "
+            f"(v{current}) with upstream omnigent. {tracks}\n{latest}\n{install}"
+        )
+    if release is None:
+        raise click.ClickException(
+            f"Couldn't reach GitHub to check for a newer fork release. {tracks} "
+            "Check your connection and try again."
+        )
+    if release.version <= Version(current):
+        click.echo(f"omnigent is up to date (v{current}).")
+        return
+    click.echo(
+        f"A new fork release is available: v{current} → v{release.version}.\n"
+        f"Release: {release.html_url}"
+    )
+    if check_only:
+        raise SystemExit(1)
+    raise click.ClickException(install)
+
+
 @cli.command("upgrade")
 @click.option(
     "--check",
@@ -5628,7 +5683,8 @@ def _upgrade_to_nightly(
     is_flag=True,
     help="Upgrade to the newest nightly build: a vX.Y.Z.devYYYYMMDD git tag "
     "installed straight from GitHub with your installer (needs git, plus "
-    "Node 22 and pnpm to build the web UI). Skips the package index.",
+    "Node 22 and pnpm to build the web UI). Skips the package index. "
+    "Refused on fork builds.",
 )
 @click.option(
     "--extra",
@@ -5639,7 +5695,7 @@ def _upgrade_to_nightly(
 )
 @click.option(
     "--target-version",
-    help="Upgrade to a specific version instead of the latest release.",
+    help="Upgrade to a specific version instead of the latest release. Refused on fork builds.",
 )
 @click.option(
     "--dry-run",
@@ -5693,6 +5749,7 @@ def upgrade(
     """
     import importlib.metadata
 
+    from omnigent.fork_releases import is_fork_version
     from omnigent.update_check import (
         _UPGRADE_INDEX_TIMEOUT_SECONDS,
         _build_upgrade_suggestion,
@@ -5731,6 +5788,19 @@ def upgrade(
             "This is an editable install — update it with `git pull`, "
             f"not `{cli_invocation(name='omni')} upgrade`."
         )
+
+    # Fork builds only follow the fork's GitHub Releases. A git install of the
+    # fork re-pulls its own ref, which cannot honor --nightly or a version pin.
+    if is_fork_version(info.package_version) and (nightly or target_version or not info.vcs_url):
+        upstream_request = None
+        if nightly:
+            upstream_request = "--nightly"
+        elif target_version:
+            upstream_request = f"--target-version {target_version}"
+        _upgrade_fork_build(
+            info.package_version, check_only=check_only, upstream_request=upstream_request
+        )
+        return
 
     # Nightly channel: resolved from git tags, not the index, and applies to
     # every install shape, so it dispatches before the VCS-vs-registry split

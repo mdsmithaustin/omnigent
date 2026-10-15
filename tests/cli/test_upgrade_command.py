@@ -877,3 +877,171 @@ def test_upgrade_nightly_failure_surfaces_recovery_when_install_is_gone(
     assert "your previous install is intact" not in result.output
     assert "no longer installed" in result.output
     assert "install.sh" in result.output
+
+
+# ------------------------------------------------------------------
+# Fork builds: only the fork's GitHub Releases, never upstream
+# ------------------------------------------------------------------
+
+_FORK_INSTALL_DOC = (
+    "https://github.com/mdsmithaustin/omnigent/blob/main/docs/FORK_RELEASES.md"
+    "#verify-and-install-downloaded-distributions"
+)
+
+
+def _fork_release(revision: int) -> object:
+    from packaging.version import Version
+
+    from omnigent.fork_releases import ForkRelease
+
+    tag = f"mdsmithaustin/v0.18.0-r{revision}"
+    return ForkRelease(
+        version=Version(f"0.18.0+mdsmithaustin.{revision}"),
+        tag=tag,
+        html_url=f"https://github.com/mdsmithaustin/omnigent/releases/tag/{tag}",
+        assets={},
+    )
+
+
+@pytest.fixture
+def _fork_install(monkeypatch: pytest.MonkeyPatch, _wheel_install: None) -> None:
+    """A registry-shaped install of fork revision 2 that must never touch upstream."""
+
+    def _fork_info() -> _InstalledWheelInfo:
+        info = _uv_registry_info()
+        info.package_version = "0.18.0+mdsmithaustin.2"
+        return info
+
+    monkeypatch.setattr("omnigent.update_check._read_installed_wheel_info", _fork_info)
+
+    def _forbidden(*_a: object, **_k: object) -> object:
+        raise AssertionError("fork build reached an upstream channel or stopped the server")
+
+    for target in (
+        "omnigent.update_check.fetch_latest_version",
+        "omnigent.update_check._latest_nightly_version",
+        "omnigent.update_check._run_upgrade_command",
+        "omnigent.cli._drain_and_stop_local_server",
+    ):
+        monkeypatch.setattr(target, _forbidden)
+
+
+@pytest.mark.parametrize(
+    ("revision", "exit_code", "expected"),
+    [
+        (2, 0, "omnigent is up to date (v0.18.0+mdsmithaustin.2)"),
+        (
+            3,
+            1,
+            "A new fork release is available: v0.18.0+mdsmithaustin.2 → v0.18.0+mdsmithaustin.3",
+        ),
+    ],
+)
+def test_fork_upgrade_check_reports_fork_channel(
+    monkeypatch: pytest.MonkeyPatch,
+    _fork_install: None,
+    revision: int,
+    exit_code: int,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(revision)
+    )
+
+    result = CliRunner().invoke(cli, ["upgrade", "--check"])
+
+    assert result.exit_code == exit_code, result.output
+    assert expected in result.output
+    if revision == 3:
+        assert (
+            "https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r3"
+            in result.output
+        )
+
+
+def test_fork_upgrade_check_unreachable_fails(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None
+) -> None:
+    monkeypatch.setattr("omnigent.fork_releases.latest_fork_release", lambda **_k: None)
+
+    result = CliRunner().invoke(cli, ["upgrade", "--check"])
+
+    assert result.exit_code == 1, result.output
+    assert "Couldn't reach GitHub" in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["upgrade", "--nightly"],
+        ["upgrade", "--nightly", "--check"],
+        ["upgrade", "--target-version", "0.19.0"],
+        ["upgrade"],
+        ["update", "--dry-run"],
+    ],
+)
+def test_fork_upgrade_refuses_upstream_installs_before_stopping_server(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None, args: list[str]
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(3)
+    )
+
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 1, result.output
+    output = " ".join(result.output.split())
+    assert "mdsmithaustin/omnigent" in output
+    assert "v0.18.0+mdsmithaustin.3" in output
+    assert _FORK_INSTALL_DOC in output
+
+
+def test_fork_git_install_refuses_target_version_instead_of_ignoring_it(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None
+) -> None:
+    def _fork_git_info() -> _InstalledWheelInfo:
+        info = _uv_registry_info()
+        info.package_version = "0.18.0+mdsmithaustin.2"
+        info.vcs_url = "git+https://github.com/mdsmithaustin/omnigent.git"
+        return info
+
+    monkeypatch.setattr("omnigent.update_check._read_installed_wheel_info", _fork_git_info)
+    monkeypatch.setattr(
+        "omnigent.cli._upgrade_vcs_install",
+        lambda *_a, **_k: pytest.fail("a git install re-pulled its ref and dropped the pin"),
+    )
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(3)
+    )
+
+    result = CliRunner().invoke(cli, ["upgrade", "--target-version", "0.19.0"])
+
+    assert result.exit_code == 1, result.output
+    assert "--target-version 0.19.0" in " ".join(result.output.split())
+
+
+def test_fork_bare_upgrade_up_to_date_succeeds(
+    monkeypatch: pytest.MonkeyPatch, _fork_install: None
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.fork_releases.latest_fork_release", lambda **_k: _fork_release(2)
+    )
+
+    result = CliRunner().invoke(cli, ["upgrade"])
+
+    assert result.exit_code == 0, result.output
+    assert "omnigent is up to date (v0.18.0+mdsmithaustin.2)" in result.output
+
+
+def test_fork_upgrade_failure_message_points_at_fork_install_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "omnigent.update_check._probe_installed_distribution", lambda: (None, None)
+    )
+
+    message = _upgrade_failure_message(1, fork_build=True)
+
+    assert "no longer installed" in message
+    assert "omnigent.ai/install.sh" not in message
+    assert _FORK_INSTALL_DOC in message

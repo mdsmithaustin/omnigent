@@ -11,6 +11,9 @@ SYSTEMD_HOST_UNIT: Final = "omni-mdsmithaustin-host.service"
 KEYRING_SERVICE: Final = "mdsmithaustin-omni"
 SESSION_COOKIE_NAME: Final = "mdsmithaustin_ap_session"
 AUTH_STATE_COOKIE_NAME: Final = "mdsmithaustin_ap_auth_state"
+RELEASE_REPOSITORY: Final = "mdsmithaustin/omnigent"
+RELEASE_TAG_PREFIX: Final = "mdsmithaustin/v"
+RELEASE_VERSION_LABEL: Final = "mdsmithaustin"
 
 
 def default_user_dir() -> Path:
