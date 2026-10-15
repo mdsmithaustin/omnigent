@@ -77,21 +77,21 @@ hook still evaluates the actual REQUEST; browser admission does not replace it.
 
 ## Check delivery in the web app
 
-Open the conversation and find the skill card. The card shows one of these labels:
+A skill command whose delivery was accepted looks like any other command: it
+shows no admission label and folds into a collapsed **Worked** section with the
+rest of the turn. A card with a status label appears only when the delivery
+needs attention:
 
-- **Admitted; completion not confirmed** means the runner accepted responsibility.
 - **Rejected before admission** means an attributed refusal established rejection.
 - **Admission unknown** means the saved evidence does not establish either outcome.
-- **Historical copy** means the command belongs to a forked transcript and is display-only.
+- **Historical copy** marks a rejected or unknown command copied into a forked
+  transcript; it is display-only. A forked command whose delivery was accepted shows no card.
 
-Cards with a saved delivery remain visible outside a collapsed **Worked**
-section. This applies to loaded transcript items; older commands without a
-delivery record keep the usual process folding.
+These cards stay visible outside a collapsed **Worked** section. Older commands
+without a delivery record keep the usual process folding.
 
-**Check delivery** appears only when delivery is missing or unknown, the record
-is not historical, and a conversation target is available. Accepted, rejected, and
-historical records keep their status labels and invocation details without a
-check button.
+**Check delivery** appears only when delivery is unknown, the record is not
+historical, and a conversation target is available.
 
 For an uncertain record, click **Check delivery** to read the saved outcome. Expand
 **Invocation details** to see the original identity. The check reads conversation
@@ -101,8 +101,11 @@ uses GET requests and never sends a command.
 If the response was lost, the **Skill recovery** panel above the composer also
 retains the original command and its **Check delivery** button. This panel
 survives navigation and browser reload. Once a check saves accepted or rejected
-delivery, that invocation leaves the recovery panel. Its card remains in the
-loaded transcript, with its status label and original identity. If history
+delivery, that invocation leaves the recovery panel. After a reload its
+transcript command follows the rules above: accepted shows no card, rejected
+keeps its card. A check started from a transcript card instead keeps its result
+on that card until reload, shown as **Admitted; completion not confirmed** for an
+accepted outcome. If history
 still reports unknown delivery or has no saved claim, the panel keeps the
 command and check button. Check the native result before deliberately starting
 a new invocation. Typing and sending the skill again allocates a new identity.

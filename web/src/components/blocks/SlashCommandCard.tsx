@@ -10,7 +10,10 @@
 //             conversation state (effort level, context reset,
 //             compaction, model swap), so a web observer needs them.
 
-import type { SkillCommandDelivery } from "@/lib/skillCommandDelivery";
+import {
+  skillAdmissionNeedsAttention,
+  type SkillCommandDelivery,
+} from "@/lib/skillCommandDelivery";
 import { SkillAdmission } from "./SkillAdmission";
 import { ChevronRightIcon, CommandIcon, WandSparklesIcon, type LucideIcon } from "lucide-react";
 import { useMemo } from "react";
@@ -94,7 +97,7 @@ export function SlashCommandCard({
     </span>
   );
 
-  const admission = delivery && (
+  const admission = skillAdmissionNeedsAttention(delivery) && (
     <SkillAdmission
       key={delivery.invocation_id}
       invocationId={delivery.invocation_id}
