@@ -240,3 +240,23 @@ def test_record_and_remove_launch_agent_preserves_other_entries(
     removed = install_ledger.load_ledger(install_ledger.ledger_path())
     assert removed is not None
     assert removed.entries.launch_agents == [unrelated]
+
+
+def test_ledger_records_its_own_version_without_running_path_omnigent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from omnigent.version import VERSION
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    ran = tmp_path / "path-omnigent-ran"
+    fake = bin_dir / "omnigent"
+    fake.write_text(f"#!/bin/sh\ntouch {ran}\necho 'omnigent 0.0.1'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    ledger = install_ledger.new_ledger(source="installer", strategy="test", deep=False)
+
+    assert ledger.generator["version"] == VERSION
+    assert not ran.exists()
