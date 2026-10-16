@@ -236,5 +236,9 @@ describe("unpinning from a sidebar row", () => {
     await waitFor(() =>
       expect(mocks.pinFn).toHaveBeenLastCalledWith({ id: "conv_a", pinned: true, pinnedAt: 1000 }),
     );
+    // Let sonner's post-click unmount timer fire before teardown.
+    await waitFor(() =>
+      expect(screen.queryByTestId("unpin-undo-toast-item")).not.toBeInTheDocument(),
+    );
   });
 });
