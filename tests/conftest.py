@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import sys
@@ -123,7 +124,20 @@ def pytest_configure(config: pytest.Config) -> None:
         worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
         _PROGRESS_LOG_PATH = os.path.join(log_dir, f"progress-{worker}.log")
 
+    _drop_structlog_config_root_handlers()
     _run_test_environment_guardrails(config)
+
+
+def _drop_structlog_config_root_handlers() -> None:
+    """Remove the root stdout handler pytest-playwright-visual-snapshot installs on import.
+
+    Its rich traceback rendering of every ``exc_info`` log takes seconds on a
+    loaded worker and stalls threads that log before replying, e.g. bridge relays.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if type(handler).__module__.startswith("structlog_config."):
+            root.removeHandler(handler)
 
 
 def _run_test_environment_guardrails(config: pytest.Config) -> None:
