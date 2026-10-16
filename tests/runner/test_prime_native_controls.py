@@ -201,11 +201,21 @@ async def test_prime_settings_fifo_survives_cancellation_and_controls_bypass(
 
 @pytest.mark.asyncio
 async def test_prime_settings_waiting_and_execution_share_one_budget(monkeypatch) -> None:
-    monkeypatch.setattr("omnigent.runner.app._PRIME_SETTINGS_TIMEOUT_S", 0.2)
+    monkeypatch.setattr("omnigent.runner.app._PRIME_SETTINGS_TIMEOUT_S", 1.0)
     started = asyncio.Event()
+    arrived = asyncio.Event()
     release = asyncio.Event()
     native = {"effort": "medium"}
     budgets = []
+
+    # The route builds the control and starts its budget without yielding.
+    class ArrivingEffort(SetEffort):
+        def __init__(self, effort: str) -> None:
+            super().__init__(effort)
+            if effort == "low":
+                arrived.set()
+
+    monkeypatch.setattr("omnigent.harnesses.prime_native.controls.SetEffort", ArrivingEffort)
 
     async def execute(self, control, *, timeout_s=18):
         budgets.append(timeout_s)
@@ -229,13 +239,14 @@ async def test_prime_settings_waiting_and_execution_share_one_budget(monkeypatch
         first = asyncio.create_task(setting("high"))
         await asyncio.wait_for(started.wait(), 1)
         second = asyncio.create_task(setting("low"))
-        await asyncio.sleep(0.08)
+        await asyncio.wait_for(arrived.wait(), 1)
+        await asyncio.sleep(0.2)
         release.set()
         first_result, second_result = await asyncio.gather(first, second)
         assert first_result.status_code == 504
         assert second_result.json()["effort"] == "low"
         assert native == {"effort": "low"}
-        assert 0 < budgets[1] < budgets[0] - 0.04
+        assert 0 < budgets[1] < budgets[0] - 0.1
 
 
 @pytest.mark.asyncio
