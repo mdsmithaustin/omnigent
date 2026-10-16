@@ -15,6 +15,7 @@ import tempfile
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, TypedDict, cast
@@ -417,6 +418,9 @@ class _HelperProcessClient:
         # the handle when present.
         self._egress_handle: EgressProxyHandle | None = None
         self._lock = threading.Lock()
+        # bwrap's --die-with-parent fires when the spawning thread exits, and
+        # requests arrive on short-lived threads, so spawn from one owned thread.
+        self._spawner = ThreadPoolExecutor(max_workers=1, thread_name_prefix="os-env-helper")
         self._closed = False
         atexit.register(self.close)
 
@@ -428,6 +432,7 @@ class _HelperProcessClient:
         with self._lock:
             self._closed = True
             self._stop_locked()
+            self._spawner.shutdown(wait=False)
 
     def _request_locked(
         self,
@@ -620,7 +625,8 @@ class _HelperProcessClient:
         if r_fd is not None:
             popen_kwargs["pass_fds"] = (r_fd,)
         try:
-            self._proc = subprocess.Popen(
+            self._proc = self._spawner.submit(
+                subprocess.Popen,
                 spawn_argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -630,7 +636,7 @@ class _HelperProcessClient:
                 cwd="/" if sandbox.copy_on_write_namespace else str(self.cwd),
                 env=env,
                 **popen_kwargs,
-            )
+            ).result()
         except Exception:
             cleanup_private_tmpdir(self._tmpdir)
             self._tmpdir = None
