@@ -4,7 +4,7 @@
 // The batch is module state, so it's reset between cases and leftover toasts are
 // dismissed.
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient } from "@tanstack/react-query";
@@ -69,6 +69,19 @@ const show = (ids: string[]) =>
     ),
   );
 
+/**
+ * Click a pill button and drain sonner's close timers. Sonner unmounts a clicked
+ * pill on timers that outlive cleanup() and throw once jsdom is torn down.
+ */
+async function clickPillButton(name: string) {
+  vi.useFakeTimers();
+  fireEvent.click(screen.getByRole("button", { name }));
+  await act(async () => {
+    await vi.runAllTimersAsync();
+  });
+  vi.useRealTimers();
+}
+
 beforeEach(() => {
   // Start every test on REAL timers so a fake clock left installed (or
   // advanced) by a prior test in this file can't leak into this one — the
@@ -128,34 +141,26 @@ describe("showArchiveUndoToast", () => {
     await show(["b", "c"]);
 
     await screen.findByText("Archived 3 sessions");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    });
+    await clickPillButton("Undo");
 
     expect(mocks.undoArchiveConversations).toHaveBeenCalledTimes(1);
     expect(mocks.undoArchiveConversations).toHaveBeenCalledWith(queryClient, convs("a", "b", "c"));
-    // The toast dismisses on Undo (sonner animates it out, so wait for removal).
-    await waitFor(() => expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument());
+    expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument();
   });
 
   it("starts a fresh batch after an Undo", async () => {
     mountToaster();
     await show(["a", "b"]);
     await screen.findByText("Archived 2 sessions");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    });
+    await clickPillButton("Undo");
     expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("a", "b"));
-    // Let the dismissed toast finish animating out before reusing the toast id.
-    await waitFor(() => expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument());
+    expect(screen.queryByText(/^Archived/)).not.toBeInTheDocument();
 
     // A later archive is its own batch, not appended to the undone one: it reads
     // "1 session" and undoing again restores only the new id.
     await show(["x"]);
     await screen.findByText("Archived 1 session");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    });
+    await clickPillButton("Undo");
     expect(mocks.undoArchiveConversations).toHaveBeenLastCalledWith(queryClient, convs("x"));
   });
 
@@ -164,9 +169,7 @@ describe("showArchiveUndoToast", () => {
     await show(["a"]);
 
     await screen.findByText("Archived 1 session");
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "View archived" }));
-    });
+    await clickPillButton("View archived");
     expect(navigate).toHaveBeenCalledWith("/settings/archived");
   });
 
