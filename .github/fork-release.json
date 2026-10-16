@@ -683,9 +683,33 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-4-74-b97c4db27214",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.4 (#74)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "ba62b1719df9c8c942579cd2e98efecb49a2b2e0",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-4-7-ba62b1719df9",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.4 (#75)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "49d5b5f6cefe488c0a6a693ed3f1c1c0bc94d5b7",
+      "name": "test-prime-wait-for-the-queued-setting-before-ti-49d5b5f6cefe",
+      "reason": "test(prime): wait for the queued setting before timing its budget (#76)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5ef2fb6e265bf60716a4e4a27fdfb02893fe2dee",
+      "name": "fix-os-env-keep-the-bwrap-helper-alive-across-re-5ef2fb6e265b",
+      "reason": "fix(os_env): keep the bwrap helper alive across request threads (#77)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0d935493a57fb8fa30d4de7467fbd56d8a8b3050",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-5-78-0d935493a57f",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.5 (#78)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "b97c4db2721425274e63e8066a1b710f6450cde4",
+  "payload_commit": "0d935493a57fb8fa30d4de7467fbd56d8a8b3050",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -694,5 +718,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.4"
+  "version": "0.18.0+mdsmithaustin.5"
 }
