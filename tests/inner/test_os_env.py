@@ -7,6 +7,8 @@ import base64
 import io
 import os
 import shutil
+import subprocess
+import sys
 import tracemalloc
 from pathlib import Path
 
@@ -14,6 +16,7 @@ import pytest
 
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.os_env import (
+    CallerProcessOSEnvironment,
     _child_shell_env,
     _project_root,
     _read_impl,
@@ -515,3 +518,33 @@ def test_shell_command_does_not_see_omnigent_project_root(
     out = result.get("stdout", "")
     assert project_entry in out
     assert str(_project_root()) not in out
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or shutil.which("bwrap") is None,
+    reason="requires Linux and bwrap",
+)
+def test_bwrap_helper_outlives_the_request_thread_that_started_it(tmp_path: Path) -> None:
+    """Each request runs on a short-lived thread; its exit must not kill the helper."""
+    env = create_os_environment(
+        OSEnvSpec(
+            type="caller_process",
+            cwd=str(tmp_path),
+            sandbox=OSEnvSandboxSpec(
+                type="linux_bwrap", read_paths=[str(_project_root() / "omnigent")]
+            ),
+        )
+    )
+    assert isinstance(env, CallerProcessOSEnvironment)
+    try:
+        first = asyncio.run(env.shell("echo ready"))
+        assert first.get("stdout", "").strip() == "ready", first
+        helper = env._helper._proc
+        assert helper is not None
+        with pytest.raises(subprocess.TimeoutExpired):
+            helper.wait(timeout=1)
+        second = asyncio.run(env.shell("echo again"))
+        assert second.get("stdout", "").strip() == "again", second
+        assert env._helper._proc is helper
+    finally:
+        env.close()
