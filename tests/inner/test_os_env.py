@@ -669,3 +669,33 @@ def test_close_stops_the_helper_and_releases_its_spawner_thread(
         assert not thread.is_alive()
     os_env.close()
     assert asyncio.run(os_env.shell("true")) == {"error": "OS environment helper is closed"}
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or shutil.which("bwrap") is None,
+    reason="requires Linux and bwrap",
+)
+def test_bwrap_helper_outlives_the_request_thread_that_started_it(tmp_path: Path) -> None:
+    """Each request runs on a short-lived thread; its exit must not kill the helper."""
+    env = create_os_environment(
+        OSEnvSpec(
+            type="caller_process",
+            cwd=str(tmp_path),
+            sandbox=OSEnvSandboxSpec(
+                type="linux_bwrap", read_paths=[str(_project_root() / "omnigent")]
+            ),
+        )
+    )
+    assert isinstance(env, CallerProcessOSEnvironment)
+    try:
+        first = asyncio.run(env.shell("echo ready"))
+        assert first.get("stdout", "").strip() == "ready", first
+        helper = env._helper._proc
+        assert helper is not None
+        with pytest.raises(subprocess.TimeoutExpired):
+            helper.wait(timeout=1)
+        second = asyncio.run(env.shell("echo again"))
+        assert second.get("stdout", "").strip() == "again", second
+        assert env._helper._proc is helper
+    finally:
+        env.close()

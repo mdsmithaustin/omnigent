@@ -452,7 +452,7 @@ class _HelperProcessClient:
         with self._lock:
             self._closed = True
             self._stop_locked()
-        self._spawner.shutdown(wait=False)
+            self._spawner.shutdown(wait=False)
         atexit.unregister(self.close)
 
     def _request_locked(
@@ -681,17 +681,16 @@ class _HelperProcessClient:
             popen_kwargs["pass_fds"] = (r_fd,)
         try:
             self._proc = self._spawner.submit(
-                lambda: subprocess.Popen(
-                    spawn_argv,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1,
-                    cwd="/" if sandbox.copy_on_write_namespace else str(self.cwd),
-                    env=env,
-                    **popen_kwargs,
-                )
+                subprocess.Popen,
+                spawn_argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                cwd="/" if sandbox.copy_on_write_namespace else str(self.cwd),
+                env=env,
+                **popen_kwargs,
             ).result()
         except Exception:
             self._stop_locked()
