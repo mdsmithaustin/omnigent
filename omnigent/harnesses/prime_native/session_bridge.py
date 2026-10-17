@@ -91,7 +91,6 @@ class SessionBridge:
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
-        # The newest status, when its post failed; a re-attach re-posts it.
         self._lost_status: Event | None = None
         self._repost_at = 0.0
         self._repost_delay = _REPOST_FIRST_S
@@ -117,7 +116,8 @@ class SessionBridge:
                     self._heartbeat,
                     self._dispatch_controls,
                     self._deliver_inbox,
-                    self._reattach_if_needed,
+                    self._follow_tui,
+                    self._retry_reposts,
                 )
             ),
         ]
@@ -189,24 +189,22 @@ class SessionBridge:
         current = next((root for root in roots if root.get("id") == self._session), None)
         return current or (roots[0] if roots else None)
 
-    async def _reattach_if_needed(self) -> None:
-        """Re-attach when the TUI moved to another root, or to retry a failed re-post once idle."""
+    async def _follow_tui(self) -> None:
         client = self._client
         if client is None:
             return
         try:
             root = self._tui_root(await client.command("list"))
         except DaemonClosedError:
-            # The other caller closed it to re-attach; a lost daemon shows on the reconnect.
             return
         if root is not None and root.get("id") != self._session:
             _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
             await client.close()
-        elif (
-            self._unposted
-            and self._transcript.loop_response_id is None
-            and time.monotonic() >= self._repost_at
-        ):
+
+    async def _retry_reposts(self) -> None:
+        client = self._client
+        idle = self._transcript.loop_response_id is None
+        if client is not None and self._unposted and idle and time.monotonic() >= self._repost_at:
             await client.close()
 
     async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
@@ -232,7 +230,6 @@ class SessionBridge:
             if self._lost_status and not any(event["type"] == _STATUS for event in history):
                 history.append(self._lost_status)
             await self._post_all(history)
-        # Omnigent is still unreachable, so retry on a backoff while Prime stays idle.
         if self._unposted:
             self._repost_at = time.monotonic() + self._repost_delay
             self._repost_delay = min(2 * self._repost_delay, _REPOST_MAX_S)
@@ -257,8 +254,7 @@ class SessionBridge:
         self._transcript, events = reduce(self._transcript, envelope)
         await self._post_all(events)
         if envelope.get("event", {}).get("type") == "agent_end":
-            # The daemon emits no event for a model or effort picked in the TUI. A re-attach
-            # can close the client first; its snapshot then carries the settings.
+            # The daemon emits no event for a model or effort picked in the TUI.
             async with self._settings_lock:
                 with contextlib.suppress(DaemonCommandError, DaemonClosedError):
                     state = await client.command("get_state", activeSessionId=self._session)
@@ -318,8 +314,7 @@ class SessionBridge:
             ):
                 path.unlink(missing_ok=True)
                 continue
-            # A /new in the TUI since the last tick's check would send this to the old session.
-            await self._reattach_if_needed()
+            await self._follow_tui()
             if client.closed:
                 return
             try:

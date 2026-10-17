@@ -554,8 +554,8 @@ async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
     bridge.prime.messages = [user, assistant]
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
     await eventually(bridge.statuses)
-    # Three attempts each: the two live items, the idle status, then both items re-posted.
-    bridge.outage.extend([503] * 15)
+    lost = ["user", "assistant", "idle status", "user again", "assistant again"]
+    bridge.outage.extend([503] * 3 * len(lost))
 
     await bridge.prime.emit(
         _event(2, {"type": "message_end", "message": user}),
@@ -772,6 +772,12 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     assert len(bridge.prime.sent("attach")) == 1
 
 
+async def _right_after_a_root_check(bridge: Bridge) -> None:
+    checks = len(bridge.prime.sent("list"))
+    while len(bridge.prime.sent("list")) == checks:
+        await asyncio.sleep(0.001)
+
+
 async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
     await ready(bridge)
     fresh = {
@@ -784,10 +790,7 @@ async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge
     }
     bridge.prime.messages = [_user("in the new session", 11)]
     bridge.prime.new_roots.append(fresh)
-    # Switch just after the bridge's per-tick root check, so its inbox poll runs first.
-    checks = len(bridge.prime.sent("list"))
-    while len(bridge.prime.sent("list")) == checks:
-        await asyncio.sleep(0.001)
+    await _right_after_a_root_check(bridge)
 
     bridge.prime.tui_root = fresh["id"]
     enqueue_user_message(bridge.paths.root, "sent right after /new")
