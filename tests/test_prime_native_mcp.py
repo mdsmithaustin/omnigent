@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -13,7 +14,14 @@ from omnigent.harnesses.prime_native import bridge, main, process
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.native.source_owner import NativeAdmission, NativeAdmissionRequest
 from omnigent.runner.native.orchestration import NativeLaunchContext
-from omnigent.spec.types import AgentSpec, MCPServerConfig
+from omnigent.spec.types import (
+    AgentSpec,
+    FunctionPolicySpec,
+    GuardrailsSpec,
+    MCPServerConfig,
+    Phase,
+    PhaseSelector,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -194,3 +202,53 @@ async def test_launch_remains_usable_when_mcp_proxy_is_unavailable(
     assert "adapter_fixture__echo" not in names
     assert "sys_os_read" in names
     assert "Prime Native MCP 'proxy' unavailable at launch: HTTPStatusError" in caplog.text
+
+
+def _guarded_spec(phase: Phase) -> AgentSpec:
+    policy = FunctionPolicySpec(name="deny_shell", on=[PhaseSelector(phase, None)])
+    return AgentSpec(
+        spec_version=1, name="prime-guarded", guardrails=GuardrailsSpec(policies=[policy])
+    )
+
+
+_TOOL_POLICY_NOTICE = (
+    "Prime 0.10 has no tool-call hook, so these policies do not check Prime's own tools, "
+    "such as ipython: deny_shell. Omnigent relay tools are still checked."
+)
+
+
+@pytest.mark.parametrize(
+    ("extension", "phase", "notice"),
+    [
+        pytest.param(
+            False,
+            Phase.TOOL_CALL,
+            _TOOL_POLICY_NOTICE,
+            id="0.10-tool-call",
+            marks=pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch"),
+        ),
+        pytest.param(True, Phase.TOOL_CALL, None, id="0.9-extension-enforces"),
+        pytest.param(False, Phase.REQUEST, None, id="0.10-request-only"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_daemon_launch_warns_when_prime_tools_skip_tool_policies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    extension: bool,
+    phase: Phase,
+    notice: str | None,
+) -> None:
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=extension),
+    )
+    monkeypatch.setenv("PRIME_AGENT_CODING_AGENT_DIR", str(tmp_path / "host-agent"))
+
+    config, _requests, _terminal = await _launch(tmp_path, monkeypatch, _guarded_spec(phase))
+
+    assert config.get("policyNotice") == notice
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert [w for w in warnings if "tool-call hook" in w] == ([notice] if notice else [])

@@ -643,6 +643,36 @@ def test_extensionless_launch_without_relay_tools_drops_a_stale_relay_server(
     }
 
 
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+def test_extensionless_launch_without_relay_tools_keeps_a_users_omnigent_server(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    mine = {"type": "http", "url": "http://127.0.0.1:1/mcp"}
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"omnigent": mine}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert _mcp_servers(paths) == {"omnigent": mine}
+
+
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+def test_relay_registration_warns_when_prime_settings_are_malformed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text("{not json")
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert f"{paths.agent_dir / 'settings.json'} is not a JSON object" in caplog.text
+    assert not (paths.root / "bridge.json").exists()
+
+
 def test_extensionless_launch_without_relay_tools_adds_no_mcp_servers(tmp_path: Path) -> None:
     source = tmp_path / "user-agent"
     source.mkdir()

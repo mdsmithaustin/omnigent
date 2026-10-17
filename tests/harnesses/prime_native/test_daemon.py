@@ -12,10 +12,12 @@ from typing import Any
 
 import pytest
 
+from omnigent.harnesses.prime_native import daemon
 from omnigent.harnesses.prime_native.daemon import (
     DaemonClient,
     DaemonClosedError,
     DaemonCommandError,
+    DaemonError,
     DaemonProtocolError,
 )
 
@@ -317,3 +319,41 @@ async def test_snapshot_line_larger_than_the_default_stream_limit(serve: Serve) 
         data = await client.command("attach", activeSessionId="f2582bad16a9")
 
     assert len(data["snapshot"]["messages"]) == 3072
+
+
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+async def test_an_unanswered_command_times_out_and_the_connection_stays_usable(
+    serve: Serve,
+) -> None:
+    state = {"id": "2", "type": "response", "command": "get_state", "success": True, "data": {}}
+
+    async def script(conn: Connection) -> None:
+        await conn.send(HELLO_0_10_0)
+        await conn.receive()
+        if await conn._reader.readline():
+            await conn.send(state)
+        await conn._reader.read()
+
+    async with asyncio.timeout(2):
+        async with await DaemonClient.connect(await serve(script)) as client:
+            with pytest.raises(DaemonError, match=r"prompt got no reply within 0\.1 s"):
+                await client.command("prompt", timeout=0.1)
+            assert await client.command("get_state") == {}
+
+
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+async def test_an_event_backlog_past_its_bound_ends_the_connection(
+    serve: Serve, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(daemon, "_EVENT_BACKLOG", 2)
+    updates = [_session_event(n, {"type": "message_update"}) for n in range(1, 6)]
+
+    async def script(conn: Connection) -> None:
+        await conn.send(HELLO_0_10_0, *updates)
+        await conn._reader.read()
+
+    async with asyncio.timeout(2):
+        async with await DaemonClient.connect(await serve(script)) as client:
+            assert [event async for event in client.events()] == []
+            with pytest.raises(DaemonClosedError):
+                await client.command("list")
