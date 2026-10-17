@@ -88,6 +88,8 @@ The helper deletes its owned scratch session through the public API while the se
 
 `scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` runs only the [metadata checks](#doctor). `--expected WRONG` supplies a drive negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
 
+`--scenario relay` runs on Prime 0.10 only. It creates a session whose agent denies `sys_os_write`, then has the fixture model drive Prime's `ipython` tool to call `mcp.call_tool("omnigent", ...)`. Require a `sys_os_read` result carrying the file nonce in a `function_call_output` item, a `Denied by policy` output for `sys_os_write`, no denied file, and no surviving `serve-mcp` process. Break the `relay_mcp` launch wiring to run the negative control; it must exit 1 at the read check. The adapter and MCP probes above stay 0.9.6-only because they pin that binary and assert the extension.
+
 `--inspect-seconds 120` retains the live session for two minutes after the assertions, then runs cleanup. The helper prints the exact conversation URL. The API server skips the bundled web UI. To inspect the conversation in a browser, run the repository's Vite development server with `OMNIGENT_URL` set to that API server's origin. Evidence and assertions remain the same.
 
 ## Full adapter probe

@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 import pexpect
 import psutil
+import yaml
 
 from omnigent.harnesses.prime_native.process import MINIMUM_VERSION, meets_minimum_version
 
@@ -548,12 +549,262 @@ def drive(
             raise RuntimeError(f"Session cleanup failed: {cleanup_error}") from cleanup_error
 
 
+RELAY_DENIAL = "RELAY_POLICY_DENY_LITERAL"
+
+
+def message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return content if isinstance(content, str) else ""
+
+
+def relay_responder(read_path: Path, write_path: Path):
+    """Drive the omnigent MCP server the way Prime 0.10 exposes it: through the python tool."""
+
+    def respond(request: dict) -> list[tuple[dict, str | None]]:
+        messages = request["messages"]
+        user = max(i for i, message in enumerate(messages) if message["role"] == "user")
+        results = [message_text(m) for m in messages[user + 1 :] if m["role"] == "tool"]
+        if results:
+            reply = "RELAY_RESULT " + results[-1]
+            return [({"role": "assistant", "content": reply}, None), ({}, "stop")]
+        prompt = message_text(messages[user])
+        if "RELAY_READ" in prompt:
+            call = f'{{"path": {json.dumps(str(read_path))}}}'
+            tool = "sys_os_read"
+        elif "RELAY_DENY" in prompt:
+            call = f'{{"path": {json.dumps(str(write_path))}, "content": "denied"}}'
+            tool = "sys_os_write"
+        else:
+            return pong(request)
+        code = f'print(await mcp.call_tool("omnigent", {tool!r}, {call}))'
+        tool_call = {
+            "index": 0,
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {"name": "ipython", "arguments": json.dumps({"code": code})},
+        }
+        return [({"role": "assistant", "tool_calls": [tool_call]}, None), ({}, "tool_calls")]
+
+    return respond
+
+
+def relay_agent(directory: Path) -> Path:
+    from omnigent.native.native_coding_agents import native_shell_terminal_spec
+
+    directory.mkdir()
+    config = {
+        "spec_version": 1,
+        "name": "prime-native-relay",
+        "prompt": "Use real tools when the model requests them.",
+        "executor": {"type": "omnigent", "config": {"harness": "prime-native"}},
+        "os_env": {"type": "caller_process", "cwd": ".", "sandbox": {"type": "none"}},
+        "terminals": native_shell_terminal_spec(),
+        "guardrails": {
+            "policies": {
+                "deny_relay_write": {
+                    "type": "function",
+                    "on": ["tool_call:sys_os_write"],
+                    "function": {
+                        "path": "omnigent.policies.function.make_fixed_action_callable",
+                        "arguments": {
+                            "action": "deny",
+                            "reason": RELAY_DENIAL,
+                            "on_phases": ["tool_call"],
+                            "on_tools": ["sys_os_write"],
+                        },
+                    },
+                }
+            }
+        },
+    }
+    (directory / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+    (directory / "AGENTS.md").write_text("Use real tools when the model requests them.\n")
+    return directory
+
+
+def drive_relay(prime: str, evidence: Path, runtime: Path, env: dict[str, str]) -> None:
+    """Call Omnigent's relay tools from Prime 0.10, one allowed and one policy-denied."""
+    from omnigent.chat import _bundle_agent
+
+    help_text = subprocess.run(
+        [prime, "--help"], capture_output=True, text=True, timeout=30, check=True
+    ).stdout
+    if "--extension" in help_text:
+        raise RuntimeError("The relay scenario needs Prime 0.10, which exposes tools through MCP")
+    workspace = runtime / "workspace"
+    nonce = uuid.uuid4().hex
+    read_path, write_path = workspace / "relay-read.txt", workspace / "relay-denied.txt"
+    read_path.write_text(f"RELAY_FILE_{nonce}\n")
+    model = make_model(evidence, relay_responder(read_path, write_path))
+    write_prime_config(runtime, model)
+    env["PRIME_AGENT_CODING_AGENT_DIR"] = str(runtime / "prime")
+    env["OMNIGENT_PRIME_PATH"] = prime
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        url = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    omni = str(REPO / ".venv/bin/omnigent")
+    process = terminal = terminal_log = session = None
+    try:
+        with (evidence / "server.log").open("w") as server_log:
+            process = subprocess.Popen(
+                [
+                    omni,
+                    "server",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    url.rsplit(":", 1)[1],
+                    "--database-uri",
+                    f"sqlite:///{runtime}/data/server.db",
+                    "--artifact-location",
+                    str(runtime / "artifacts"),
+                ],
+                cwd=workspace,
+                env=env,
+                stdout=server_log,
+                stderr=subprocess.STDOUT,
+            )
+            with httpx.Client(base_url=url, timeout=30) as client:
+
+                def healthy():
+                    if process.poll() is not None:
+                        raise RuntimeError("Omnigent server exited before readiness")
+                    try:
+                        return client.get("/health").status_code == 200
+                    except httpx.HTTPError:
+                        return False
+
+                wait_for(healthy, "owned server /health")
+                bundle = _bundle_agent(relay_agent(runtime / "relay-agent"))
+                metadata = {
+                    "labels": {"omnigent.ui": "terminal", "omnigent.wrapper": "prime-native-ui"},
+                    "terminal_launch_args": [
+                        "--offline",
+                        "--provider",
+                        "verify",
+                        "--model",
+                        "fixture",
+                        "--no-context-files",
+                    ],
+                }
+                created = client.post(
+                    "/v1/sessions",
+                    data={"metadata": json.dumps(metadata)},
+                    files={"bundle": ("relay.tar.gz", bundle, "application/gzip")},
+                )
+                created.raise_for_status()
+                session = created.json()["session_id"]
+                (evidence / "session.json").write_text(
+                    json.dumps({"session_id": session, "url": url})
+                )
+                terminal = pexpect.spawn(
+                    omni,
+                    ["prime-native", "--server", url, "--resume", session],
+                    cwd=str(workspace),
+                    env=env,
+                    encoding="utf-8",
+                    timeout=120,
+                    dimensions=(32, 120),
+                )
+                terminal_log = (evidence / "terminal.txt").open("w")
+                terminal.logfile_read = terminal_log
+                terminal.expect(r"Web UI: [^\r\n]*/c/([A-Za-z0-9_-]+)")
+
+                def ask(prompt: str, replies: int) -> tuple[str, str]:
+                    action = {
+                        "type": "message",
+                        "data": {
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": prompt}],
+                        },
+                    }
+                    client.post(f"/v1/sessions/{session}/events", json=action).raise_for_status()
+
+                    def answered():
+                        with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
+                            terminal.read_nonblocking(65536, timeout=0.05)
+                        items = client.get(f"/v1/sessions/{session}/items")
+                        items.raise_for_status()
+                        if assistant_text(items.json()).count("RELAY_RESULT") >= replies:
+                            return items.json()
+                        return None
+
+                    items = wait_for(answered, f"relay reply {replies}", 120)
+                    (evidence / f"relay-items-{replies}.json").write_text(
+                        json.dumps(items, indent=2)
+                    )
+                    outputs = "".join(
+                        item.get("output", "")
+                        for item in items["data"]
+                        if item.get("type") == "function_call_output"
+                    )
+                    return assistant_text(items).split("RELAY_RESULT")[replies], outputs
+
+                allowed, allowed_output = ask(f"RELAY_READ {uuid.uuid4().hex}", 1)
+                if f"RELAY_FILE_{nonce}" not in allowed_output:
+                    raise RuntimeError("The relayed sys_os_read result is not in a tool output")
+                denied, denied_output = ask(f"RELAY_DENY {uuid.uuid4().hex}", 2)
+                if RELAY_DENIAL not in denied_output:
+                    raise RuntimeError("The policy denial is not in a tool output")
+                if write_path.exists():
+                    raise RuntimeError("The denied sys_os_write still created its file")
+                (evidence / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "scenario": "relay.mcp-tool-and-policy-denial",
+                            "result": "PASS",
+                            "session_id": session,
+                            "allowed_reply": allowed,
+                            "denied_reply": denied,
+                        },
+                        indent=2,
+                    )
+                )
+    finally:
+        cleanup_error = None
+        if session is not None and process is not None and process.poll() is None:
+            try:
+                httpx.delete(f"{url}/v1/sessions/{session}", timeout=30).raise_for_status()
+                wait_for(lambda: not owned_prime_processes(runtime), "owned Prime shutdown", 10)
+            except (httpx.HTTPError, RuntimeError) as exc:
+                cleanup_error = exc
+        if terminal is not None:
+            with contextlib.suppress(psutil.NoSuchProcess):
+                attachment = psutil.Process(terminal.pid)
+                for child in attachment.children(recursive=True):
+                    with contextlib.suppress(psutil.NoSuchProcess):
+                        child.kill()
+                attachment.kill()
+            terminal.close(force=True)
+        if terminal_log is not None:
+            terminal_log.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        model.shutdown()
+        model.server_close()
+        if cleanup_error is not None:
+            raise RuntimeError(f"Session cleanup failed: {cleanup_error}") from cleanup_error
+
+
 def main() -> int:
     global REPO
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=REPO)
     parser.add_argument("--prime-path")
     parser.add_argument("--doctor", action="store_true")
+    parser.add_argument(
+        "--scenario",
+        choices=("messages", "relay"),
+        default="messages",
+        help="relay calls Omnigent tools from Prime 0.10 over MCP, with one policy denial",
+    )
     parser.add_argument("--expected", default=PONG)
     parser.add_argument("--inspect-seconds", type=int, choices=(0, 60, 120), default=0)
     args = parser.parse_args()
@@ -585,7 +836,10 @@ def main() -> int:
         if prime is None:
             raise RuntimeError("The requested Prime binary is unavailable")
         doctor(prime, evidence, env)
-        drive(prime, evidence, runtime, env, args.expected, args.inspect_seconds)
+        if args.scenario == "relay":
+            drive_relay(prime, evidence, runtime, env)
+        else:
+            drive(prime, evidence, runtime, env, args.expected, args.inspect_seconds)
         status = 0
     except (
         OSError,
