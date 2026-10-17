@@ -649,7 +649,6 @@ async def test_a_prompt_cut_off_before_its_reply_is_reported_not_resent(bridge: 
     assert not list((bridge.paths.root / "inbox").iterdir())
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_an_outage_logs_one_warning_until_posting_recovers(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -668,7 +667,6 @@ async def test_an_outage_logs_one_warning_until_posting_recovers(
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     user = _user("rejected", 9)

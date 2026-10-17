@@ -80,6 +80,7 @@ class SessionBridge:
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
+        self._unreachable = False
         self._claimed = False
         self._client: DaemonClient | None = None
         self._session = ""
@@ -407,12 +408,18 @@ class SessionBridge:
     async def _post_all(self, events: list[Event]) -> None:
         for event in events:
             source_id = event["data"].get("source_id")
-            if not await self._post(event) and source_id:
+            if await self._post(event) is None and source_id:
                 posted = self._transcript.posted - {source_id}
                 self._transcript = replace(self._transcript, posted=posted)
                 self._unposted = True
 
-    async def _post(self, event: Event) -> bool:
+    async def _post(self, event: Event) -> bool | None:
+        """
+        POST one event, retrying while the server is unreachable.
+
+        :returns: ``True`` once accepted, ``False`` when the server rejects it,
+            ``None`` when it stayed unreachable.
+        """
         for attempt in range(_POST_ATTEMPTS):
             try:
                 response = await self._http.post(
@@ -420,11 +427,22 @@ class SessionBridge:
                 )
             except httpx.HTTPError:
                 response = None
-            if response is not None and response.status_code < 500:
+            if response is not None and not _retryable(response.status_code):
+                if self._unreachable:
+                    self._unreachable = False
+                    _logger.info("Prime bridge reaches Omnigent again")
+                if not response.is_success:
+                    _logger.warning(
+                        "Omnigent rejected %s: %s", event["type"], response.status_code
+                    )
                 return response.is_success
             await asyncio.sleep(0.05 * 2**attempt)
-        _logger.warning("Prime bridge could not post %s", event.get("type"))
-        return False
+        if not self._unreachable:
+            self._unreachable = True
+            _logger.warning(
+                "Prime bridge cannot post to Omnigent; failed items wait for a re-attach"
+            )
+        return None
 
 
 _SETTING_EVENTS = {
@@ -440,6 +458,10 @@ _CONTROLS: dict[
     "compact": SessionBridge._compact,
     "interrupt": SessionBridge._interrupt,
 }
+
+
+def _retryable(status: int) -> bool:
+    return status in (408, 429) or status >= 500
 
 
 def _policy_notice(message: str) -> Event:
