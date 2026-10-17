@@ -7,13 +7,14 @@ is `prime-native-ui`.
 
 ## Launch and reattach
 
-Install Prime Agent **0.9.6 or newer** and `tmux` on macOS or Linux. A newer
-release is accepted when it still loads extensions (`--extension`), because the
-transcript bridge is a Prime extension. Prime 0.10.0, the Rust build, removed
-extensions, so the adapter refuses it with that reason; point
-`OMNIGENT_PRIME_PATH` at a 0.9.x binary instead. Releases after 0.9.6 are not
-separately qualified, and Stop still requires daemon protocol 7 and schema
-revision 30. Configure Prime's authentication before launching.
+Install Prime Agent **0.9.6 or newer** and `tmux` on macOS or Linux. Omnigent
+chooses the transcript bridge from the binary's `--help`. A release that lists
+`--extension` (0.9.x) loads the Omnigent extension. That path is deprecated and
+is removed in Omnigent 0.19.0. A release without it, such as the 0.10.0 Rust
+build, runs with a [daemon bridge](#prime-010-daemon-bridge) instead. Releases
+other than 0.9.6 and 0.10.0 are not separately qualified, and Stop requires
+daemon protocol 7 and schema revision 30. Configure Prime's authentication
+before launching.
 For xAI, run `/login` in Prime and select the xAI subscription or API-key entry.
 Complete the selected flow as described in the
 [pinned Prime 0.9.6 provider guide](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/docs/providers.md#xai-grok).
@@ -275,6 +276,28 @@ and whole-descendant settlement remain unqualified. Agent Profile Kit is outside
 this implementation. Root policy hooks do not confine arbitrary Python code or
 recursive descendants. [The acceptance matrix](../designs/prime-native/NO_FORK.md)
 records each original requirement and its remaining evidence.
+
+### Prime 0.10 daemon bridge
+
+Prime 0.10 cannot load extensions. Omnigent starts it with a private daemon
+socket, and a bridge in the terminal wrapper attaches to the root session (RLM
+depth 0) under the conversation's session directory. Web messages are sent as
+steered prompts and appear in the TUI as normal user turns. Model, effort,
+compact, and interrupt map to the daemon's `set_model`, `set_thinking_level`,
+`compact`, and `abort` commands. An interrupt also sends `resume_queue`, because
+Prime pauses queued input after an abort. Resume uses Prime's session UUID.
+
+The daemon reports no event for a model or effort chosen in the TUI, so the web
+UI learns it when that turn ends. After a lost daemon connection the bridge
+reattaches and posts the messages it missed as whole messages, without streamed
+deltas. A new conversation's Prime settings skip the first-run prompt and leave
+trace sharing off, unless the host settings already answer that prompt. The
+bridge writes its diagnostics to `bridge.log` in the conversation's runtime
+directory.
+
+Three 0.9.x features are missing on 0.10. Omnigent policy cannot block Prime's
+own tool calls, because Prime 0.10 has no pre-tool-call hook. Omnigent relay
+tools and the injected task list are not registered.
 
 ## Remaining roadmap
 
