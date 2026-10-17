@@ -75,11 +75,26 @@ Controls map one to one: `model` -> `set_model` then `get_state`; `effort` ->
 `abort` then `resume_queue`. The bridge posts the model and effort change events
 itself because the daemon emits none.
 
+## Relay tools on 0.10
+
+Prime 0.10 reads `mcpServers` from the agent dir's `settings.json` and exposes
+each enabled server to the model through the kernel's `mcp` object, not as native
+tools. The launch writes an `omnigent` stdio entry (`type`, `command`, `args`,
+and an `{"env": "OMNIGENT_DATA_DIR"}` reference) into the per-session copy, keeping
+the user's entries and dropping the entry when the session has no relay tools. The
+command is the shared shim `python -I -m omnigent.harnesses.claude_native.bridge
+serve-mcp --bridge-dir <root>`; the launch also seeds the token-only `bridge.json`
+it reads. Prime passes a stdio child only `HOME`, `PATH`, `TMPDIR` and `{"env": NAME}`
+references, rejecting literal env values and unset references. Calls reach the
+runner's relay and then the server's MCP proxy, which runs TOOL_CALL policy.
+Observed on 0.10.0: no approval prompt in the TUI, and a denied call raises
+`McpToolError`.
+
 ## Known gaps on 0.10
 
 - Policy hard-blocks of Prime's own tool calls are not enforced.
-- Omnigent relay tools reach Prime only if MCP registration through the
-  per-session `settings.json` works; otherwise they are unavailable.
+- Tools from an agent's declared MCP servers are not advertised: the `serve-mcp`
+  shim lists only the relay's built-in tools (`tool_relay.json`).
 - The injected `task` todo tool is unavailable.
 - Model or effort changed in the TUI reaches the web UI only on the next
   `get_state` poll at a turn boundary.

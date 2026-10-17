@@ -132,9 +132,10 @@ A Prime Native agent receives its custom instructions after Prime's base
 instructions. Omnigent appends framework instructions through the shared
 runtime composer. The adapter does not copy framework policy into Prime.
 
-An agent's declared MCP tools use Omnigent's existing session proxy. Prime
-advertises the discovered tools through the shared extension, and the relay
-executes them. Discovery failures appear in the server or runner logs. The
+An agent's declared MCP tools use Omnigent's existing session proxy. On Prime
+0.9.x the shared extension advertises the discovered tools and the relay executes
+them. On Prime 0.10 they are not yet advertised (see the
+[daemon bridge](#prime-010-daemon-bridge)). Discovery failures appear in the server or runner logs. The
 native terminal still starts when an additive MCP server is unavailable.
 
 Relayed tool callbacks throw when dispatch returns an error or the live root
@@ -297,9 +298,22 @@ trace sharing off, unless the host settings already answer that prompt. The
 bridge writes its diagnostics to `bridge.log` in the conversation's runtime
 directory.
 
-Three 0.9.x features are missing on 0.10. Omnigent policy cannot block Prime's
-own tool calls, because Prime 0.10 has no pre-tool-call hook. Omnigent relay
-tools and the injected task list are not registered.
+Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
+relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
+adds a stdio entry to the conversation's own `settings.json` that runs the shared
+`serve-mcp` shim against the session relay. Your other `mcpServers` entries are
+kept, and your host `~/.prime/agent/settings.json` is never written. Prime lists
+the server in its prompt and the model calls it from the `ipython` tool, for
+example `await mcp.call_tool("omnigent", "sys_os_read", {...})`. Calls run through
+the server's MCP proxy, so TOOL_CALL policy still applies: a denied call raises
+`McpToolError` with the policy reason. Prime 0.10.0 showed no approval prompt for
+these calls.
+
+Two 0.9.x features are missing on 0.10. Omnigent policy cannot block Prime's
+own tool calls, because Prime 0.10 has no pre-tool-call hook. Only the relay tools
+above are policy-gated. The injected task list is not registered. Tools from an
+agent's declared MCP servers are not advertised to Prime on 0.10, because the
+shim serves only the relay's built-in tool list.
 
 ## Remaining roadmap
 
