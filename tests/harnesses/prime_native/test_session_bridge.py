@@ -666,3 +666,18 @@ async def test_an_outage_logs_one_warning_until_posting_recovers(
 
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
+
+
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Bridge) -> None:
+    await ready(bridge)
+    user = _user("rejected", 9)
+    bridge.outage.append(422)
+    await bridge.prime.emit(_event(1, {"type": "message_end", "message": user}))
+    await eventually(lambda: not bridge.outage)
+
+    await bridge.prime.emit(_event(2, {"type": "agent_end", "messages": [user]}))
+
+    await eventually(lambda: "external_session_status" in bridge.posted_types())
+    await asyncio.sleep(2 * TICK_S)
+    assert len(bridge.prime.sent("attach")) == 1
