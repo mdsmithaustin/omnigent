@@ -17,10 +17,11 @@ so the bridge accepts the limit and recovers by snapshot: after any reconnect it
 posts the snapshot messages it has not posted, keyed by stable `source_id`s, so a
 repeat post is harmless. A conversation item whose post finds Omnigent
 unreachable leaves the posted set, and the bridge keeps the newest status post
-lost that way. It re-attaches after the next `agent_end`, so the snapshot posts
-the items again and the lost status follows them. While a re-post still fails,
-the bridge retries whenever Prime is idle, waiting 1 s and doubling the wait up
-to 30 s. Usage and delta posts lost that way are not recovered. Worker-crash
+lost that way. The bridge re-attaches after the next `agent_end`, so the snapshot
+posts the items again and the lost status follows them. While a re-post still
+fails, the bridge retries whenever no agent loop is open, waiting 1 s and
+doubling the wait up to 30 s. Other posts lost that way, such as usage,
+compaction, interrupt, and delta events, are not recovered. Worker-crash
 recovery stays unqualified.
 
 `--mode rpc`, `--mode json`, and `--mode acp` each run a private session that no
@@ -79,16 +80,18 @@ reduce(state, event)    pure; returns (state, [omnigent event]) using the same
                         /events shapes the extension posted.
 reconcile(state, msgs,   pure; returns events for snapshot messages whose
   streaming)            source_ids are not yet posted. It closes a loop that
-                        ended while detached and opens one that started
+                        ended while detached, and opens as running a loop
+                        that started while detached
                         (omnigent/harnesses/prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
                         attach to the root the TUI shows, then a session loop
                         (events -> POST /events) and one task per tick step:
                         binding.json heartbeat, controls/requests -> daemon
                         commands -> controls/results, inbox -> prompt (plus
-                        input_ready), and re-attach when the TUI's root changes
-                        or failed posts wait while Prime is idle. The inbox
-                        checks the TUI's root before each prompt.
+                        input_ready), and re-attach when the TUI's root
+                        changes, or when posts failed, no agent loop is open,
+                        and the retry backoff has passed. The inbox checks the
+                        TUI's root before each prompt.
                         The first beat claims binding.json while the
                         wrapper's owner claim names this process; after that
                         the beat, inbox, and control answers also require

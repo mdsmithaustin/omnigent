@@ -324,13 +324,14 @@ the bridge was detached shows as running. When Omnigent cannot be reached, the
 bridge retries each post briefly. At the end of the turn it reattaches and posts
 the conversation items and the latest session status that did not arrive. If
 Omnigent is still unreachable, the bridge tries again while Prime is idle, first
-after 1 second and then doubling the wait up to 30 seconds. Usage and
-streamed-delta posts lost in an outage are not re-posted. Only the bridge that
-currently holds the conversation's control binding reads web messages and
-answers controls. A new conversation's Prime settings skip the first-run prompt
-and leave trace sharing off, unless the host settings already answer that
-prompt. The bridge writes its diagnostics to `bridge.log` in the conversation's
-runtime directory, rotated at 1 MB with one backup.
+after 1 second and then doubling the wait up to 30 seconds. Other posts lost in
+an outage, such as usage, compaction progress, interrupt notices, and streamed
+deltas, are not re-posted. Only the bridge that currently holds the
+conversation's control binding reads web messages and answers controls. A new
+conversation's Prime settings skip the first-run prompt and leave trace sharing
+off, unless the host settings already answer that prompt. The bridge writes its
+diagnostics to `bridge.log` in the conversation's runtime directory, rotated at
+1 MB with one backup.
 
 Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
 relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
@@ -360,10 +361,10 @@ Prime 0.10 lacks these 0.9.x features:
   not yet observed on 0.10.
 - Tools from an agent's declared MCP servers are not advertised to Prime,
   because the shim serves only the relay's built-in tool list.
-- Streamed text can be lost. If the bridge falls 1,024 session events behind,
-  for example while posts to Omnigent stall during a long reply, it drops those
-  events, logs a warning in `bridge.log`, and reattaches. That turn's messages
-  then arrive whole from the snapshot.
+- The web UI can miss part of a reply's live stream. If the bridge falls 1,024
+  session events behind, for example while posts to Omnigent stall during a long
+  reply, it drops those events, logs a warning in `bridge.log`, and reattaches.
+  The reply then appears whole from the snapshot.
 - The TUI has no `/omnigent` command and no Omnigent status line or title. On
   0.9.x the extension showed the conversation URL there. Use the `Web UI:` link
   that `omnigent prime-native` prints before it attaches.
