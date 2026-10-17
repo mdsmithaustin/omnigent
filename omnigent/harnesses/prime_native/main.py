@@ -63,7 +63,7 @@ def _materialize_prime_agent_spec(tmpdir: Path) -> Path:
                 "name": PRIME_NATIVE_WRAPPER_VALUE,
                 "prompt": (
                     "Prime Native runs in the session terminal. "
-                    "Web messages use its extension inbox."
+                    "Web messages reach it through the session inbox."
                 ),
                 "executor": {"harness": "prime-native"},
                 "spawn": True,

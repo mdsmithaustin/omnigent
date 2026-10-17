@@ -319,16 +319,18 @@ The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
 reattaches and posts the messages it missed as whole messages, without streamed
 deltas. A turn that ended while the bridge was detached shows as idle, or as
-failed when it was aborted or ended in a model error. When Omnigent cannot be
-reached, the bridge retries briefly, then re-posts the conversation items it
-missed from a fresh attach snapshot at the next `agent_end`. Status, usage, and
-streamed-delta posts lost in an outage are not re-posted, so a turn can show as
-running until the next one ends. Only the bridge that currently holds the
-conversation's control binding reads web messages and answers controls. A new
-conversation's Prime settings skip the first-run prompt and leave trace sharing
-off, unless the host settings already answer that prompt. The bridge writes its
-diagnostics to `bridge.log` in the conversation's runtime directory, rotated at
-1 MB with one backup.
+failed when it was aborted or ended in a model error. A turn that started while
+the bridge was detached shows as running. When Omnigent cannot be reached, the
+bridge retries each post briefly. At the end of the turn it reattaches and posts
+the conversation items and the latest session status that did not arrive. If
+Omnigent is still unreachable, the bridge tries again while Prime is idle, first
+after 1 second and then doubling the wait up to 30 seconds. Usage and
+streamed-delta posts lost in an outage are not re-posted. Only the bridge that
+currently holds the conversation's control binding reads web messages and
+answers controls. A new conversation's Prime settings skip the first-run prompt
+and leave trace sharing off, unless the host settings already answer that
+prompt. The bridge writes its diagnostics to `bridge.log` in the conversation's
+runtime directory, rotated at 1 MB with one backup.
 
 Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
 relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
@@ -358,6 +360,10 @@ Prime 0.10 lacks these 0.9.x features:
   not yet observed on 0.10.
 - Tools from an agent's declared MCP servers are not advertised to Prime,
   because the shim serves only the relay's built-in tool list.
+- Streamed text can be lost. If the bridge falls 1,024 session events behind,
+  for example while posts to Omnigent stall during a long reply, it drops those
+  events, logs a warning in `bridge.log`, and reattaches. That turn's messages
+  then arrive whole from the snapshot.
 - The TUI has no `/omnigent` command and no Omnigent status line or title. On
   0.9.x the extension showed the conversation URL there. Use the `Web UI:` link
   that `omnigent prime-native` prints before it attaches.

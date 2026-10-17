@@ -10,7 +10,7 @@ import pytest
 
 @pytest.mark.skipif(
     not os.environ.get("OMNIGENT_PRIME_PATH"),
-    reason="Set OMNIGENT_PRIME_PATH to qualified Prime Agent 0.9.6",
+    reason="Set OMNIGENT_PRIME_PATH to Prime Agent 0.9.6 or newer",
 )
 def test_prime_native_terminal_and_http_messages() -> None:
     repo = Path(__file__).resolve().parents[2]

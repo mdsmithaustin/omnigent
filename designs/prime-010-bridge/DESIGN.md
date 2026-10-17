@@ -16,9 +16,12 @@ still reports `replay.status: "unavailable"`. The extension alternative is gone,
 so the bridge accepts the limit and recovers by snapshot: after any reconnect it
 posts the snapshot messages it has not posted, keyed by stable `source_id`s, so a
 repeat post is harmless. A conversation item whose post finds Omnigent
-unreachable leaves the posted set, and the bridge re-attaches after the next
-`agent_end` so the snapshot posts it again. Status, usage, and delta posts lost
-that way are not recovered. Worker-crash recovery stays unqualified.
+unreachable leaves the posted set, and the bridge keeps the newest status post
+lost that way. It re-attaches after the next `agent_end`, so the snapshot posts
+the items again and the lost status follows them. While a re-post still fails,
+the bridge retries whenever Prime is idle, waiting 1 s and doubling the wait up
+to 30 s. Usage and delta posts lost that way are not recovered. Worker-crash
+recovery stays unqualified.
 
 `--mode rpc`, `--mode json`, and `--mode acp` each run a private session that no
 TUI can attach to. `prime-agent send` delivers an agent message, not user input.
@@ -75,15 +78,17 @@ TranscriptState         response_id, turn counter, per-message stream ids,
 reduce(state, event)    pure; returns (state, [omnigent event]) using the same
                         /events shapes the extension posted.
 reconcile(state, msgs,   pure; returns events for snapshot messages whose
-  streaming)            source_ids are not yet posted, and closes a loop that
-                        ended while detached (omnigent/harnesses/
-                        prime_native/transcript.py).
+  streaming)            source_ids are not yet posted. It closes a loop that
+                        ended while detached and opens one that started
+                        (omnigent/harnesses/prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
                         attach to the root the TUI shows, then a session loop
                         (events -> POST /events) and one task per tick step:
                         binding.json heartbeat, controls/requests -> daemon
                         commands -> controls/results, inbox -> prompt (plus
-                        input_ready), and re-attach when the TUI's root changes.
+                        input_ready), and re-attach when the TUI's root changes
+                        or failed posts wait while Prime is idle. The inbox
+                        checks the TUI's root before each prompt.
                         The first beat claims binding.json while the
                         wrapper's owner claim names this process; after that
                         the beat, inbox, and control answers also require
@@ -125,4 +130,6 @@ Observed on 0.10.0: no approval prompt in the TUI, and a denied call raises
 - Model or effort changed in the TUI reaches the web UI only on the next
   `get_state` poll at a turn boundary.
 - Events missed during a disconnect are recovered as whole messages, without deltas.
+  When 1024 events wait unread, the daemon client logs a warning, drops them, and
+  closes the connection, so they are recovered the same way.
 - The TUI has no `/omnigent` command, status line, or title; the extension set them.
