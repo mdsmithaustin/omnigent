@@ -18,13 +18,13 @@ Run `omnigent prime-native --help`, launch `omnigent prime-native`, or choose Pr
 ## Driving it with the CLI and HTTP API
 
 Positive launch and catalog checks require the repository environment and a real
-Prime 0.9.6 binary. Deliberately missing-executable and controlled unsupported-version
+Prime 0.9.6 or 0.10 binary. Deliberately missing-executable and controlled unsupported-version
 checks use separate isolated configuration, data, workspace, and server allocations.
 They do not require a working Prime binary at the selected path.
 
 - For positive metadata prerequisites, follow [Doctor mode](../SKILL.md#doctor) for the required commands, output markers, receipts, and privacy limits.
 - Run `prime-agent model list` with isolated Prime configuration. Require its known table columns when models exist. Distinguish Prime's recognized empty-catalog response from a failed command or malformed output.
-- Launch with a fixture provider and model. Read the session's model options and active model after extension readiness. Require the selected provider/model ID.
+- Launch with a fixture provider and model. Read the session's model options and active model once the control binding is ready (the extension's on 0.9.x, the daemon bridge's on 0.10). Require the selected provider/model ID.
 - For the missing-executable case, set `OMNIGENT_PRIME_PATH` to a deliberately absent absolute path and use the public `omnigent prime-native --server <owned URL>` command. Require exit 1 and the exact missing-binary diagnostic below.
 - For the unsupported-version case, select a controlled executable that reports `0.9.5` only for `--version`. Require exit 1 and the exact version diagnostic below. A version-only fixture does not establish native operation of Prime 0.9.5.
 - For each refusal, require zero sessions from `omnigent host status --server <owned URL> --sessions --json`, no Prime worker or alternate harness from that attempt, and a version-only trace for the controlled fixture. Any session, worker, fallback, or extra fixture invocation fails the case.
@@ -32,7 +32,7 @@ They do not require a working Prime binary at the selected path.
 ## Create a fresh executable-refusal allocation
 
 This procedure is source-derived and **NOT_RUN**. It adds no runtime qualification.
-Use it for either negative case, separately from positive Prime 0.9.6 checks.
+Use it for either negative case, separately from positive Prime checks.
 Save the Bash block below as `/tmp/prime-refusal-recipe.sh`. From this checkout's
 root, run these two commands separately. A nonzero exit fails that run.
 

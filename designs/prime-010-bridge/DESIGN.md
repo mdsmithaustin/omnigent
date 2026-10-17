@@ -15,7 +15,9 @@ attach ignored replay cursors and a killed worker did not recover. Prime 0.10
 still reports `replay.status: "unavailable"`. The extension alternative is gone,
 so the bridge accepts the limit and recovers by snapshot: after any reconnect it
 posts the snapshot messages it has not posted, keyed by stable `source_id`s, so a
-repeat post is harmless. Worker-crash recovery stays unqualified.
+repeat post is harmless. An item whose post finds Omnigent unreachable leaves the
+posted set, and the bridge re-attaches after the next `agent_end` so the snapshot
+posts it again. Worker-crash recovery stays unqualified.
 
 `--mode rpc`, `--mode json`, and `--mode acp` each run a private session that no
 TUI can attach to. `prime-agent send` delivers an agent message, not user input.
@@ -41,8 +43,14 @@ Probe logs live outside the repo; each fact below was observed on 0.10.0 darwin-
   `compaction_start|end`. These are Pi's RPC event shapes.
 - `prompt {activeSessionId, message, streamingBehavior?}` renders in the TUI as a
   normal user turn. `abort` ends the turn with `stopReason: "aborted"`, after which
-  prompts fail with "queued session input is suspended" until `resume_queue` is
-  sent (it replies `success:false` "No queued work to resume" and still clears it).
+  plain prompts fail with "queued session input is suspended" until `resume_queue`
+  is sent (it replies `success:false` "No queued work to resume" and still clears
+  it). Esc in the TUI pauses input the same way. A `steer` prompt is still
+  admitted and clears the pause; `get_state` shows nothing of it.
+- `/new` in the TUI starts a separate runtime: a new `rlmDepth: 0` id with its own
+  `sessionId`, and an attach to the old id receives nothing for it. `/resume` goes
+  back to the earlier id. `list` reports `attachedClients` per session, which shows
+  the root the TUI is on.
 - `set_model` and `set_thinking_level` emit no event. `get_state` reflects them.
 - `compact` emits `compaction_start` and `compaction_end` (with `errorMessage` on failure).
 - `--resume <session UUID>` restores the conversation under a new runtime id;
@@ -60,14 +68,19 @@ TranscriptState         response_id, turn counter, per-message stream ids,
                         source_ids already posted, cumulative usage.
 reduce(state, event)    pure; returns (state, [omnigent event]) using the same
                         /events shapes the extension posted.
-reconcile(state, msgs)  pure; returns events for snapshot messages whose
-                        source_ids are not yet posted (omnigent/harnesses/
+reconcile(state, msgs,   pure; returns events for snapshot messages whose
+  streaming)            source_ids are not yet posted, and closes a loop that
+                        ended while detached (omnigent/harnesses/
                         prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
-                        discover root session, attach, then three loops:
-                        events -> POST /events, inbox -> prompt,
-                        controls/requests -> daemon commands -> controls/results
-                        plus binding.json heartbeat and input_ready.
+                        attach to the root the TUI shows, then a session loop
+                        (events -> POST /events) and one task per tick step:
+                        binding.json heartbeat, controls/requests -> daemon
+                        commands -> controls/results, inbox -> prompt (plus
+                        input_ready), and re-attach when the TUI's root changes.
+                        Only the bridge holding binding.json and the wrapper's
+                        owner claim renews the binding, reads the inbox, and
+                        answers controls.
 ```
 
 Controls map one to one: `model` -> `set_model` then `get_state`; `effort` ->
@@ -92,10 +105,13 @@ Observed on 0.10.0: no approval prompt in the TUI, and a denied call raises
 
 ## Known gaps on 0.10
 
-- Policy hard-blocks of Prime's own tool calls are not enforced.
+- Policy hard-blocks of Prime's own tool calls are not enforced. A launch whose
+  spec has tool-phase policies logs a warning and posts a
+  `native_policy_not_enforced` error item naming them.
 - Tools from an agent's declared MCP servers are not advertised: the `serve-mcp`
   shim lists only the relay's built-in tools (`tool_relay.json`).
 - The injected `task` todo tool is unavailable.
 - Model or effort changed in the TUI reaches the web UI only on the next
   `get_state` poll at a turn boundary.
 - Events missed during a disconnect are recovered as whole messages, without deltas.
+- The TUI has no `/omnigent` command, status line, or title; the extension set them.

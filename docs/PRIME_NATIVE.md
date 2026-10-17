@@ -83,7 +83,8 @@ return 503 and retain the exact terminal owner, including failed launches.
 
 The model picker uses Prime's available registry. Before launch, the host reads
 `prime-agent model list` with Prime's credentials. A live session reports its
-own registry through the extension. Model identifiers contain the exact
+own registry through the extension on 0.9.x and through the daemon's
+`get_available_models` on 0.10. Model identifiers contain the exact
 `provider/model` pair. Pi credentials and curated model lists are not a fallback
 when Prime discovery fails.
 
@@ -106,18 +107,24 @@ A settings acknowledgment requires a native callback whose observation reaches
 Omnigent with HTTP 2xx. Rejected or missing publication returns 504 after a
 possible mutation. Prime 0.9.6 emits no callback when a requested model or effort
 is already active, so those requests can also return 504. Omnigent does not
-invent an observation or replay the control.
+invent an observation or replay the control. Prime 0.10 emits no settings
+event, so its bridge reads the setting back with `get_state` and publishes that
+observation itself.
 
-Each callback publication has a one-second deadline within the control's
-remaining budget. A slower response can return 504 even if the server later
-stores the observation. Inspect the displayed native state before another
-control.
+On 0.9.x each callback publication has a one-second deadline within the
+control's remaining budget. On 0.10 the control's whole remaining budget bounds
+the daemon commands and the publication. A slower response can return 504 even
+if the server later stores the observation. Inspect the displayed native state
+before another control.
 
 Send `{"type":"compact"}` or `{"type":"interrupt"}` to
-`POST /v1/sessions/{id}/events` for the corresponding control. Compaction waits
-for Prime's completion callback. Interrupt returns admission before the native
-aborted result settles. Messages also receive HTTP 202 for admission. Delivery
-to the extension inbox does not complete a native turn.
+`POST /v1/sessions/{id}/events` for the corresponding control. On 0.9.x,
+compaction waits for Prime's completion callback. On 0.10 it returns when the
+daemon answers `compact`; a failed compaction comes back as a rejection, and the
+web UI follows progress through `compaction_start` and `compaction_end` events.
+Interrupt returns admission before the native aborted result settles. Messages
+also receive HTTP 202 for admission. Delivery to the inbox, which the extension
+or the 0.10 bridge reads, does not complete a native turn.
 
 Rejected controls return a non-success response. A missing live binding returns
 503. An expired acknowledgment after possible mutation returns 504 and is not
@@ -258,9 +265,11 @@ inspection is prohibited. A separate external observer does not bypass this call
 
 Prime is a fork of Pi that now develops independently, as described in
 [Prime's README](https://github.com/PrimeIntellect-ai/prime-agent/blob/e260085dd8f742e0def3d871860c9a888b114851/packages/coding-agent/README.md).
-The adapters share
-the extension inbox, message conversion, and tool relay transport. Prime has
-its own launch, version check, session resume, and daemon shutdown code.
+On 0.9.x the adapters share
+the extension inbox, message conversion, and tool relay transport. On 0.10 the
+bridge reads the same inbox and posts the same event shapes from its own
+converter, and relay tools reach Prime through the shared `serve-mcp` shim. Prime
+has its own launch, version check, session resume, and daemon shutdown code.
 Pi's `--session` and `--list-models` are not Prime arguments. Use
 `prime-agent model list` for Prime's credential-filtered model catalog.
 
@@ -268,7 +277,9 @@ Prime loads external extensions into recursive RLM children. Omnigent binds its
 extension effects to the public session header's root depth. Children continue
 executing in Prime. Their extension instances do not consume root controls or
 publish their transcript as the Omnigent root conversation. Missing or invalid
-depth is unknown and does not admit a root binding.
+depth is unknown and does not admit a root binding. On 0.10 the bridge attaches
+only to a root session (RLM depth 0) under the conversation's session directory,
+so child sessions' events are not mirrored as the root conversation.
 
 The published daemon failed the replay-cursor and tested worker-recovery gates,
 so the 0.9.x adapter keeps the extension transport. Prime 0.10 has no extension,
@@ -284,36 +295,56 @@ records each original requirement and its remaining evidence.
 
 Prime 0.10 cannot load extensions. Omnigent starts it with a private daemon
 socket, and a bridge in the terminal wrapper attaches to the root session (RLM
-depth 0) under the conversation's session directory. Web messages are sent as
-steered prompts and appear in the TUI as normal user turns. Model, effort,
-compact, and interrupt map to the daemon's `set_model`, `set_thinking_level`,
-`compact`, and `abort` commands. An interrupt also sends `resume_queue`, because
-Prime pauses queued input after an abort. Resume uses Prime's session UUID.
+depth 0) that the TUI shows under the conversation's session directory. When
+`/new` or `/resume` in the TUI switches sessions, the bridge reattaches to the
+new one, posts its messages, and records its session UUID for resume. Web
+messages are sent as steered prompts and appear in the TUI as normal user turns.
+Each web message reaches Prime at most once. If the daemon connection fails
+before Prime confirms a prompt, the conversation shows that the message may not
+have arrived, and it is not resent. Model, effort, compact, and interrupt map to
+the daemon's `set_model`, `set_thinking_level`, `compact`, and `abort` commands.
+Prime pauses queued input after an abort or an Esc in the TUI, so an interrupt
+also sends `resume_queue`, and so does a web message that Prime refuses while
+paused. Resume uses Prime's session UUID.
 
 The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
 reattaches and posts the messages it missed as whole messages, without streamed
-deltas. A new conversation's Prime settings skip the first-run prompt and leave
-trace sharing off, unless the host settings already answer that prompt. The
-bridge writes its diagnostics to `bridge.log` in the conversation's runtime
-directory.
+deltas. A turn that ended while the bridge was detached shows as idle, or as
+failed when it was aborted. When Omnigent cannot be reached, the bridge retries
+briefly, then posts the missed messages from a fresh attach snapshot after the
+next turn ends. Only the bridge that currently holds the conversation's control
+binding reads web messages and answers controls. A new conversation's Prime
+settings skip the first-run prompt and leave trace sharing off, unless the host
+settings already answer that prompt. The bridge writes its diagnostics to
+`bridge.log` in the conversation's runtime directory, rotated at 1 MB with one
+backup.
 
 Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
 relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
 adds a stdio entry to the conversation's own `settings.json` that runs the shared
 `serve-mcp` shim against the session relay. Your other `mcpServers` entries are
-kept, and your host `~/.prime/agent/settings.json` is never written. Prime lists
+kept, and your host `~/.prime/agent/settings.json` is never written. An entry of
+your own named `omnigent` gives way only while the session has relay tools. Prime lists
 the server in its prompt and the model calls it from the `ipython` tool, for
 example `await mcp.call_tool("omnigent", "sys_os_read", {...})`. Calls run through
 the server's MCP proxy, so TOOL_CALL policy still applies: a denied call raises
 `McpToolError` with the policy reason. Prime 0.10.0 showed no approval prompt for
 these calls.
 
-Two 0.9.x features are missing on 0.10. Omnigent policy cannot block Prime's
-own tool calls, because Prime 0.10 has no pre-tool-call hook. Only the relay tools
-above are policy-gated. The injected task list is not registered. Tools from an
-agent's declared MCP servers are not advertised to Prime on 0.10, because the
-shim serves only the relay's built-in tool list.
+Prime 0.10 lacks these 0.9.x features:
+
+- Omnigent policy cannot block Prime's own tool calls, such as `ipython`,
+  because Prime 0.10 has no tool-call hook. Only the relay tools above are
+  policy-gated. When the agent declares tool-call or tool-result policies, the
+  launch logs a warning in the runner log, and the conversation shows a
+  `native_policy_not_enforced` notice that names them.
+- The injected task list is not registered.
+- Tools from an agent's declared MCP servers are not advertised to Prime,
+  because the shim serves only the relay's built-in tool list.
+- The TUI has no `/omnigent` command and no Omnigent status line or title. On
+  0.9.x the extension showed the conversation URL there. Use the `Web UI:` link
+  that `omnigent prime-native` prints before it attaches.
 
 ## Remaining roadmap
 
@@ -366,8 +397,9 @@ uv sync --group dev
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
 ```
 
-Supply the actual path to your Prime 0.9.6 binary. Require exit code zero and
-`result.json` with `PASS` in the printed evidence directory. Inspect
+Supply the actual path to your Prime binary, 0.9.6 or 0.10. For 0.10, also run
+`--scenario relay` to exercise the relay tools and a policy denial. Require exit
+code zero and `result.json` with `PASS` in the printed evidence directory. Inspect
 `terminal-items.json` for both submitted messages and both
 `PRIME_NATIVE_PONG` replies. `cleanup.json` must report no owned survivors.
 `reattach.json` records the same native identity and live process IDs across

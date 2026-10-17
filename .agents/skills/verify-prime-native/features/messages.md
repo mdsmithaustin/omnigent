@@ -30,7 +30,12 @@ The shared Pi file protocol acknowledges enqueue before Prime finishes. An empty
 
 Public messages return HTTP 202 for admission. Prime's internal delivery return
 cannot publish `response.completed` or complete a declared child. The extension
-observes the actual native turn. Requests with `stream=true` also retain admission
-semantics for Prime.
+on 0.9.x, or the daemon bridge on 0.10, observes the actual native turn. Requests
+with `stream=true` also retain admission semantics for Prime.
+
+On 0.10 a web message reaches Prime at most once. If the daemon connection fails
+before Prime confirms the prompt, the conversation shows a
+`pi_followup_delivery_dropped` error saying it may not have arrived, and the
+bridge does not resend it.
 
 The default helper covers HTTP and terminal completion. Empty, loading, provider error, queued follow-up, and long-text states remain gaps until separately driven.

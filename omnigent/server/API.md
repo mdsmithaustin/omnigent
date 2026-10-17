@@ -1159,12 +1159,14 @@ mirror that status into the parent stream as `session.child_session.updated`
 when the child is registered for fan-out. New user-facing event types should
 default to the queue.
 
-Prime Native uses its extension's control receipts. A successful interrupt
-returns HTTP 202 with `{"queued": true, "status": "interrupt_accepted"}`.
-That reply reports abort admission. The extension publishes the later native
-interruption separately, and the reply does not establish descendant settlement.
-A successful compact returns HTTP 202 with `{"queued": false}` after Prime's
-completion callback. Native rejection returns 409, a missing live binding
+Prime Native uses control receipts from its extension on Prime 0.9.x and from
+its daemon bridge on Prime 0.10. A successful interrupt returns HTTP 202 with
+`{"queued": true, "status": "interrupt_accepted"}`. That reply reports abort
+admission. The extension or bridge publishes the later native interruption
+separately, and the reply does not establish descendant settlement. A successful
+compact returns HTTP 202 with `{"queued": false}` after Prime's completion
+callback on 0.9.x, or once Prime's daemon answers `compact` on 0.10. Native
+rejection returns 409, a missing live binding
 returns 503, and an unproved result after possible mutation returns 504. Omnigent
 does not retry that uncertain control. Prime Native message events retain HTTP
 202 admission semantics, including requests for a streamed response. An inbox
