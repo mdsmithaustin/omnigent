@@ -118,7 +118,11 @@ async def test_prime_launch_reservation_survives_terminal_dispatch_until_identit
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
     monkeypatch.setattr(process, "runtime_paths", lambda _: paths)
-    monkeypatch.setattr(main, "resolve_prime_executable", lambda: "/qualified/prime-agent")
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=True),
+    )
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -204,7 +208,11 @@ async def test_provider_launch_owns_terminal_and_reuses_only_native_saved_sessio
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
     monkeypatch.setattr(main, "complete_prime_launch", lambda *_args: None)
-    monkeypatch.setattr(main, "resolve_prime_executable", lambda: "/qualified/prime-agent")
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=True),
+    )
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://omnigent.test")
     published = []

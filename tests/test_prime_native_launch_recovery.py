@@ -40,7 +40,11 @@ def launch_paths(
     native_source_server.write_prime_config(paths.root)
     monkeypatch.setenv("RUNNER_SERVER_URL", native_source_server.url)
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
-    monkeypatch.setattr(main, "resolve_prime_executable", lambda: "/qualified/prime-agent")
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=True),
+    )
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     return paths
 

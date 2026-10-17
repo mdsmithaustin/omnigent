@@ -521,6 +521,193 @@ def test_launch_uses_private_config_temp_and_native_resume(tmp_path: Path) -> No
     assert json.loads((source / "settings.json").read_text()) == {"defaultModel": "fixture"}
 
 
+def test_extensionless_launch_points_prime_at_the_private_daemon_socket(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    launch = build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=None,
+        config=paths.root / "config.json",
+        external_session_id="01a14ae0-f698-7360-afe7-c791001a2fbd",
+        environ={"PRIME_AGENT_CODING_AGENT_DIR": str(source)},
+    )
+
+    assert launch.argv == (
+        "--session-dir",
+        str(paths.session_dir),
+        "--resume",
+        "01a14ae0-f698-7360-afe7-c791001a2fbd",
+    )
+    socket_path = paths.temp_dir / f"prime-agent-{os.getuid()}" / "daemon.sock"
+    assert launch.env["PRIME_AGENT_DAEMON_SOCKET"] == str(socket_path)
+    assert json.loads((paths.agent_dir / "settings.json").read_text()) == {
+        "defaultModel": "fixture",
+        "onboardingShown": True,
+        "agentTraces": {"enabled": False},
+    }
+    assert json.loads((source / "settings.json").read_text()) == {"defaultModel": "fixture"}
+
+
+def test_extensionless_launch_keeps_answered_onboarding(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    answered = '{"onboardingShown": true, "agentTraces": {"enabled": true}}'
+    (source / "settings.json").write_text(answered)
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=None,
+        config=paths.root / "config.json",
+        environ={"PRIME_AGENT_CODING_AGENT_DIR": str(source)},
+    )
+
+    assert (paths.agent_dir / "settings.json").read_text() == answered
+
+
+def _relay_launch(
+    paths: PrimeRuntimePaths, source: Path, *, relay_mcp: bool, extension: Path | None = None
+) -> None:
+    build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=extension,
+        config=paths.root / "config.json",
+        relay_mcp=relay_mcp,
+        environ={
+            "PRIME_AGENT_CODING_AGENT_DIR": str(source),
+            "OMNIGENT_DATA_DIR": str(paths.root.parent),
+        },
+    )
+
+
+def _mcp_servers(paths: PrimeRuntimePaths) -> dict[str, object]:
+    return json.loads((paths.agent_dir / "settings.json").read_text())["mcpServers"]
+
+
+def test_extensionless_launch_registers_relay_tools_beside_the_users_mcp_servers(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    mine = {"type": "http", "url": "http://127.0.0.1:1/mcp"}
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"mine": mine}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+    first = (paths.agent_dir / "settings.json").read_bytes()
+    token = (paths.root / "bridge.json").read_bytes()
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert _mcp_servers(paths) == {
+        "mine": mine,
+        "omnigent": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": [
+                "-I",
+                "-m",
+                "omnigent.harnesses.claude_native.bridge",
+                "serve-mcp",
+                "--bridge-dir",
+                str(paths.root),
+            ],
+            "env": {"OMNIGENT_DATA_DIR": {"env": "OMNIGENT_DATA_DIR"}},
+        },
+    }
+    assert (paths.agent_dir / "settings.json").read_bytes() == first
+    assert (paths.root / "bridge.json").read_bytes() == token
+    assert len(json.loads(token)["token"]) >= 32
+    assert json.loads((source / "settings.json").read_text()) == {"mcpServers": {"mine": mine}}
+
+
+def test_extensionless_launch_without_relay_tools_drops_a_stale_relay_server(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"mine": {"type": "http"}}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    _relay_launch(paths, source, relay_mcp=True)
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert _mcp_servers(paths) == {"mine": {"type": "http"}}
+    assert json.loads((source / "settings.json").read_text()) == {
+        "mcpServers": {"mine": {"type": "http"}}
+    }
+
+
+def test_extensionless_launch_without_relay_tools_keeps_a_users_omnigent_server(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    mine = {"type": "http", "url": "http://127.0.0.1:1/mcp"}
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"omnigent": mine}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert _mcp_servers(paths) == {"omnigent": mine}
+
+
+def test_relay_registration_warns_when_prime_settings_are_malformed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text("{not json")
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert f"{paths.agent_dir / 'settings.json'} is not a JSON object" in caplog.text
+    assert not (paths.root / "bridge.json").exists()
+
+
+def test_extensionless_launch_without_relay_tools_adds_no_mcp_servers(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert "mcpServers" not in json.loads((paths.agent_dir / "settings.json").read_text())
+    assert not (paths.root / "bridge.json").exists()
+
+
+def test_relay_registration_replaces_a_null_mcp_servers_setting(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"mcpServers": null}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert list(_mcp_servers(paths)) == ["omnigent"]
+
+
+def test_extension_launch_leaves_mcp_servers_to_the_extension(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True, extension=paths.root / "extension.js")
+
+    assert json.loads((paths.agent_dir / "settings.json").read_text()) == {
+        "defaultModel": "fixture"
+    }
+    assert not (paths.root / "bridge.json").exists()
+
+
 def _launch_with_source(paths: PrimeRuntimePaths, source: Path) -> None:
     build_prime_launch(
         paths,
@@ -1457,12 +1644,20 @@ def test_maintenance_skips_runtime_during_preparation(tmp_path: Path) -> None:
             holder.wait(timeout=5)
 
 
-@pytest.mark.parametrize("app_version", ["0.9.6", "0.10.0"])
+@pytest.mark.parametrize(
+    ("app_version", "schema_id"),
+    [
+        ("0.9.6", "protocol-7-schema-30-f908f493c9e1"),
+        ("0.10.0", "protocol-7-schema-30-8e4b17c2a9f5"),
+        ("0.10.1", "protocol-7-schema-30-a-future-build"),
+    ],
+)
 def test_stop_sends_one_qualified_socket_shutdown_and_preserves_history(
-    tmp_path: Path, app_version: str
+    tmp_path: Path, app_version: str, schema_id: str
 ) -> None:
     paths = _shutdown_paths(tmp_path)
-    with _prime_daemon(paths, tmp_path, hello={"appVersion": app_version}) as daemon:
+    hello: dict[str, object] = {"appVersion": app_version, "schemaId": schema_id}
+    with _prime_daemon(paths, tmp_path, hello=hello) as daemon:
         stop_prime_runtime(paths)
         daemon.process.wait(timeout=5)
 
@@ -1495,7 +1690,7 @@ def test_stop_accepts_eof_after_command_only_when_runtime_disappears(tmp_path: P
     "hello",
     [
         {"protocol": {"name": "prime-agent.daemon", "version": 6}},
-        {"schemaId": "protocol-7-schema-29-wrong", "schemaRevision": 29},
+        {"schemaRevision": 29},
         {"appVersion": "0.9.5"},
         {"socketPath": "/tmp/not-this-runtime.sock"},
         {"supervisorPid": os.getpid()},
@@ -2308,22 +2503,13 @@ def _fake_prime(tmp_path: Path, version: str, *, extensions: bool) -> Path:
 
 
 @pytest.mark.parametrize("version", ["0.9.6", "0.9.7", "0.10.0", "1.0.0"])
-def test_newer_version_with_extension_support_resolves(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
+@pytest.mark.parametrize("extensions", [True, False], ids=["extension", "daemon-bridge"])
+def test_supported_version_resolves_with_its_transcript_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, extensions: bool
 ) -> None:
-    binary = _fake_prime(tmp_path, version, extensions=True)
+    binary = _fake_prime(tmp_path, version, extensions=extensions)
     monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
-    assert process.resolve_prime_executable() == str(binary)
-
-
-def test_newer_version_without_extension_support_is_refused_by_capability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "OMNIGENT_PRIME_PATH", str(_fake_prime(tmp_path, "0.10.0", extensions=False))
-    )
-    with pytest.raises(click.ClickException, match=r"extension support \(--extension\); 0\.10\.0"):
-        process.resolve_prime_executable()
+    assert process.resolve_prime_executable() == process.PrimeExecutable(str(binary), extensions)
 
 
 def test_public_command_has_no_prime_alias() -> None:

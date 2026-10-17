@@ -49,6 +49,7 @@ from omnigent.host.daemon_launch import (
 )
 from omnigent.native.native_coding_agents import native_shell_terminal_spec
 from omnigent.native.native_terminal import bind_session_runner, url_component
+from omnigent.spec.types import AgentSpec, Phase
 from omnigent.util.json_types import JsonObject
 
 _logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ def _materialize_prime_agent_spec(tmpdir: Path) -> Path:
                 "name": PRIME_NATIVE_WRAPPER_VALUE,
                 "prompt": (
                     "Prime Native runs in the session terminal. "
-                    "Web messages use its extension inbox."
+                    "Web messages reach it through the session inbox."
                 ),
                 "executor": {"harness": "prime-native"},
                 "spawn": True,
@@ -74,6 +75,22 @@ def _materialize_prime_agent_spec(tmpdir: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _tool_policy_notice(spec: AgentSpec | None) -> str | None:
+    policies = (spec.guardrails.policies if spec and spec.guardrails else None) or []
+    names = [
+        policy.name
+        for policy in policies
+        if policy.on is None
+        or any(selector.phase in (Phase.TOOL_CALL, Phase.TOOL_RESULT) for selector in policy.on)
+    ]
+    if not names:
+        return None
+    return (
+        "Prime 0.10 has no tool-call hook, so these policies do not check Prime's own tools, "
+        f"such as ipython: {', '.join(names)}. Omnigent relay tools are still checked."
+    )
 
 
 def run_prime_native(
@@ -257,7 +274,7 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
         config = await _pi_native_launch_config(
             session_id=ctx.session_id, server_client=ctx.server_client
         )
-        executable = await asyncio.to_thread(resolve_prime_executable)
+        prime = await asyncio.to_thread(resolve_prime_executable)
         await asyncio.to_thread(stop_prime_runtime, paths, launch_reservation=reservation)
         paths.prepare()
         clear_inbox(paths.root)
@@ -289,6 +306,9 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
                     ctx.session_id,
                     extra={"session_id": ctx.session_id},
                 )
+        notice = None if prime.extension else _tool_policy_notice(spec)
+        if notice:
+            _logger.warning("%s", notice, extra={"session_id": ctx.session_id})
         extension, extension_config = write_extension_files(
             paths.root,
             session_id=ctx.session_id,
@@ -300,6 +320,7 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
             extra_config={
                 "primeControlsDir": str(paths.controls_dir),
                 "nativeAdmission": admission.model_dump(),
+                **({"policyNotice": notice} if notice else {}),
             },
         )
         from omnigent.runtime.prompt import build_instructions_nullable
@@ -309,14 +330,16 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
         launch = await asyncio.to_thread(
             build_prime_launch,
             paths,
-            executable=executable,
-            extension=extension,
+            executable=prime.path,
+            # @deprecated, remove in 0.19.0: the 0.9.x launch that loads the shared Pi extension.
+            extension=extension if prime.extension else None,
             config=extension_config,
             extra_args=config.terminal_launch_args or (),
             external_session_id=config.external_session_id,
             model=model,
             reasoning_effort=config.reasoning_effort,
             instructions=instructions,
+            relay_mcp=bool(tools) and ctx.ensure_comment_relay is not None,
         )
         agent_os_env = _agent_os_env_from_spec(ctx.agent_spec)
         terminal_spec = TerminalEnvSpec(
