@@ -99,9 +99,8 @@ Prime 0.10 reads `mcpServers` from the agent dir's `settings.json` and exposes
 each enabled server to the model through the kernel's `mcp` object, not as native
 tools. The launch writes an `omnigent` stdio entry (`type`, `command`, `args`,
 and an `{"env": "OMNIGENT_DATA_DIR"}` reference) into the per-session copy, keeping
-the user's entries and dropping the entry it wrote when the session has no relay
-tools. The
-command is the shared shim `python -I -m omnigent.harnesses.claude_native.bridge
+the user's other entries and dropping the entry it wrote when the session has no
+relay tools. The command is the shared shim `python -I -m omnigent.harnesses.claude_native.bridge
 serve-mcp --bridge-dir <root>`; the launch also seeds the token-only `bridge.json`
 it reads. Prime passes a stdio child only `HOME`, `PATH`, `TMPDIR` and `{"env": NAME}`
 references, rejecting literal env values and unset references. Calls reach the

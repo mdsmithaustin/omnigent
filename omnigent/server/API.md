@@ -897,17 +897,20 @@ overwrite a different existing value
 404 Not Found - no session with that id
 
 Prime Native sessions apply `model_override` and `reasoning_effort` through the
-live extension before returning success. Models use exact `provider/model`
+live extension on Prime 0.9.x, or the daemon bridge on Prime 0.10, before
+returning success. Models use exact `provider/model`
 identifiers. A combined PATCH applies the model before the effort. Native
 observations own the active settings, including independent terminal changes.
 The response reads that observed state, which may differ from an earlier
 acknowledgment. Prime can clamp effort for the chosen model.
 
-Settings success requires native callbacks and HTTP 2xx acceptance of their
-observations. If a model switch also clamps effort, both observations must
-publish successfully. A missing or rejected publication after mutation returns
-504 `prime_control_unknown`. Prime 0.9.6 does not emit a callback for a setting
-that is already active, so a same-value request can return this outcome too.
+Settings success requires a native observation and HTTP 2xx acceptance of it.
+On 0.9.x the observation is the extension's callback. On 0.10 the bridge reads
+the setting back with `get_state` and publishes that. If a model switch also
+clamps effort, both observations must publish successfully. A missing or
+rejected publication after mutation returns 504 `prime_control_unknown`. Prime
+0.9.6 does not emit a callback for a setting that is already active, so a
+same-value request can return this outcome too.
 Each runner serializes its admitted settings in order. Native terminal
 selections remain independent, and interrupt bypasses that queue.
 

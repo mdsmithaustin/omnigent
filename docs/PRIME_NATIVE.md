@@ -120,9 +120,9 @@ before another control.
 Send `{"type":"compact"}` or `{"type":"interrupt"}` to
 `POST /v1/sessions/{id}/events` for the corresponding control. On 0.9.x,
 compaction waits for Prime's completion callback. On 0.10 it returns when the
-daemon answers `compact`. A compaction Prime refuses, such as one on a session
-that is too short, is rejected. A failure after compaction starts shows as a
-failed compaction status, carried by Prime's `compaction_end` event.
+daemon answers `compact`. A compaction Prime refuses is rejected, and a failure
+after compaction starts shows as a failed compaction status from Prime's
+`compaction_end` event. A session that is too short produced both on 0.10.0.
 Interrupt returns admission before the native aborted result settles. Messages
 also receive HTTP 202 for admission. Delivery to the inbox, which the extension
 or the 0.10 bridge reads, does not complete a native turn.
@@ -304,11 +304,12 @@ Each web message reaches Prime at most once. If the daemon connection fails
 before Prime confirms a prompt, the conversation shows that the message may not
 have arrived, and it is not resent. Model, effort, compact, and interrupt map to
 the daemon's `set_model`, `set_thinking_level`, `compact`, and `abort` commands.
-Prime pauses queued input after an abort or an Esc in the TUI, so an interrupt
-also sends `resume_queue`. A steered web message is still admitted while input
-is paused. If a Prime build refuses one as suspended, the bridge sends
-`resume_queue` and retries; after five refused attempts it reports the message
-dropped. Resume uses Prime's session UUID.
+After an abort, an interrupt also sends `resume_queue` so queued input is not
+left paused. An Esc in the TUI pauses input the same way, but a steered web
+message is still admitted while input is paused. If Prime refuses a web message,
+the bridge retries it, sending `resume_queue` first when the refusal says input
+is suspended, and reports it dropped after five refused attempts. Resume uses
+Prime's session UUID.
 
 The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
@@ -348,6 +349,9 @@ Prime 0.10 lacks these 0.9.x features:
   runner log, and the conversation shows a `native_policy_not_enforced` notice
   that names them. The agent that `omnigent prime-native` creates declares none.
 - The injected task list is not registered.
+- An interrupt during a running tool may leave Prime's last stop reason
+  `toolUse`, which the bridge reports as idle rather than interrupted. This is
+  not yet observed on 0.10.
 - Tools from an agent's declared MCP servers are not advertised to Prime,
   because the shim serves only the relay's built-in tool list.
 - The TUI has no `/omnigent` command and no Omnigent status line or title. On
@@ -412,6 +416,8 @@ code zero and `result.json` with `PASS` in the printed evidence directory. Inspe
 `PRIME_NATIVE_PONG` replies. `cleanup.json` must report no owned survivors.
 `reattach.json` records the same native identity and live process IDs across
 detach and resume. The helper retains its evidence after removing scratch state.
+The relay run records `relay-items-1.json` and `relay-items-2.json` instead of the
+terminal and reattach files; the verification skill lists what to require in them.
 
 See [the verification skill](../.agents/skills/verify-prime-native/SKILL.md)
 and its feature map for qualification gaps and additional scenarios.
