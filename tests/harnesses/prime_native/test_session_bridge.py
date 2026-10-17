@@ -772,6 +772,7 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     assert len(bridge.prime.sent("attach")) == 1
 
 
+@pytest.mark.xfail(strict=True, reason="the inbox prompts the old root until the next follow tick")
 async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
     await ready(bridge)
     fresh = {
@@ -784,8 +785,13 @@ async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge
     }
     bridge.prime.messages = [_user("in the new session", 11)]
     bridge.prime.new_roots.append(fresh)
+    # Switch just after the bridge's per-tick root check, so its inbox poll runs first.
+    checks = len(bridge.prime.sent("list"))
+    while len(bridge.prime.sent("list")) == checks:
+        await asyncio.sleep(0.001)
 
     bridge.prime.tui_root = fresh["id"]
+    enqueue_user_message(bridge.paths.root, "sent right after /new")
 
     await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
     items = await eventually(
@@ -796,6 +802,9 @@ async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge
     assert items[0]["data"]["item_data"]["content"][0]["text"] == "in the new session"
     patches = [json.loads(r.content) for r in bridge.requests if r.method == "PATCH"]
     assert patches[-1] == {"external_session_id": fresh["sessionId"]}
+    assert [(c["activeSessionId"], c["message"]) for c in bridge.prime.sent("prompt")] == [
+        (fresh["id"], "sent right after /new")
+    ]
 
     bridge.prime.tui_root = ROOT_ID
 
