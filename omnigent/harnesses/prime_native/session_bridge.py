@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import logging.handlers
 import os
 import re
 import threading
@@ -40,6 +41,7 @@ _STOP_TIMEOUT_S = 2.0
 _RESULT_TTL_S = 60.0
 _MAX_PROMPT_ATTEMPTS = 5
 _DELIVERED_CAP = 4096
+_LOG_BYTES = 1_000_000
 _POST_ATTEMPTS = 3
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
@@ -139,6 +141,7 @@ class SessionBridge:
 
     async def _root_session(self, client: DaemonClient) -> dict[str, Any]:
         session_dir = self._paths.session_dir.resolve()
+        waiting = False
         while True:
             for session in (await client.command("list")).get("sessions", []):
                 session_file = session.get("sessionFile")
@@ -148,6 +151,9 @@ class SessionBridge:
                     and Path(session_file).resolve().is_relative_to(session_dir)
                 ):
                     return session
+            if not waiting:
+                waiting = True
+                _logger.info("Waiting for a Prime root session under %s", session_dir)
             await asyncio.sleep(_TICK_S)
 
     async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
@@ -334,12 +340,9 @@ class SessionBridge:
             except (OSError, ValueError):
                 continue
             if isinstance(request, dict) and request.get("id") == path.stem:
-                self._spawn(self._answer(request))
-
-    def _spawn(self, work: Awaitable[None]) -> None:
-        task = asyncio.ensure_future(work)
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+                task = asyncio.create_task(self._answer(request))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
 
     async def _answer(self, request: dict[str, Any]) -> None:
         if request.get("type") in ("model", "effort"):
@@ -540,7 +543,9 @@ async def run_bridge(
 def start_in_thread(paths: PrimeRuntimePaths, socket_path: Path) -> Callable[[], None]:
     """Run the bridge on a daemon thread; the returned callable stops it."""
     # The wrapper's stderr is Prime's terminal, so this process logs to the runtime root.
-    handler = logging.FileHandler(paths.root / "bridge.log")
+    handler = logging.handlers.RotatingFileHandler(
+        paths.root / "bridge.log", maxBytes=_LOG_BYTES, backupCount=1
+    )
     handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
     logging.getLogger().addHandler(handler)
     _logger.setLevel(logging.INFO)
@@ -562,5 +567,7 @@ def start_in_thread(paths: PrimeRuntimePaths, socket_path: Path) -> Callable[[],
         with contextlib.suppress(RuntimeError):
             loop.call_soon_threadsafe(stop.set)
         thread.join(_STOP_TIMEOUT_S)
+        logging.getLogger().removeHandler(handler)
+        handler.close()
 
     return shutdown

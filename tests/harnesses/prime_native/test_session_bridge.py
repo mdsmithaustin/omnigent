@@ -457,7 +457,6 @@ async def test_stopping_releases_the_controls_binding(bridge: Bridge) -> None:
     assert not await binding.wait_until_ready(timeout_s=0.1)
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_wrapper_runs_the_bridge_only_when_prime_uses_the_private_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
