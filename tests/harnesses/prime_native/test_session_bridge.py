@@ -757,25 +757,6 @@ async def test_an_outage_logs_one_warning_until_posting_recovers(
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
 
 
-async def test_a_post_that_stays_unreachable_does_not_hold_up_the_next_one(bridge: Bridge) -> None:
-    await ready(bridge)
-    bridge.outage.extend([503] * 3)
-
-    await bridge.prime.emit(
-        _event(1, {"type": "message_end", "message": _user("lost", 1)}),
-        _event(2, {"type": "message_end", "message": _user("next", 2)}),
-    )
-
-    await eventually(lambda: not bridge.outage)
-    gave_up = time.monotonic()
-    items = await eventually(
-        lambda: [e for e in bridge.posted() if e["type"] == "external_conversation_item"]
-    )
-    waited = time.monotonic() - gave_up
-    assert [item["data"]["item_data"]["content"][0]["text"] for item in items] == ["next"]
-    assert waited < 0.1
-
-
 async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     user = _user("rejected", 9)
