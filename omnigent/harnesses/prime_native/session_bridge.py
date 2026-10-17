@@ -52,6 +52,7 @@ _REPOST_FIRST_S = 1.0
 _REPOST_MAX_S = 30.0
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
+_STATUS = "external_session_status"
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
@@ -90,6 +91,8 @@ class SessionBridge:
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
+        # The newest status, when its post failed; a re-attach re-posts it.
+        self._lost_status: Event | None = None
         self._repost_at = 0.0
         self._repost_delay = _REPOST_FIRST_S
         self._unreachable = False
@@ -222,6 +225,8 @@ class SessionBridge:
         )
         self._unposted = False
         if post_history:
+            if self._lost_status and not any(event["type"] == _STATUS for event in history):
+                history.append(self._lost_status)
             await self._post_all(history)
         # Omnigent is still unreachable, so retry on a backoff while Prime stays idle.
         if self._unposted:
@@ -486,8 +491,11 @@ class SessionBridge:
 
     async def _post_all(self, events: list[Event]) -> None:
         for event in events:
-            source_id = event["data"].get("source_id")
-            if await self._post(event) is None and source_id:
+            lost = await self._post(event) is None
+            if event["type"] == _STATUS:
+                self._lost_status = event if lost else None
+                self._unposted |= lost
+            elif lost and (source_id := event["data"].get("source_id")):
                 posted = self._transcript.posted - {source_id}
                 self._transcript = replace(self._transcript, posted=posted)
                 self._unposted = True
