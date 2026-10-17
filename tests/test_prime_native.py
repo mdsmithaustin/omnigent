@@ -643,7 +643,6 @@ def test_extensionless_launch_without_relay_tools_drops_a_stale_relay_server(
     }
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 def test_extensionless_launch_without_relay_tools_keeps_a_users_omnigent_server(
     tmp_path: Path,
 ) -> None:
@@ -658,7 +657,6 @@ def test_extensionless_launch_without_relay_tools_keeps_a_users_omnigent_server(
     assert _mcp_servers(paths) == {"omnigent": mine}
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 def test_relay_registration_warns_when_prime_settings_are_malformed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

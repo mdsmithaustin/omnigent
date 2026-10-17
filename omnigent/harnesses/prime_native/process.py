@@ -312,6 +312,8 @@ def _register_relay_mcp(
     settings = paths.agent_dir / "settings.json"
     value = _read_settings(settings)
     if value is None:
+        if enabled:
+            _logger.warning("%s is not a JSON object; relay tools are not registered", settings)
         return
     servers = value.get("mcpServers")
     servers = dict(servers) if isinstance(servers, dict) else {}
@@ -320,14 +322,20 @@ def _register_relay_mcp(
         if not config.exists():
             _atomic_text(config, json.dumps({"token": secrets.token_urlsafe(32)}))
         servers[RELAY_MCP_SERVER] = _relay_mcp_entry(paths, env)
-    elif RELAY_MCP_SERVER not in servers:
-        return
-    else:
+    elif _is_relay_entry(servers.get(RELAY_MCP_SERVER), paths):
         del servers[RELAY_MCP_SERVER]
+    else:
+        return
     if servers == value.get("mcpServers"):
         return
     value["mcpServers"] = servers
     _atomic_text(settings, json.dumps(value, indent=2))
+
+
+def _is_relay_entry(entry: object, paths: PrimeRuntimePaths) -> bool:
+    # A launch with relay tools wrote it; the user may own another `omnigent` server.
+    args = entry.get("args") if isinstance(entry, dict) else None
+    return isinstance(args, list) and str(paths.root) in args
 
 
 def _replace_with_symlink(link: Path, target: Path) -> None:
