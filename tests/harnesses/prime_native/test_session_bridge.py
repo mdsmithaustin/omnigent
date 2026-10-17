@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import tempfile
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +17,7 @@ import httpx
 import pytest
 
 from omnigent.harnesses.pi_native.bridge import enqueue_user_message
+from omnigent.harnesses.prime_native import process
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.harnesses.prime_native.catalog import PrimeModelRef
 from omnigent.harnesses.prime_native.controls import (
@@ -54,20 +57,24 @@ class FakePrime:
     )
     messages: list[dict[str, Any]] = field(default_factory=list)
     failures: dict[str, str] = field(default_factory=dict)
+    ignored: set[str] = field(default_factory=set)
     commands: list[dict[str, Any]] = field(default_factory=list)
     writers: list[asyncio.StreamWriter] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
+        foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
         child = {"id": "bbbbbbbbbbbb", "rlmDepth": 1, "sessionId": "child"}
         root = {"id": ROOT_ID, "rlmDepth": 0, "sessionId": NATIVE_ID}
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
-        return [child, root]
+        return [foreign, child, root]
 
     def reply(self, command: dict[str, Any]) -> dict[str, Any]:
         kind = command["type"]
         if kind in self.failures:
             return {**_ok(command), "success": False, "error": self.failures[kind]}
+        if kind in self.ignored:
+            return _ok(command)
         match kind:
             case "list":
                 return _ok(command, {"sessions": self.sessions()})
@@ -240,7 +247,10 @@ async def test_undeliverable_message_is_dropped_with_a_visible_error(bridge: Bri
 
 async def test_root_session_events_stream_to_omnigent_in_order(bridge: Bridge) -> None:
     await ready(bridge)
-    before = len(bridge.posted())
+    before, requests_before = len(bridge.posted()), len(bridge.requests)
+    config = json.loads((bridge.paths.root / "config.json").read_text())
+    config["authHeaders"] = {"Authorization": "Bearer rotated"}
+    (bridge.paths.root / "config.json").write_text(json.dumps(config))
     envelopes = [json.loads(line) for line in (FIXTURES / "aborted_turn.jsonl").open()]
     child_event = {**envelopes[0], "activeSessionId": "bbbbbbbbbbbb"}
     bridge.prime.state["model"] = {"provider": "verify", "id": "picked-in-tui"}
@@ -266,6 +276,8 @@ async def test_root_session_events_stream_to_omnigent_in_order(bridge: Bridge) -
         {"type": "output_text", "text": "ok\n\n1 2 3 4 5"}
     ]
     assert streamed[9]["data"] == {"model": "verify/picked-in-tui"}
+    rotated = {r.headers["authorization"] for r in bridge.requests[requests_before:]}
+    assert rotated == {"Bearer rotated"}
 
 
 async def test_model_and_effort_controls_apply_and_report_the_observed_setting(
@@ -288,15 +300,64 @@ async def test_model_and_effort_controls_apply_and_report_the_observed_setting(
     ]
 
 
-async def test_failed_compaction_is_rejected_with_prime_reason(bridge: Bridge) -> None:
+async def test_unconfirmed_model_switch_is_reported_unknown(bridge: Bridge) -> None:
+    binding = await ready(bridge)
+    bridge.prime.ignored.add("set_model")
+
+    outcome = await binding.execute(SetModel(PrimeModelRef("verify", "other")))
+
+    assert outcome.status == ControlStatus.UNKNOWN
+    assert "external_model_change" not in bridge.posted_types()[3:]
+
+
+async def test_compaction_reports_prime_outcome(bridge: Bridge) -> None:
     binding = await ready(bridge)
     reason = "Session is too short to compact — try again once it grows"
+
+    applied = await binding.execute(Compact())
     bridge.prime.failures["compact"] = reason
+    rejected = await binding.execute(Compact("keep decisions"))
 
-    outcome = await binding.execute(Compact("keep decisions"))
+    assert applied == ControlOutcome(ControlStatus.APPLIED)
+    assert rejected == ControlOutcome(ControlStatus.REJECTED, reason)
+    assert [c.get("customInstructions") for c in bridge.prime.sent("compact")] == [
+        None,
+        "keep decisions",
+    ]
 
-    assert outcome == ControlOutcome(ControlStatus.REJECTED, reason)
-    assert [c["customInstructions"] for c in bridge.prime.sent("compact")] == ["keep decisions"]
+
+@pytest.mark.parametrize(
+    "stale",
+    [{"incarnation": "previous-bridge"}, {"expiresAt": 0}],
+    ids=["other-incarnation", "expired"],
+)
+async def test_stale_control_is_rejected_without_reaching_prime(
+    bridge: Bridge, stale: dict[str, object]
+) -> None:
+    await ready(bridge)
+    controls = bridge.paths.controls_dir
+    incarnation = json.loads((controls / "binding.json").read_text())["incarnation"]
+    request = {
+        "id": "a" * 32,
+        "type": "interrupt",
+        "incarnation": incarnation,
+        "expiresAt": time.time() * 1000 + 10_000,
+        **stale,
+    }
+    staged = controls / "requests" / ".staged"
+    staged.write_text(json.dumps(request))
+    staged.rename(controls / "requests" / f"{'a' * 32}.json")
+
+    result_file = controls / "results" / f"{'a' * 32}.json"
+    await eventually(result_file.exists)
+
+    assert json.loads(result_file.read_text()) == {
+        "id": "a" * 32,
+        "incarnation": request["incarnation"],
+        "status": "rejected",
+        "detail": "Expired or stale Prime control",
+    }
+    assert bridge.prime.sent("get_state") == []
 
 
 async def test_interrupt_aborts_only_a_running_turn_and_lifts_the_queue_pause(
@@ -344,3 +405,44 @@ async def test_stopping_releases_the_controls_binding(bridge: Bridge) -> None:
 
     assert not (bridge.paths.controls_dir / "binding.json").exists()
     assert not await binding.wait_until_ready(timeout_s=0.1)
+
+
+async def test_wrapper_runs_the_bridge_only_when_prime_uses_the_private_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = PrimeRuntimePaths(Path(tempfile.mkdtemp(dir="/tmp")))
+    for directory in (paths.session_dir, paths.controls_dir / "requests", paths.root / "inbox"):
+        directory.mkdir(parents=True)
+    (paths.controls_dir / "results").mkdir()
+    (paths.root / "config.json").write_text(
+        json.dumps(
+            {
+                "sessionId": "conv_1",
+                "serverUrl": "http://127.0.0.1:9",
+                "inboxDir": str(paths.root / "inbox"),
+                "authHeaders": {},
+            }
+        )
+    )
+    socket_path = process._default_supervisor_socket(paths)
+    socket_path.parent.mkdir(parents=True)
+    server = await asyncio.start_unix_server(FakePrime(paths.session_dir).serve, str(socket_path))
+    root_logger = logging.getLogger()
+    try:
+        monkeypatch.delenv(process.DAEMON_SOCKET_ENV_VAR, raising=False)
+        process._start_session_bridge(paths)()
+        assert not (paths.root / "bridge.log").exists()
+
+        monkeypatch.setenv(process.DAEMON_SOCKET_ENV_VAR, str(socket_path))
+        stop = process._start_session_bridge(paths)
+        binding = PrimeExtensionBinding(paths.root)
+        assert await binding.wait_until_ready()
+        await asyncio.to_thread(stop)
+        assert not (paths.controls_dir / "binding.json").exists()
+    finally:
+        server.close()
+        for handler in list(root_logger.handlers):
+            if getattr(handler, "baseFilename", "").startswith(str(paths.root)):
+                root_logger.removeHandler(handler)
+                handler.close()
+        shutil.rmtree(paths.root)

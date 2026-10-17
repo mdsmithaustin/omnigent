@@ -83,7 +83,10 @@ class SessionBridge:
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def run(self, stop: asyncio.Event) -> None:
-        loops = [asyncio.create_task(self._session_loop()), asyncio.create_task(self._poll_loop())]
+        loops = [
+            asyncio.create_task(loop())
+            for loop in (self._session_loop, self._heartbeat_loop, self._poll_loop)
+        ]
         try:
             await stop.wait()
         finally:
@@ -94,19 +97,23 @@ class SessionBridge:
 
     async def _session_loop(self) -> None:
         first_attach = True
+        last_failure = ""
         while True:
             try:
                 async with await DaemonClient.connect(self._socket_path) as client:
                     root = await self._root_session(client)
                     await self._attach(client, root, post_history=not first_attach)
-                    first_attach = False
+                    first_attach, last_failure = False, ""
                     async for envelope in client.events():
                         await self._mirror(client, envelope)
-            except (DaemonError, OSError) as exc:
-                if self._client is not None:
-                    _logger.info("Prime daemon connection lost: %s", exc)
-            except Exception:
-                _logger.exception("Prime session mirror failed; reconnecting")
+            except Exception as exc:
+                # Retried every tick, so only a changed failure is logged.
+                if repr(exc) != last_failure:
+                    last_failure = repr(exc)
+                    if isinstance(exc, (DaemonError, OSError)):
+                        _logger.warning("Prime daemon unavailable: %r", exc)
+                    else:
+                        _logger.exception("Prime session mirror failed")
             finally:
                 self._client = None
             await asyncio.sleep(_TICK_S)
@@ -184,19 +191,31 @@ class SessionBridge:
                 published = False
         return published
 
+    async def _heartbeat_loop(self) -> None:
+        # Separate from the poll loop so a slow daemon reply cannot stale the binding.
+        await self._attached.wait()
+        while True:
+            with contextlib.suppress(OSError):
+                self._heartbeat()
+            await asyncio.sleep(_TICK_S)
+
     async def _poll_loop(self) -> None:
         await self._attached.wait()
         (self._paths.root / "input_ready").write_text("")
+        last_failure = ""
         while True:
             try:
-                self._heartbeat()
                 self._dispatch_controls()
                 if self._client is not None:
                     await self._deliver_inbox(self._client)
-            except (DaemonError, OSError) as exc:
-                _logger.info("Prime bridge tick failed: %s", exc)
-            except Exception:
-                _logger.exception("Prime bridge tick failed")
+                last_failure = ""
+            except Exception as exc:
+                if repr(exc) != last_failure:
+                    last_failure = repr(exc)
+                    if isinstance(exc, (DaemonError, OSError)):
+                        _logger.warning("Prime bridge tick failed: %r", exc)
+                    else:
+                        _logger.exception("Prime bridge tick failed")
             await asyncio.sleep(_TICK_S)
 
     async def _deliver_inbox(self, client: DaemonClient) -> None:
@@ -286,7 +305,8 @@ class SessionBridge:
             return await handler(self, client, request)
         except DaemonCommandError as exc:
             return {"status": "rejected", "detail": exc.error}
-        except (DaemonError, OSError):
+        except Exception:
+            _logger.exception("Prime control %s failed", request.get("type"))
             return {"status": "unknown", "detail": "Prime control outcome unknown; not retried"}
 
     async def _set_model(self, client: DaemonClient, request: dict[str, Any]) -> Outcome:
