@@ -120,8 +120,9 @@ before another control.
 Send `{"type":"compact"}` or `{"type":"interrupt"}` to
 `POST /v1/sessions/{id}/events` for the corresponding control. On 0.9.x,
 compaction waits for Prime's completion callback. On 0.10 it returns when the
-daemon answers `compact`; a failed compaction comes back as a rejection, and the
-web UI follows progress through `compaction_start` and `compaction_end` events.
+daemon answers `compact`. A compaction Prime refuses, such as one on a session
+that is too short, is rejected. A failure after compaction starts shows as a
+failed compaction status, carried by Prime's `compaction_end` event.
 Interrupt returns admission before the native aborted result settles. Messages
 also receive HTTP 202 for admission. Delivery to the inbox, which the extension
 or the 0.10 bridge reads, does not complete a native turn.
@@ -304,28 +305,34 @@ before Prime confirms a prompt, the conversation shows that the message may not
 have arrived, and it is not resent. Model, effort, compact, and interrupt map to
 the daemon's `set_model`, `set_thinking_level`, `compact`, and `abort` commands.
 Prime pauses queued input after an abort or an Esc in the TUI, so an interrupt
-also sends `resume_queue`, and so does a web message that Prime refuses while
-paused. Resume uses Prime's session UUID.
+also sends `resume_queue`. A steered web message is still admitted while input
+is paused. If a Prime build refuses one as suspended, the bridge sends
+`resume_queue` and retries; after five refused attempts it reports the message
+dropped. Resume uses Prime's session UUID.
 
 The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
 reattaches and posts the messages it missed as whole messages, without streamed
 deltas. A turn that ended while the bridge was detached shows as idle, or as
-failed when it was aborted. When Omnigent cannot be reached, the bridge retries
-briefly, then posts the missed messages from a fresh attach snapshot after the
-next turn ends. Only the bridge that currently holds the conversation's control
-binding reads web messages and answers controls. A new conversation's Prime
-settings skip the first-run prompt and leave trace sharing off, unless the host
-settings already answer that prompt. The bridge writes its diagnostics to
-`bridge.log` in the conversation's runtime directory, rotated at 1 MB with one
-backup.
+failed when it was aborted or ended in a model error. When Omnigent cannot be
+reached, the bridge retries briefly, then re-posts the conversation items it
+missed from a fresh attach snapshot at the next `agent_end`. Status, usage, and
+streamed-delta posts lost in an outage are not re-posted, so a turn can show as
+running until the next one ends. Only the bridge that currently holds the
+conversation's control binding reads web messages and answers controls. A new
+conversation's Prime settings skip the first-run prompt and leave trace sharing
+off, unless the host settings already answer that prompt. The bridge writes its
+diagnostics to `bridge.log` in the conversation's runtime directory, rotated at
+1 MB with one backup.
 
 Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
 relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
 adds a stdio entry to the conversation's own `settings.json` that runs the shared
 `serve-mcp` shim against the session relay. Your other `mcpServers` entries are
-kept, and your host `~/.prime/agent/settings.json` is never written. An entry of
-your own named `omnigent` gives way only while the session has relay tools. Prime lists
+kept, and your host `~/.prime/agent/settings.json` is never written. With relay
+tools, the conversation's copy replaces any `omnigent` server of yours; without
+them, such a server is left alone. A conversation `settings.json` that is not a
+JSON object registers no relay tools and logs a runner warning. Prime lists
 the server in its prompt and the model calls it from the `ipython` tool, for
 example `await mcp.call_tool("omnigent", "sys_os_read", {...})`. Calls run through
 the server's MCP proxy, so TOOL_CALL policy still applies: a denied call raises
@@ -336,9 +343,10 @@ Prime 0.10 lacks these 0.9.x features:
 
 - Omnigent policy cannot block Prime's own tool calls, such as `ipython`,
   because Prime 0.10 has no tool-call hook. Only the relay tools above are
-  policy-gated. When the agent declares tool-call or tool-result policies, the
-  launch logs a warning in the runner log, and the conversation shows a
-  `native_policy_not_enforced` notice that names them.
+  policy-gated. When the agent declares tool-call or tool-result policies, or
+  function policies that declare no phase, the launch logs a warning in the
+  runner log, and the conversation shows a `native_policy_not_enforced` notice
+  that names them. The agent that `omnigent prime-native` creates declares none.
 - The injected task list is not registered.
 - Tools from an agent's declared MCP servers are not advertised to Prime,
   because the shim serves only the relay's built-in tool list.

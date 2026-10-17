@@ -33,9 +33,10 @@ cannot publish `response.completed` or complete a declared child. The extension
 on 0.9.x, or the daemon bridge on 0.10, observes the actual native turn. Requests
 with `stream=true` also retain admission semantics for Prime.
 
-On 0.10 a web message reaches Prime at most once. If the daemon connection fails
-before Prime confirms the prompt, the conversation shows a
-`pi_followup_delivery_dropped` error saying it may not have arrived, and the
-bridge does not resend it.
+On 0.10 a web message reaches Prime at most once. If the daemon connection fails,
+or Prime gives no reply within 30 seconds, before it confirms the prompt, the
+conversation shows a `pi_followup_delivery_dropped` error saying the message may
+not have arrived, and the bridge does not resend it. A message Prime refuses five
+times is reported dropped with the same code.
 
 The default helper covers HTTP and terminal completion. Empty, loading, provider error, queued follow-up, and long-text states remain gaps until separately driven.

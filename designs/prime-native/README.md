@@ -6,7 +6,7 @@ The [adapter guide](../../docs/PRIME_NATIVE.md) describes `prime-native`, live c
 
 ## Verification
 
-The disposable public-daemon probe completed against published Prime 0.9.6. Eight scenarios passed and three failed qualification. The replay-cursor contract and the tested worker-recovery sequence prevent a production daemon migration. The adapter retains the extension transport. Missing capabilities do not authorize a Prime fork.
+The disposable public-daemon probe completed against published Prime 0.9.6. Eight scenarios passed and three failed qualification. The replay-cursor contract and the tested worker-recovery sequence prevent a production daemon migration. The adapter retains the extension transport. Missing capabilities do not authorize a Prime fork. Prime 0.10 removed extensions, so its sessions use the daemon bridge in [the 0.10 bridge design](../prime-010-bridge/DESIGN.md), which accepts those limits.
 
 Read [AGENTS.md](../../AGENTS.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md) before changing the adapter. Use the [verification skill](../../.agents/skills/verify-prime-native/SKILL.md) for adapter scenarios and the separate daemon qualification gate. Each probe records literal outcomes, source hashes, and owned cleanup.
 

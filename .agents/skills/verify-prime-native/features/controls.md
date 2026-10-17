@@ -50,7 +50,9 @@ ordering does not fence terminal users or other producers.
 Send `{"type":"compact"}` to `POST /v1/sessions/{id}/events`. The successful
 response retains the route's HTTP 202 status and reports `queued: false` only
 after Prime's completion callback on 0.9.x, or after the daemon answers
-`compact` on 0.10. Require the native compaction result.
+`compact` on 0.10. Require the native compaction result. On 0.10 that is the
+`compaction_start` and `compaction_end` status; the compact receipt itself carries
+no result, and only a refused compaction returns non-success.
 Missing API, callback error, malformed result, and a lost acknowledgment are
 non-success. Uncertain compaction must not be replayed.
 
@@ -63,13 +65,18 @@ reaper. An aborted or error loop cannot become successful idle.
 Include a Python tool that is still running when interrupted. Prime may leave
 the preceding assistant's stop reason as `toolUse`. The extension retains the
 public abort signal for that root loop and observes its later end. On 0.10 the
-bridge sends `abort` and then `resume_queue`, and the interrupted event comes
-from the mirrored `agent_end` whose stop reason is `aborted`. A terminal abort
-uses the same observation. Abort admission alone proves no loop ended.
+bridge sends `abort` and then `resume_queue`, and reports the turn interrupted
+only when the mirrored `agent_end` leaves the last assistant stop reason
+`aborted`. If a running tool leaves `toolUse`, record the idle outcome as a
+defect. A terminal abort uses the same observation. Abort admission alone
+proves no loop ended.
 
 ## Evidence limits
 
-The adapter probe drives the real controls. Focused tests cover missing,
+On 0.9.6 the adapter probe drives the real controls. On 0.10 these controls
+have no scripted driver: the adapter probe accepts only 0.9.6, and focused tests
+use a fake daemon. Drive them by hand and record NOT_RUN otherwise. Focused tests
+cover missing,
 expired, stale, malformed, and partial outcomes that need controlled callbacks.
 An unavailable binding returns 503 before control mutation. A possibly applied
 control with no usable result returns 504 and is not retried. All required probe

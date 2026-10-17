@@ -5,7 +5,7 @@ description: Verify Omnigent's prime-native adapter through its real CLI, Prime 
 
 # Verify Prime Native
 
-Use this skill for the Omnigent adapter only. Read [the feature map](features/README.md) before choosing a scenario. The disposable daemon probe qualifies a proposed transport separately from the working extension adapter. Agent Profile Kit is outside this skill's scope. The [no-fork design](../../../designs/prime-native/NO_FORK.md) records both the proposal and its failed qualification gate.
+Use this skill for the Omnigent adapter only. Read [the feature map](features/README.md) before choosing a scenario. The disposable daemon probe qualifies a proposed transport separately from the working extension adapter. Prime 0.10 sessions use the daemon bridge described in [the 0.10 bridge design](../../../designs/prime-010-bridge/DESIGN.md). Agent Profile Kit is outside this skill's scope. The [no-fork design](../../../designs/prime-native/NO_FORK.md) records both the proposal and its failed qualification gate.
 
 ## Launch
 
