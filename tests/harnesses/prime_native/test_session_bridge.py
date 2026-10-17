@@ -69,6 +69,8 @@ class FakePrime:
     tui_root: str = ROOT_ID
     attached: dict[asyncio.StreamWriter, str] = field(default_factory=dict)
     new_roots: list[dict[str, Any]] = field(default_factory=list)
+    # Clients the daemon still counts after they detached.
+    lingering: list[str] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
         foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
@@ -77,7 +79,7 @@ class FakePrime:
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
         roots = [root, *self.new_roots]
-        viewers = [*self.attached.values(), self.tui_root]
+        viewers = [*self.attached.values(), self.tui_root, *self.lingering]
         for session in roots:
             session["attachedClients"] = viewers.count(session["id"])
         return [foreign, child, *roots]
@@ -775,6 +777,29 @@ async def _right_after_a_root_check(bridge: Bridge) -> None:
     checks = len(bridge.prime.sent("list"))
     while len(bridge.prime.sent("list")) == checks:
         await asyncio.sleep(0.001)
+
+
+@pytest.mark.xfail(strict=True, reason="a stale count on the old root pulls the bridge back")
+async def test_a_stale_client_count_on_the_old_root_does_not_pull_the_bridge_back(
+    bridge: Bridge,
+) -> None:
+    await ready(bridge)
+    fresh = {
+        "id": "dddddddddddd",
+        "rlmDepth": 0,
+        "sessionId": "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8",
+        "sessionFile": str(
+            bridge.paths.session_dir / "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8.jsonl"
+        ),
+    }
+    bridge.prime.new_roots.append(fresh)
+    bridge.prime.tui_root = fresh["id"]
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+
+    bridge.prime.lingering.append(ROOT_ID)
+    await asyncio.sleep(4 * TICK_S)
+
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, fresh["id"]]
 
 
 async def test_the_bridge_follows_the_terminal_into_a_new_session(
