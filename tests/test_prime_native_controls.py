@@ -19,6 +19,7 @@ from omnigent.harnesses.prime_native.controls import (
     SetEffort,
     SetModel,
 )
+from omnigent.harnesses.prime_native.process import PrimeExecutable
 
 TABLE = (
     "provider  model    context  max-out  thinking  images\n"
@@ -92,7 +93,11 @@ def test_catalog_does_not_fallback_on_command_failure(
 ) -> None:
     from omnigent.harnesses.prime_native import catalog
 
-    monkeypatch.setattr(catalog, "resolve_prime_executable", lambda: "/prime-agent")
+    monkeypatch.setattr(
+        catalog,
+        "resolve_prime_executable",
+        lambda: PrimeExecutable("/prime-agent", extension=False),
+    )
 
     def fail(*args: object, **kwargs: object) -> None:
         raise failure

@@ -1,0 +1,225 @@
+{
+ "messages": [
+  {
+   "customType": "agent_message",
+   "content": "[agent-message from daemon-client]\n\nreply with the word ok",
+   "display": true,
+   "details": {
+    "id": "agentmsg_1"
+   },
+   "role": "custom",
+   "timestamp": "2026-10-17T16:38:30.562Z"
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "Replying with \"ok\".\n\nChecking the unslop skill before replyi"
+    },
+    {
+     "type": "text",
+     "text": "ok"
+    }
+   ],
+   "api": "openai-responses",
+   "provider": "xai",
+   "model": "grok-4.7",
+   "responseId": "caab9fa7-9207-98bd-8a96-c84853b94c3d",
+   "usage": {
+    "input": 21091,
+    "output": 260,
+    "cacheRead": 1152,
+    "cacheWrite": 0,
+    "totalTokens": 22503,
+    "cost": {
+     "input": 0.042182,
+     "output": 0.00156,
+     "cacheRead": 0.000576,
+     "cacheWrite": 0,
+     "total": 0.044317999999999996
+    }
+   },
+   "stopReason": "stop",
+   "timestamp": 1792255110565
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "use your python tool to compute 6*7, then reply with just the number"
+    }
+   ],
+   "timestamp": 1792255199218
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": ""
+    },
+    {
+     "type": "toolCall",
+     "id": "call-1bb8aea2-0805-41cd-9874-9a12fd90deaa-0|fc_42e9b75b-2cf1-93e7-9246-8a17a6425cf0_0",
+     "name": "ipython",
+     "arguments": {
+      "code": "6*7"
+     }
+    }
+   ],
+   "api": "openai-responses",
+   "provider": "xai",
+   "model": "grok-4.7",
+   "responseId": "42e9b75b-2cf1-93e7-9246-8a17a6425cf0",
+   "usage": {
+    "input": 21117,
+    "output": 34,
+    "cacheRead": 1152,
+    "cacheWrite": 0,
+    "totalTokens": 22303,
+    "cost": {
+     "input": 0.042234,
+     "output": 0.000204,
+     "cacheRead": 0.000576,
+     "cacheWrite": 0,
+     "total": 0.043014000000000004
+    }
+   },
+   "stopReason": "toolUse",
+   "timestamp": 1792255199225
+  },
+  {
+   "role": "toolResult",
+   "toolCallId": "call-1bb8aea2-0805-41cd-9874-9a12fd90deaa-0|fc_42e9b75b-2cf1-93e7-9246-8a17a6425cf0_0",
+   "toolName": "ipython",
+   "content": [
+    {
+     "text": "42",
+     "type": "text"
+    }
+   ],
+   "details": {
+    "status": "ok",
+    "kernelRestarted": false,
+    "durationMs": 2,
+    "result": "42"
+   },
+   "isError": false,
+   "timestamp": 1792255211014
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "42"
+    }
+   ],
+   "api": "openai-responses",
+   "provider": "xai",
+   "model": "grok-4.7",
+   "responseId": "f3028fe0-52b2-904c-a0f6-7cb3b46cece4",
+   "usage": {
+    "input": 143,
+    "output": 1,
+    "cacheRead": 22144,
+    "cacheWrite": 0,
+    "totalTokens": 22288,
+    "cost": {
+     "input": 0.000286,
+     "output": 6e-06,
+     "cacheRead": 0.011072,
+     "cacheWrite": 0,
+     "total": 0.011364
+    }
+   },
+   "stopReason": "stop",
+   "timestamp": 1792255211016
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "reply with the word ok"
+    }
+   ],
+   "timestamp": 1792255251796
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "ok"
+    }
+   ],
+   "api": "openai-responses",
+   "provider": "xai",
+   "model": "grok-4.7",
+   "responseId": "1154772a-7dcd-92b9-8c8d-ba1739117ca6",
+   "usage": {
+    "input": 29,
+    "output": 1,
+    "cacheRead": 22272,
+    "cacheWrite": 0,
+    "totalTokens": 22302,
+    "cost": {
+     "input": 5.8e-05,
+     "output": 6e-06,
+     "cacheRead": 0.011136,
+     "cacheWrite": 0,
+     "total": 0.0112
+    }
+   },
+   "stopReason": "stop",
+   "timestamp": 1792255251799
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "write the numbers 1 to 300 separated by spaces, no tools"
+    }
+   ],
+   "timestamp": 1792255296551
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "I'll just list them directly.\n\n",
+     "thinkingSignature": "sig"
+    },
+    {
+     "type": "text",
+     "text": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 1"
+    }
+   ],
+   "api": "anthropic-messages",
+   "provider": "anthropic",
+   "model": "claude-opus-4-7",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 0,
+    "cost": {
+     "input": 0,
+     "output": 0,
+     "cacheRead": 0,
+     "cacheWrite": 0,
+     "total": 0
+    }
+   },
+   "stopReason": "aborted",
+   "errorMessage": "Request was aborted",
+   "timestamp": 1792255302562
+  }
+ ]
+}

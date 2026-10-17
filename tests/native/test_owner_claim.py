@@ -21,6 +21,14 @@ def test_owner_claim_round_trip(tmp_path: Path) -> None:
         int((tmp_path / "owner.pid").read_text())
 
 
+def test_claim_is_held_only_by_the_process_that_wrote_it(tmp_path: Path) -> None:
+    assert not owner_claim.held_by_current_process(tmp_path)
+    owner_claim.write_owner_claim(tmp_path)
+    assert owner_claim.held_by_current_process(tmp_path)
+    (tmp_path / "owner.pid").write_text(f"{os.getpid() + 1}\npid_ns=none\n")
+    assert not owner_claim.held_by_current_process(tmp_path)
+
+
 @pytest.mark.parametrize("raw", [b"", b"123", b"\xff", b"0\npid_ns=none", b"123\npid_ns="])
 def test_invalid_or_legacy_claim_is_unknown(tmp_path: Path, raw: bytes) -> None:
     (tmp_path / "owner.pid").write_bytes(raw)

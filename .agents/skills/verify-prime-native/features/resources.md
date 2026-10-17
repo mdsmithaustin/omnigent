@@ -11,6 +11,7 @@ Users expect Prime to retain its base behavior while receiving the chosen agent 
 - A declared regular HTTP MCP tool reports a completed native outage error and
   succeeds on a later independent call after the fixture restarts.
 - A denied tool call creates no marker file.
+- On Prime 0.10, the `omnigent` MCP server returns a relayed tool result and a policy denial (`verify.py --scenario relay`).
 
 ## How to get to it (user POV)
 

@@ -65,7 +65,7 @@ def parse_model_table(output: str) -> list[PrimeModelRef]:
 
 
 def model_options() -> list[dict[str, object]]:
-    executable = resolve_prime_executable()
+    executable = resolve_prime_executable().path
     result = subprocess.run(
         [executable, "model", "list"],
         capture_output=True,

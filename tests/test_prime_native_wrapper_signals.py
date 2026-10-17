@@ -482,3 +482,23 @@ def test_main_restores_caller_stop_handlers(
         _ignore_stop,
         _ignore_stop,
     )
+
+
+def test_main_finalizes_the_runtime_when_stopping_the_bridge_fails(
+    admitted_wrapper_paths: PrimeRuntimePaths,
+    caller_stop_handlers: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = admitted_wrapper_paths
+    token = process.reserve_prime_launch(paths).token
+
+    def failing_stop() -> None:
+        raise RuntimeError("bridge stop failed")
+
+    monkeypatch.setattr(process, "_start_session_bridge", lambda _paths: failing_stop)
+    monkeypatch.setattr(sys, "argv", ["process", str(paths.root), token, sys.executable, "-c", ""])
+
+    with pytest.raises(RuntimeError, match="bridge stop failed"):
+        process.main()
+
+    assert not process._launch_reservation_path(paths).exists()

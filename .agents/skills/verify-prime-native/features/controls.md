@@ -1,8 +1,9 @@
 # Live Prime controls
 
-Use a fresh owned Prime terminal so it loads the current extension. An older
-resident extension without control receipts is unavailable. Preserve the
-native terminal and capture the public API action and its observed result.
+Use a fresh owned Prime terminal so it runs the current control path: the
+extension on Prime 0.9.x, or the terminal wrapper's daemon bridge on Prime 0.10.
+An older resident extension without control receipts is unavailable. Preserve
+the native terminal and capture the public API action and its observed result.
 
 ## Model and effort
 
@@ -14,7 +15,8 @@ effort. An explicit harness override involving Prime determines the control
 contract even when an old wrapper label remains.
 
 The host uses Prime's public `model list` command for prelaunch discovery. The
-resident extension uses the credential-filtered `getAvailable` registry. A
+resident extension uses the credential-filtered `getAvailable` registry, and the
+0.10 bridge reports the daemon's `get_available_models` catalog. A
 discovery failure cannot use Pi credentials or a curated fallback. A known empty
 registry is distinct from a failed command.
 
@@ -35,7 +37,10 @@ settings receipt. Rejecting a model or effort observation after mutation must
 produce `unknown`, with no replay. A model switch that clamps effort needs both
 publications. A later healthy control must work after publication failure.
 Prime 0.9.6 emits no callback for an already active value. Record the resulting
-504 as an observation limit rather than inventing callback evidence.
+504 as an observation limit rather than inventing callback evidence. Prime 0.10
+emits no settings event at all; its bridge reads the setting back with
+`get_state`, and that readback plus its HTTP 2xx publication is the receipt,
+including for a value that is already active.
 
 Concurrent settings admitted by one runner must execute in admission order.
 Interrupt must still reach the active loop while a setting waits. This local
@@ -45,7 +50,10 @@ ordering does not fence terminal users or other producers.
 
 Send `{"type":"compact"}` to `POST /v1/sessions/{id}/events`. The successful
 response retains the route's HTTP 202 status and reports `queued: false` only
-after Prime's completion callback. Require the native compaction result.
+after Prime's completion callback on 0.9.x, or after the daemon answers
+`compact` on 0.10. Require the native compaction result. On 0.10 that is the
+in-progress, then completed or failed, compaction status; the compact receipt
+itself carries no result.
 Missing API, callback error, malformed result, and a lost acknowledgment are
 non-success. Uncertain compaction must not be replayed.
 
@@ -57,13 +65,20 @@ reaper. An aborted or error loop cannot become successful idle.
 
 Include a Python tool that is still running when interrupted. Prime may leave
 the preceding assistant's stop reason as `toolUse`. The extension retains the
-public abort signal for that root loop and observes its later end. A terminal
-abort uses the same observation. Abort admission alone proves no loop ended.
+public abort signal for that root loop and observes its later end. On 0.10 the
+bridge sends `abort` and then `resume_queue`, and reports the turn interrupted
+only when the mirrored `agent_end` leaves the last assistant stop reason
+`aborted`. If a running tool leaves `toolUse`, record the idle outcome as a
+defect. A terminal abort uses the same observation. Abort admission alone
+proves no loop ended.
 
 ## Evidence limits
 
-The adapter probe drives the real controls. Focused tests cover missing,
-expired, stale, malformed, and partial outcomes that need controlled callbacks.
+On 0.9.6 the adapter probe drives the real controls. On 0.10 these controls
+have no scripted driver: the adapter probe accepts only 0.9.6, and focused tests
+use a fake daemon. Drive them by hand and record NOT_RUN otherwise. Focused tests
+cover missing, expired, stale, malformed, and partial outcomes that need
+controlled callbacks.
 An unavailable binding returns 503 before control mutation. A possibly applied
 control with no usable result returns 504 and is not retried. All required probe
 scenarios must say `VERIFIED` and the run must exit zero.
