@@ -321,7 +321,6 @@ async def test_snapshot_line_larger_than_the_default_stream_limit(serve: Serve) 
     assert len(data["snapshot"]["messages"]) == 3072
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_an_unanswered_command_times_out_and_the_connection_stays_usable(
     serve: Serve,
 ) -> None:

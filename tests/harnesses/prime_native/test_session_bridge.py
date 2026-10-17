@@ -492,7 +492,6 @@ def _logs_to(handler: logging.Handler, root: Path) -> bool:
     return str(getattr(handler, "baseFilename", "")).startswith(str(root))
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_a_hung_prompt_does_not_hold_up_an_interrupt(bridge: Bridge) -> None:
     binding = await ready(bridge)
     bridge.prime.hung.add("prompt")

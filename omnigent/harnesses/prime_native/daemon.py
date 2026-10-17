@@ -18,6 +18,7 @@ DAEMON_SCHEMA_REVISION = 30
 
 _LINE_LIMIT = 64 * 1024 * 1024
 _HELLO_TIMEOUT_S = 5.0
+_COMMAND_TIMEOUT_S = 30.0
 
 
 class DaemonError(Exception):
@@ -129,8 +130,14 @@ class DaemonClient:
             raise
         return cls(hello, reader, writer)
 
-    async def command(self, type: str, /, **fields: object) -> dict[str, Any]:
-        """Send one command and return its ``data`` (``{}`` when the reply has none)."""
+    async def command(
+        self, type: str, /, *, timeout: float = _COMMAND_TIMEOUT_S, **fields: object
+    ) -> dict[str, Any]:
+        """
+        Send one command and return its ``data`` (``{}`` when the reply has none).
+
+        :raises DaemonError: No reply within *timeout* seconds; the command may have run.
+        """
         if self._closed:
             raise DaemonClosedError("daemon connection is closed")
         command_id = str(next(self._ids))
@@ -145,8 +152,11 @@ class DaemonClient:
         }
         try:
             self._writer.write(json.dumps(envelope, separators=(",", ":")).encode() + b"\n")
-            await self._writer.drain()
-            return await future
+            async with asyncio.timeout(timeout):
+                await self._writer.drain()
+                return await future
+        except TimeoutError as exc:
+            raise DaemonError(f"{type} got no reply within {timeout:g} s") from exc
         except OSError as exc:
             raise DaemonClosedError(f"daemon connection failed: {exc}") from exc
         finally:

@@ -83,9 +83,13 @@ class SessionBridge:
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def run(self, stop: asyncio.Event) -> None:
+        # Separate tasks, so a slow daemon reply cannot stale the binding or hold up a control.
         loops = [
-            asyncio.create_task(loop())
-            for loop in (self._session_loop, self._heartbeat_loop, self._poll_loop)
+            asyncio.create_task(self._session_loop()),
+            *(
+                asyncio.create_task(self._every_tick(step))
+                for step in (self._heartbeat, self._dispatch_controls, self._deliver_inbox)
+            ),
         ]
         try:
             await stop.wait()
@@ -191,34 +195,30 @@ class SessionBridge:
                 published = False
         return published
 
-    async def _heartbeat_loop(self) -> None:
-        # Separate from the poll loop so a slow daemon reply cannot stale the binding.
+    async def _every_tick(self, step: Callable[[], Awaitable[None]]) -> None:
         await self._attached.wait()
-        while True:
-            with contextlib.suppress(OSError):
-                self._heartbeat()
-            await asyncio.sleep(_TICK_S)
-
-    async def _poll_loop(self) -> None:
-        await self._attached.wait()
-        (self._paths.root / "input_ready").write_text("")
         last_failure = ""
         while True:
             try:
-                self._dispatch_controls()
-                if self._client is not None:
-                    await self._deliver_inbox(self._client)
+                await step()
                 last_failure = ""
             except Exception as exc:
+                # Retried every tick, so only a changed failure is logged.
                 if repr(exc) != last_failure:
                     last_failure = repr(exc)
                     if isinstance(exc, (DaemonError, OSError)):
-                        _logger.warning("Prime bridge tick failed: %r", exc)
+                        _logger.warning("Prime bridge %s failed: %r", step.__name__, exc)
                     else:
-                        _logger.exception("Prime bridge tick failed")
+                        _logger.exception("Prime bridge %s failed", step.__name__)
             await asyncio.sleep(_TICK_S)
 
-    async def _deliver_inbox(self, client: DaemonClient) -> None:
+    async def _deliver_inbox(self) -> None:
+        client = self._client
+        if client is None:
+            return
+        ready = self._paths.root / "input_ready"
+        if not ready.exists():
+            ready.write_text("")
         for path in sorted(self._inbox.glob("*.json")):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -245,7 +245,7 @@ class SessionBridge:
             self._prompt_attempts.pop(path.name, None)
             path.unlink(missing_ok=True)
 
-    def _heartbeat(self) -> None:
+    async def _heartbeat(self) -> None:
         binding = {"incarnation": self._incarnation, "pid": os.getpid(), "heartbeat": _now_ms()}
         _atomic_text(self._paths.controls_dir / "binding.json", json.dumps(binding))
 
@@ -255,7 +255,7 @@ class SessionBridge:
             if json.loads(binding.read_text()).get("incarnation") == self._incarnation:
                 binding.unlink()
 
-    def _dispatch_controls(self) -> None:
+    async def _dispatch_controls(self) -> None:
         results = self._paths.controls_dir / "results"
         for path in results.iterdir():
             with contextlib.suppress(FileNotFoundError):
@@ -302,9 +302,13 @@ class SessionBridge:
         if client is None:
             return {"status": "unavailable", "detail": "Prime daemon is not attached"}
         try:
-            return await handler(self, client, request)
+            async with asyncio.timeout((expires_at - _now_ms()) / 1000):
+                return await handler(self, client, request)
         except DaemonCommandError as exc:
             return {"status": "rejected", "detail": exc.error}
+        except (TimeoutError, DaemonError) as exc:
+            _logger.warning("Prime control %s got no answer: %r", request.get("type"), exc)
+            return {"status": "unknown", "detail": "Prime control outcome unknown; not retried"}
         except Exception:
             _logger.exception("Prime control %s failed", request.get("type"))
             return {"status": "unknown", "detail": "Prime control outcome unknown; not retried"}
