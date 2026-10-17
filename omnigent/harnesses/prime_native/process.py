@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -44,6 +44,7 @@ from omnigent.native import native_bridge_common, owner_claim
 from omnigent.native.source_owner import NativeAdmission, NativeStop
 
 MINIMUM_VERSION = "0.9.6"
+DAEMON_SOCKET_ENV_VAR = "PRIME_AGENT_DAEMON_SOCKET"
 
 
 def meets_minimum_version(version: object) -> bool:
@@ -140,7 +141,14 @@ class _JsonlReader:
         return value
 
 
-def resolve_prime_executable() -> str:
+@dataclass(frozen=True)
+class PrimeExecutable:
+    path: str
+    # Deprecated: 0.9.x builds host the shared Pi extension; remove this path in Omnigent 0.19.0.
+    extension: bool
+
+
+def resolve_prime_executable() -> PrimeExecutable:
     command = os.environ.get("OMNIGENT_PRIME_PATH", "").strip() or "prime-agent"
     executable = resolve_cli_binary(command, which=shutil.which)
     if executable is None:
@@ -156,16 +164,11 @@ def resolve_prime_executable() -> str:
         raise click.ClickException(
             f"Prime Native requires prime-agent {MINIMUM_VERSION} or newer; found {version!r}."
         )
-    # The adapter's transcript bridge is a Prime extension; releases without it cannot host one.
+    # Releases without --extension (0.10+) are mirrored over their daemon socket instead.
     help_text = subprocess.run(
         [executable, "--help"], capture_output=True, text=True, timeout=10, check=True
     ).stdout
-    if "--extension" not in help_text:
-        raise click.ClickException(
-            f"Prime Native needs a prime-agent with extension support (--extension); "
-            f"{version} has none. Install a 0.9.x release or point OMNIGENT_PRIME_PATH at one."
-        )
-    return executable
+    return PrimeExecutable(executable, "--extension" in help_text)
 
 
 def _process_name_aliases(executable: str) -> set[str]:
@@ -177,7 +180,7 @@ def build_prime_launch(
     paths: PrimeRuntimePaths,
     *,
     executable: str,
-    extension: Path,
+    extension: Path | None,
     config: Path,
     extra_args: Sequence[str] = (),
     external_session_id: str | None = None,
@@ -213,7 +216,9 @@ def build_prime_launch(
     source_dir = Path(
         source_env.get("PRIME_AGENT_CODING_AGENT_DIR") or Path.home() / ".prime" / "agent"
     ).expanduser()
-    args = ["--extension", str(extension), "--session-dir", str(paths.session_dir), *extra_args]
+    args = ["--session-dir", str(paths.session_dir), *extra_args]
+    if extension is not None:
+        args[:0] = ["--extension", str(extension)]
     if external_session_id:
         args.extend(["--resume", external_session_id])
     if model and not any(arg == "--model" or arg.startswith("--model=") for arg in extra_args):
@@ -229,6 +234,9 @@ def build_prime_launch(
     if instructions:
         args.extend(["--append-system-prompt", instructions])
     env = {**paths.env, PRIME_NATIVE_CONFIG_ENV_VAR: str(config)}
+    if extension is None:
+        # The session bridge and the stop path both find Prime's daemon here.
+        env[DAEMON_SOCKET_ENV_VAR] = str(_default_supervisor_socket(paths))
     if source_env.get("OMNIGENT_DATA_DIR"):
         env["OMNIGENT_DATA_DIR"] = source_env["OMNIGENT_DATA_DIR"]
     kernel_executable = source_env.get("PRIME_AGENT_KERNEL_PYTHON", "")
@@ -249,11 +257,28 @@ def build_prime_launch(
             source, target = source_dir / name, paths.agent_dir / name
             if source.is_file() and not target.exists():
                 _atomic_text(target, source.read_text(encoding="utf-8"))
+        if extension is None:
+            _skip_onboarding(paths.agent_dir / "settings.json")
         _atomic_text(paths.executable_file, executable)
         _atomic_text(paths.root / KERNEL_PROCESS_NAMES_FILE, json.dumps(kernel_process_names))
         owner_claim.write_owner_claim(paths.root)
         _ACTIVE_RUNTIMES.add(paths)
     return PrimeLaunch(executable, tuple(args), env)
+
+
+def _skip_onboarding(settings: Path) -> None:
+    # A fresh agent dir opens Prime's trace-sharing prompt, whose default answer is Share.
+    try:
+        value = json.loads(settings.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        value = {}
+    except (OSError, UnicodeError, ValueError):
+        return
+    if not isinstance(value, dict) or "onboardingShown" in value:
+        return
+    value["onboardingShown"] = True
+    value["agentTraces"] = value.get("agentTraces") or {"enabled": False}
+    _atomic_text(settings, json.dumps(value, indent=2))
 
 
 def _replace_with_symlink(link: Path, target: Path) -> None:
@@ -1107,6 +1132,16 @@ class _TerminalSignalForwarder:
             self.forward(signum, None)
 
 
+def _start_session_bridge(paths: PrimeRuntimePaths) -> Callable[[], None]:
+    socket_path = _default_supervisor_socket(paths)
+    # Only an extension-less launch points Prime's daemon at the private socket.
+    if os.environ.get(DAEMON_SOCKET_ENV_VAR) != str(socket_path):
+        return lambda: None
+    from omnigent.harnesses.prime_native.session_bridge import start_in_thread
+
+    return start_in_thread(paths, socket_path)
+
+
 def main() -> int:
     paths = PrimeRuntimePaths(Path(sys.argv[1]))
     token = sys.argv[2]
@@ -1172,10 +1207,12 @@ def main() -> int:
                         _launch_reservation_path(paths).unlink()
                 raise
 
+        stop_bridge = _start_session_bridge(paths)
         try:
             terminal_signals.publish(child)
             return child.wait()
         finally:
+            stop_bridge()
             _finalize_wrapper_runtime(paths, terminal_identity)
     finally:
         terminal_signals.restore()

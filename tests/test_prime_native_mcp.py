@@ -21,7 +21,11 @@ def private_prime_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(bridge, "_DATA_ROOT", tmp_path)
     monkeypatch.setattr(bridge, "_COMPACT_ROOT", tmp_path / "compact")
     monkeypatch.setattr(process, "_ACTIVE_RUNTIMES", set())
-    monkeypatch.setattr(main, "resolve_prime_executable", lambda: "/qualified/prime-agent")
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=True),
+    )
     monkeypatch.setattr(main, "complete_prime_launch", lambda *_args: None)
     monkeypatch.setattr("omnigent.runner._entry._make_auth_token_factory", lambda: None)
     monkeypatch.setenv("RUNNER_SERVER_URL", "http://omnigent.test")

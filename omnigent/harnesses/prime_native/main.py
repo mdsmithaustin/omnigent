@@ -257,7 +257,7 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
         config = await _pi_native_launch_config(
             session_id=ctx.session_id, server_client=ctx.server_client
         )
-        executable = await asyncio.to_thread(resolve_prime_executable)
+        prime = await asyncio.to_thread(resolve_prime_executable)
         await asyncio.to_thread(stop_prime_runtime, paths, launch_reservation=reservation)
         paths.prepare()
         clear_inbox(paths.root)
@@ -309,8 +309,8 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
         launch = await asyncio.to_thread(
             build_prime_launch,
             paths,
-            executable=executable,
-            extension=extension,
+            executable=prime.path,
+            extension=extension if prime.extension else None,
             config=extension_config,
             extra_args=config.terminal_launch_args or (),
             external_session_id=config.external_session_id,

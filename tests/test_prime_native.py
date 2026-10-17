@@ -521,6 +521,55 @@ def test_launch_uses_private_config_temp_and_native_resume(tmp_path: Path) -> No
     assert json.loads((source / "settings.json").read_text()) == {"defaultModel": "fixture"}
 
 
+def test_extensionless_launch_points_prime_at_the_private_daemon_socket(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    launch = build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=None,
+        config=paths.root / "config.json",
+        external_session_id="01a14ae0-f698-7360-afe7-c791001a2fbd",
+        environ={"PRIME_AGENT_CODING_AGENT_DIR": str(source)},
+    )
+
+    assert launch.argv == (
+        "--session-dir",
+        str(paths.session_dir),
+        "--resume",
+        "01a14ae0-f698-7360-afe7-c791001a2fbd",
+    )
+    socket_path = paths.temp_dir / f"prime-agent-{os.getuid()}" / "daemon.sock"
+    assert launch.env["PRIME_AGENT_DAEMON_SOCKET"] == str(socket_path)
+    assert json.loads((paths.agent_dir / "settings.json").read_text()) == {
+        "defaultModel": "fixture",
+        "onboardingShown": True,
+        "agentTraces": {"enabled": False},
+    }
+    assert json.loads((source / "settings.json").read_text()) == {"defaultModel": "fixture"}
+
+
+def test_extensionless_launch_keeps_answered_onboarding(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    answered = '{"onboardingShown": true, "agentTraces": {"enabled": true}}'
+    (source / "settings.json").write_text(answered)
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=None,
+        config=paths.root / "config.json",
+        environ={"PRIME_AGENT_CODING_AGENT_DIR": str(source)},
+    )
+
+    assert (paths.agent_dir / "settings.json").read_text() == answered
+
+
 def _launch_with_source(paths: PrimeRuntimePaths, source: Path) -> None:
     build_prime_launch(
         paths,
@@ -2315,22 +2364,13 @@ def _fake_prime(tmp_path: Path, version: str, *, extensions: bool) -> Path:
 
 
 @pytest.mark.parametrize("version", ["0.9.6", "0.9.7", "0.10.0", "1.0.0"])
-def test_newer_version_with_extension_support_resolves(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
+@pytest.mark.parametrize("extensions", [True, False], ids=["extension", "daemon-bridge"])
+def test_supported_version_resolves_with_its_transcript_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str, extensions: bool
 ) -> None:
-    binary = _fake_prime(tmp_path, version, extensions=True)
+    binary = _fake_prime(tmp_path, version, extensions=extensions)
     monkeypatch.setenv("OMNIGENT_PRIME_PATH", str(binary))
-    assert process.resolve_prime_executable() == str(binary)
-
-
-def test_newer_version_without_extension_support_is_refused_by_capability(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(
-        "OMNIGENT_PRIME_PATH", str(_fake_prime(tmp_path, "0.10.0", extensions=False))
-    )
-    with pytest.raises(click.ClickException, match=r"extension support \(--extension\); 0\.10\.0"):
-        process.resolve_prime_executable()
+    assert process.resolve_prime_executable() == process.PrimeExecutable(str(binary), extensions)
 
 
 def test_public_command_has_no_prime_alias() -> None:
