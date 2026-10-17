@@ -540,7 +540,7 @@ async def test_an_item_whose_post_failed_is_reposted_from_the_next_snapshot(
 
 
 async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
-    bridge: Bridge,
+    bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
     await ready(bridge)
     user = _user("final reply lost", 21)
@@ -572,6 +572,24 @@ async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
         ]
     )
     assert items == [("user", "final reply lost"), ("assistant", "answer")]
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
+
+
+async def test_a_lost_idle_status_is_not_posted_over_a_newer_turn(bridge: Bridge) -> None:
+    await ready(bridge)
+    await bridge.prime.emit(_event(1, {"type": "agent_start"}))
+    await eventually(bridge.statuses)
+    bridge.prime.messages = [_user("the next turn", 8)]
+    bridge.prime.state["isStreaming"] = True
+    bridge.outage.extend([503] * 3)
+
+    await bridge.prime.emit(_event(2, {"type": "agent_end", "messages": []}))
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    await eventually(lambda: len(bridge.statuses()) == 2)
+    await asyncio.sleep(2 * TICK_S)
+    assert bridge.statuses() == [("running", "pi-0-1"), ("running", "pi-recovered-8")]
 
 
 async def test_an_idle_status_lost_in_an_outage_is_reposted(bridge: Bridge) -> None:
@@ -778,7 +796,9 @@ async def _right_after_a_root_check(bridge: Bridge) -> None:
         await asyncio.sleep(0.001)
 
 
-async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
+async def test_the_bridge_follows_the_terminal_into_a_new_session(
+    bridge: Bridge, caplog: pytest.LogCaptureFixture
+) -> None:
     await ready(bridge)
     fresh = {
         "id": "dddddddddddd",
@@ -812,3 +832,4 @@ async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge
 
     await eventually(lambda: len(bridge.prime.sent("attach")) == 3)
     assert bridge.prime.sent("attach")[-1]["activeSessionId"] == ROOT_ID
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
