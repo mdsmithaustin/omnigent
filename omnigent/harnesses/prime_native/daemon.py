@@ -6,11 +6,14 @@ import asyncio
 import contextlib
 import itertools
 import json
+import logging
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
+
+_logger = logging.getLogger(__name__)
 
 DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
 DAEMON_SCHEMA_REVISION = 30
@@ -201,6 +204,11 @@ class DaemonClient:
                     case "session_event":
                         if self._events.qsize() >= _EVENT_BACKLOG:
                             # A consumer this far behind re-attaches and recovers by snapshot.
+                            _logger.warning(
+                                "Prime session events backed up past %d; dropping them and"
+                                " closing the daemon connection",
+                                _EVENT_BACKLOG,
+                            )
                             while not self._events.empty():
                                 self._events.get_nowait()
                             failure = DaemonClosedError("session event backlog overflowed")

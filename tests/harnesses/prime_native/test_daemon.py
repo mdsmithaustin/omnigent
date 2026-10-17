@@ -340,9 +340,6 @@ async def test_an_unanswered_command_times_out_and_the_connection_stays_usable(
             assert await client.command("get_state") == {}
 
 
-@pytest.mark.xfail(
-    strict=True, reason="a backlog overflow closes the connection without a log line"
-)
 async def test_an_event_backlog_past_its_bound_ends_the_connection(
     serve: Serve, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
