@@ -54,7 +54,9 @@ Probe logs live outside the repo; each fact below was observed on 0.10.0 darwin-
   `list` reports `attachedClients` per session, counting the TUI and any other
   attached client, this bridge included, which shows the root the TUI is on.
   A run of the bridge against a real TUI through `/new` and `/resume` posted each
-  turn once and switched the resume id there and back.
+  turn once and PATCHed the new resume id there and back to a recording fake
+  server. The real server refuses to overwrite `external_session_id`, so the
+  conversation keeps the first session's UUID.
 - `set_model` and `set_thinking_level` emit no event. `get_state` reflects them.
 - `compact` emits `compaction_start` and `compaction_end` (with `errorMessage` on failure).
 - `--resume <session UUID>` restores the conversation under a new runtime id;

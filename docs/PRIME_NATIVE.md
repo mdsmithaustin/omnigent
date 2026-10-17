@@ -298,8 +298,10 @@ Prime 0.10 cannot load extensions. Omnigent starts it with a private daemon
 socket, and a bridge in the terminal wrapper attaches to the root session (RLM
 depth 0) that the TUI shows under the conversation's session directory. When
 `/new` or `/resume` in the TUI switches sessions, the bridge reattaches to the
-new one, posts its messages, and records its session UUID for resume. Web
-messages are sent as steered prompts and appear in the TUI as normal user turns.
+new one and posts its messages. It also sends that session's UUID, but the
+server keeps the first UUID it recorded, so `omnigent prime-native --resume`
+reopens the conversation's first Prime session. Web messages are sent as steered
+prompts and appear in the TUI as normal user turns.
 Each web message reaches Prime at most once. If the daemon connection fails
 before Prime confirms a prompt, the conversation shows that the message may not
 have arrived, and it is not resent. Model, effort, compact, and interrupt map to
