@@ -45,6 +45,7 @@ async def _launch(
     monkeypatch: pytest.MonkeyPatch,
     spec: AgentSpec,
     mcp_response: dict[str, object] | httpx.Response | None = None,
+    ensure_comment_relay: AsyncMock | None = None,
 ) -> tuple[dict[str, Any], list[httpx.Request], dict[str, Any]]:
     paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
     monkeypatch.setattr(main, "runtime_paths", lambda _: paths)
@@ -85,6 +86,7 @@ async def _launch(
                 publish_event=lambda _session_id, _event: None,
                 server_client=client,
                 agent_spec=spec,
+                ensure_comment_relay=ensure_comment_relay,
             )
         )
     terminal = registry.launch_required_terminal.call_args.kwargs["spec"]
@@ -135,6 +137,32 @@ async def test_launch_advertises_declared_mcp_schema_to_prime(
     }
     prompt = terminal["args"][terminal["args"].index("--append-system-prompt") + 1]
     assert "Use the declared tools when they help." in prompt
+
+
+@pytest.mark.asyncio
+async def test_daemon_launch_registers_the_relay_with_prime_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main,
+        "resolve_prime_executable",
+        lambda: process.PrimeExecutable("/qualified/prime-agent", extension=False),
+    )
+    monkeypatch.setenv("PRIME_AGENT_CODING_AGENT_DIR", str(tmp_path / "host-agent"))
+    relay = AsyncMock()
+
+    await _launch(
+        tmp_path,
+        monkeypatch,
+        AgentSpec(spec_version=1, name="prime-relay"),
+        ensure_comment_relay=relay,
+    )
+
+    settings = json.loads(
+        (tmp_path / "prime-native" / "runtime" / "agent" / "settings.json").read_text()
+    )
+    assert list(settings["mcpServers"]) == ["omnigent"]
+    relay.assert_awaited_once()
 
 
 @pytest.mark.asyncio

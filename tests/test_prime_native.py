@@ -570,6 +570,116 @@ def test_extensionless_launch_keeps_answered_onboarding(tmp_path: Path) -> None:
     assert (paths.agent_dir / "settings.json").read_text() == answered
 
 
+def _relay_launch(
+    paths: PrimeRuntimePaths, source: Path, *, relay_mcp: bool, extension: Path | None = None
+) -> None:
+    build_prime_launch(
+        paths,
+        executable="/opt/prime-agent",
+        extension=extension,
+        config=paths.root / "config.json",
+        relay_mcp=relay_mcp,
+        environ={
+            "PRIME_AGENT_CODING_AGENT_DIR": str(source),
+            "OMNIGENT_DATA_DIR": str(paths.root.parent),
+        },
+    )
+
+
+def _mcp_servers(paths: PrimeRuntimePaths) -> dict[str, object]:
+    return json.loads((paths.agent_dir / "settings.json").read_text())["mcpServers"]
+
+
+def test_extensionless_launch_registers_relay_tools_beside_the_users_mcp_servers(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    mine = {"type": "http", "url": "http://127.0.0.1:1/mcp"}
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"mine": mine}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+    first = (paths.agent_dir / "settings.json").read_bytes()
+    token = (paths.root / "bridge.json").read_bytes()
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert _mcp_servers(paths) == {
+        "mine": mine,
+        "omnigent": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": [
+                "-I",
+                "-m",
+                "omnigent.harnesses.claude_native.bridge",
+                "serve-mcp",
+                "--bridge-dir",
+                str(paths.root),
+            ],
+            "env": {"OMNIGENT_DATA_DIR": {"env": "OMNIGENT_DATA_DIR"}},
+        },
+    }
+    assert (paths.agent_dir / "settings.json").read_bytes() == first
+    assert (paths.root / "bridge.json").read_bytes() == token
+    assert len(json.loads(token)["token"]) >= 32
+    assert json.loads((source / "settings.json").read_text()) == {"mcpServers": {"mine": mine}}
+
+
+def test_extensionless_launch_without_relay_tools_drops_a_stale_relay_server(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text(json.dumps({"mcpServers": {"mine": {"type": "http"}}}))
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+    _relay_launch(paths, source, relay_mcp=True)
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert _mcp_servers(paths) == {"mine": {"type": "http"}}
+    assert json.loads((source / "settings.json").read_text()) == {
+        "mcpServers": {"mine": {"type": "http"}}
+    }
+
+
+def test_extensionless_launch_without_relay_tools_adds_no_mcp_servers(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=False)
+
+    assert "mcpServers" not in json.loads((paths.agent_dir / "settings.json").read_text())
+    assert not (paths.root / "bridge.json").exists()
+
+
+def test_relay_registration_replaces_a_null_mcp_servers_setting(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"mcpServers": null}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True)
+
+    assert list(_mcp_servers(paths)) == ["omnigent"]
+
+
+def test_extension_launch_leaves_mcp_servers_to_the_extension(tmp_path: Path) -> None:
+    source = tmp_path / "user-agent"
+    source.mkdir()
+    (source / "settings.json").write_text('{"defaultModel": "fixture"}')
+    paths = PrimeRuntimePaths(tmp_path / "prime-native" / "runtime")
+
+    _relay_launch(paths, source, relay_mcp=True, extension=paths.root / "extension.js")
+
+    assert json.loads((paths.agent_dir / "settings.json").read_text()) == {
+        "defaultModel": "fixture"
+    }
+    assert not (paths.root / "bridge.json").exists()
+
+
 def _launch_with_source(paths: PrimeRuntimePaths, source: Path) -> None:
     build_prime_launch(
         paths,

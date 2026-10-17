@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 import click
 import psutil
@@ -45,6 +45,7 @@ from omnigent.native.source_owner import NativeAdmission, NativeStop
 
 MINIMUM_VERSION = "0.9.6"
 DAEMON_SOCKET_ENV_VAR = "PRIME_AGENT_DAEMON_SOCKET"
+RELAY_MCP_SERVER = "omnigent"
 
 
 def meets_minimum_version(version: object) -> bool:
@@ -187,6 +188,7 @@ def build_prime_launch(
     model: str | None = None,
     reasoning_effort: str | None = None,
     instructions: str | None = None,
+    relay_mcp: bool = False,
     environ: Mapping[str, str] | None = None,
 ) -> PrimeLaunch:
     if IS_WINDOWS:
@@ -259,6 +261,7 @@ def build_prime_launch(
                 _atomic_text(target, source.read_text(encoding="utf-8"))
         if extension is None:
             _skip_onboarding(paths.agent_dir / "settings.json")
+            _register_relay_mcp(paths, env, enabled=relay_mcp)
         _atomic_text(paths.executable_file, executable)
         _atomic_text(paths.root / KERNEL_PROCESS_NAMES_FILE, json.dumps(kernel_process_names))
         owner_claim.write_owner_claim(paths.root)
@@ -266,18 +269,64 @@ def build_prime_launch(
     return PrimeLaunch(executable, tuple(args), env)
 
 
-def _skip_onboarding(settings: Path) -> None:
-    # A fresh agent dir opens Prime's trace-sharing prompt, whose default answer is Share.
+def _read_settings(settings: Path) -> dict[str, object] | None:
     try:
         value = json.loads(settings.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        value = {}
+        return {}
     except (OSError, UnicodeError, ValueError):
-        return
-    if not isinstance(value, dict) or "onboardingShown" in value:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _skip_onboarding(settings: Path) -> None:
+    # A fresh agent dir opens Prime's trace-sharing prompt, whose default answer is Share.
+    value = _read_settings(settings)
+    if value is None or "onboardingShown" in value:
         return
     value["onboardingShown"] = True
     value["agentTraces"] = value.get("agentTraces") or {"enabled": False}
+    _atomic_text(settings, json.dumps(value, indent=2))
+
+
+def _relay_mcp_entry(paths: PrimeRuntimePaths, env: Mapping[str, str]) -> dict[str, object]:
+    # Prime hands a stdio server only HOME, PATH, TMPDIR and {"env": NAME} references.
+    from omnigent.harnesses.claude_native.bridge import build_mcp_config
+
+    servers = cast("dict[str, dict[str, object]]", build_mcp_config(paths.root)["mcpServers"])
+    shim = servers[RELAY_MCP_SERVER]
+    entry: dict[str, object] = {
+        "type": "stdio",
+        "command": shim["command"],
+        "args": shim["args"],
+    }
+    if "OMNIGENT_DATA_DIR" in env:
+        entry["env"] = {"OMNIGENT_DATA_DIR": {"env": "OMNIGENT_DATA_DIR"}}
+    return entry
+
+
+def _register_relay_mcp(
+    paths: PrimeRuntimePaths, env: Mapping[str, str], *, enabled: bool
+) -> None:
+    # Prime 0.10 reaches Omnigent's relay tools as the `omnigent` MCP server in settings.json.
+    settings = paths.agent_dir / "settings.json"
+    value = _read_settings(settings)
+    if value is None:
+        return
+    servers = value.get("mcpServers")
+    servers = dict(servers) if isinstance(servers, dict) else {}
+    if enabled:
+        config = paths.root / "bridge.json"
+        if not config.exists():
+            _atomic_text(config, json.dumps({"token": secrets.token_urlsafe(32)}))
+        servers[RELAY_MCP_SERVER] = _relay_mcp_entry(paths, env)
+    elif RELAY_MCP_SERVER not in servers:
+        return
+    else:
+        del servers[RELAY_MCP_SERVER]
+    if servers == value.get("mcpServers"):
+        return
+    value["mcpServers"] = servers
     _atomic_text(settings, json.dumps(value, indent=2))
 
 

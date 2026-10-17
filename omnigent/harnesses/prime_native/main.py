@@ -317,6 +317,7 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
             model=model,
             reasoning_effort=config.reasoning_effort,
             instructions=instructions,
+            relay_mcp=bool(tools) and ctx.ensure_comment_relay is not None,
         )
         agent_os_env = _agent_os_env_from_spec(ctx.agent_spec)
         terminal_spec = TerminalEnvSpec(
