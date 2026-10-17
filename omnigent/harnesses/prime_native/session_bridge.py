@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -74,6 +75,8 @@ class SessionBridge:
         self._inbox = Path(config["inboxDir"])
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
+        # An item failed to post; the next attach snapshot re-posts it.
+        self._unposted = False
         self._client: DaemonClient | None = None
         self._session = ""
         self._posted_settings: dict[str, str] = {}
@@ -109,7 +112,11 @@ class SessionBridge:
                     await self._attach(client, root, post_history=not first_attach)
                     first_attach, last_failure = False, ""
                     async for envelope in client.events():
+                        if envelope.get("activeSessionId") != self._session:
+                            continue
                         await self._mirror(client, envelope)
+                        if self._unposted and envelope.get("event", {}).get("type") == "agent_end":
+                            break
             except Exception as exc:
                 # Retried every tick, so only a changed failure is logged.
                 if repr(exc) != last_failure:
@@ -149,9 +156,9 @@ class SessionBridge:
         snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
         # The first attach after launch replays history Omnigent already holds.
         self._transcript, history = reconcile(self._transcript, snapshot.get("messages", []))
+        self._unposted = False
         if post_history:
-            for event in history:
-                await self._post(event)
+            await self._post_all(history)
         self._client, self._session = client, session
         self._attached.set()
         _logger.info("Attached to Prime session %s (%s)", session, native_id)
@@ -166,11 +173,8 @@ class SessionBridge:
             await self._post({"type": "external_model_options", "data": {"models": options}})
 
     async def _mirror(self, client: DaemonClient, envelope: dict[str, Any]) -> None:
-        if envelope.get("activeSessionId") != self._session:
-            return
         self._transcript, events = reduce(self._transcript, envelope)
-        for event in events:
-            await self._post(event)
+        await self._post_all(events)
         if envelope.get("event", {}).get("type") == "agent_end":
             # The daemon emits no event for a model or effort picked in the TUI.
             async with self._settings_lock:
@@ -361,6 +365,14 @@ class SessionBridge:
         except (OSError, ValueError):
             auth = None
         return {"content-type": "application/json", **(auth if isinstance(auth, dict) else {})}
+
+    async def _post_all(self, events: list[Event]) -> None:
+        for event in events:
+            source_id = event["data"].get("source_id")
+            if not await self._post(event) and source_id:
+                posted = self._transcript.posted - {source_id}
+                self._transcript = replace(self._transcript, posted=posted)
+                self._unposted = True
 
     async def _post(self, event: Event) -> bool:
         for attempt in range(_POST_ATTEMPTS):

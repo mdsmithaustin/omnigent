@@ -505,7 +505,6 @@ async def test_a_hung_prompt_does_not_hold_up_an_interrupt(bridge: Bridge) -> No
     assert len(bridge.prime.sent("abort")) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_an_item_whose_post_failed_is_reposted_from_the_next_snapshot(
     bridge: Bridge,
 ) -> None:
