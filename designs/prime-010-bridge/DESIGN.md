@@ -57,11 +57,12 @@ Probe logs live outside the repo; each fact below was observed on 0.10.0 darwin-
 DaemonClient            NDJSON over AF_UNIX; validated hello; command() -> data;
                         events() async iterator of session_event envelopes.
 TranscriptState         response_id, turn counter, per-message stream ids,
-                        count of snapshot messages already posted.
+                        source_ids already posted, cumulative usage.
 reduce(state, event)    pure; returns (state, [omnigent event]) using the same
                         /events shapes the extension posted.
-reconcile(state, msgs)  pure; returns events for snapshot messages past the
-                        posted count, with stable source_ids.
+reconcile(state, msgs)  pure; returns events for snapshot messages whose
+                        source_ids are not yet posted (omnigent/harnesses/
+                        prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
                         discover root session, attach, then three loops:
                         events -> POST /events, inbox -> prompt,

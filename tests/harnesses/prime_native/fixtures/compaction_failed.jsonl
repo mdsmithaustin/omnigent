@@ -1,0 +1,2 @@
+{"type":"session_event","activeSessionId":"aaaaaaaaaaaa","event":{"type":"compaction_start","reason":"manual"},"meta":{"sequence":289,"cursor":{"generation":"g1","sequence":289}}}
+{"type":"session_event","activeSessionId":"aaaaaaaaaaaa","event":{"type":"compaction_end","reason":"manual","aborted":false,"willRetry":false,"errorMessage":"Session is too short to compact — try again once it grows","errorSeverity":"warning"},"meta":{"sequence":290,"cursor":{"generation":"g1","sequence":290}}}
