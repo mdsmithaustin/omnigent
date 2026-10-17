@@ -574,6 +574,20 @@ async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
     assert items == [("user", "final reply lost"), ("assistant", "answer")]
 
 
+@pytest.mark.xfail(strict=True, reason="a lost status post is never re-posted")
+async def test_an_idle_status_lost_in_an_outage_is_reposted(bridge: Bridge) -> None:
+    await ready(bridge)
+    await bridge.prime.emit(_event(1, {"type": "agent_start"}))
+    await eventually(bridge.statuses)
+    bridge.outage.extend([503] * 3)
+
+    await bridge.prime.emit(_event(2, {"type": "agent_end", "messages": []}))
+
+    await eventually(lambda: not bridge.outage)
+    statuses = await eventually(lambda: len(bridge.statuses()) == 2 and bridge.statuses())
+    assert statuses == [("running", "pi-0-1"), ("idle", "pi-0-1")]
+
+
 async def test_a_turn_that_ended_while_detached_reports_idle_on_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
