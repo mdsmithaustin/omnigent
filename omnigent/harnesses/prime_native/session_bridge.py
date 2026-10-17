@@ -169,8 +169,9 @@ class SessionBridge:
         """
         The root session the TUI shows, since ``/new`` and ``/resume`` switch it.
 
-        That is the root with a client besides this bridge, else the root the bridge
-        last attached, else the first root under this runtime's session dir.
+        The bridge stays on its root while another client views it, since the daemon
+        briefly still counts the bridge on a root it left. Otherwise it is the root with
+        a client besides this bridge, else the first root under this runtime's session dir.
         """
         session_dir = self._paths.session_dir.resolve()
         roots = [
@@ -180,14 +181,11 @@ class SessionBridge:
             and isinstance(session.get("sessionFile"), str)
             and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
         ]
-        for root in roots:
-            # The count includes this bridge on its root, briefly also after it detached.
-            own = 1 if root.get("id") == self._session else 0
-            clients = root.get("attachedClients")
-            if isinstance(clients, int) and clients > own:
-                return root
         current = next((root for root in roots if root.get("id") == self._session), None)
-        return current or (roots[0] if roots else None)
+        viewed = [root for root in roots if _clients(root) > (root is current)]
+        if current in viewed or (current and not viewed):
+            return current
+        return viewed[0] if viewed else (roots[0] if roots else None)
 
     async def _follow_tui(self) -> None:
         client = self._client
@@ -547,6 +545,11 @@ _CONTROLS: dict[
     "compact": SessionBridge._compact,
     "interrupt": SessionBridge._interrupt,
 }
+
+
+def _clients(root: dict[str, Any]) -> int:
+    clients = root.get("attachedClients")
+    return clients if isinstance(clients, int) else 0
 
 
 def _retryable(status: int) -> bool:

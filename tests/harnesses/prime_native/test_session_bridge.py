@@ -779,7 +779,6 @@ async def _right_after_a_root_check(bridge: Bridge) -> None:
         await asyncio.sleep(0.001)
 
 
-@pytest.mark.xfail(strict=True, reason="a stale count on the old root pulls the bridge back")
 async def test_a_stale_client_count_on_the_old_root_does_not_pull_the_bridge_back(
     bridge: Bridge,
 ) -> None:
