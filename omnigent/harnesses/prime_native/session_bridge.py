@@ -39,6 +39,7 @@ _TICK_S = 0.25
 _STOP_TIMEOUT_S = 2.0
 _RESULT_TTL_S = 60.0
 _MAX_PROMPT_ATTEMPTS = 5
+_DELIVERED_CAP = 4096
 _POST_ATTEMPTS = 3
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
@@ -86,6 +87,8 @@ class SessionBridge:
         self._session = ""
         self._posted_settings: dict[str, str] = {}
         self._prompt_attempts: dict[str, int] = {}
+        # Ids of consumed inbox messages, oldest first, so a re-read file is not prompted twice.
+        self._delivered: dict[str, None] = {}
         self._settings_lock = asyncio.Lock()
         self._attached = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -240,9 +243,15 @@ class SessionBridge:
             except (OSError, ValueError):
                 continue
             content = payload.get("content") if isinstance(payload, dict) else None
-            if not isinstance(content, str) or payload.get("type") != "user_message":
+            if (
+                not isinstance(content, str)
+                or payload.get("type") != "user_message"
+                or payload.get("id") in self._delivered
+            ):
                 path.unlink(missing_ok=True)
                 continue
+            if client.closed:
+                return
             try:
                 # Steer joins a running turn and starts one when idle.
                 await client.command(
@@ -260,9 +269,23 @@ class SessionBridge:
                 self._prompt_attempts[path.name] = attempts
                 if attempts < _MAX_PROMPT_ATTEMPTS:
                     return
-                await self._post(_dropped_message(payload.get("id"), exc.error))
+                outcome = (
+                    f"could not be delivered to Prime after {attempts} attempts and was dropped"
+                )
+                await self._post(_lost_message(payload, f"{outcome}: {exc.error}"))
+            except DaemonError as exc:
+                # Prime may have run it before the connection failed, so a resend could repeat it.
+                outcome = "may not have reached Prime and was not resent"
+                await self._post(_lost_message(payload, f"{outcome}: {exc}"))
+            self._remember(payload.get("id"))
             self._prompt_attempts.pop(path.name, None)
             path.unlink(missing_ok=True)
+
+    def _remember(self, message_id: object) -> None:
+        if isinstance(message_id, str):
+            self._delivered[message_id] = None
+            if len(self._delivered) > _DELIVERED_CAP:
+                del self._delivered[next(iter(self._delivered))]
 
     async def _heartbeat(self) -> None:
         # The first beat claims the binding, as the extension does on load; later beats only
@@ -481,7 +504,13 @@ def _policy_notice(message: str) -> Event:
     }
 
 
-def _dropped_message(message_id: object, error: str) -> Event:
+def _lost_message(payload: dict[str, Any], outcome: str) -> Event:
+    content = str(payload.get("content"))
+    preview = content if len(content) <= 80 else f"{content[:80]}…"
+    message = (
+        f"Omnigent: a queued message (id {payload.get('id') or '(no id)'}) "
+        f"{outcome.rstrip('.')}. Content preview: {json.dumps(preview, ensure_ascii=False)}"
+    )
     return {
         "type": "external_conversation_item",
         "data": {
@@ -490,11 +519,7 @@ def _dropped_message(message_id: object, error: str) -> Event:
             "item_data": {
                 "source": "execution",
                 "code": "pi_followup_delivery_dropped",
-                "message": (
-                    f"Omnigent: a queued message (id {message_id or '(no id)'}) could not be "
-                    f"delivered to Prime after {_MAX_PROMPT_ATTEMPTS} attempts and was dropped: "
-                    f"{error}"
-                ),
+                "message": message,
             },
         },
     }

@@ -283,7 +283,6 @@ async def test_web_message_is_steered_into_prime_and_consumed(bridge: Bridge) ->
     ] == [(ROOT_ID, "hello from the web", "steer")]
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_undeliverable_message_is_dropped_with_a_visible_error(bridge: Bridge) -> None:
     await ready(bridge)
     bridge.prime.failures["prompt"] = "Session is shutting down"
@@ -618,7 +617,6 @@ async def test_a_launch_policy_notice_is_posted_as_a_session_warning(bridge: Bri
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_a_redelivered_inbox_file_is_not_prompted_twice(bridge: Bridge) -> None:
     await ready(bridge)
     inbox = bridge.paths.root / "inbox"
@@ -633,7 +631,6 @@ async def test_a_redelivered_inbox_file_is_not_prompted_twice(bridge: Bridge) ->
     assert json.loads(payload)["id"] == message_id
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_a_prompt_cut_off_before_its_reply_is_reported_not_resent(bridge: Bridge) -> None:
     await ready(bridge)
     bridge.prime.dropped.add("prompt")

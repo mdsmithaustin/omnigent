@@ -130,6 +130,10 @@ class DaemonClient:
             raise
         return cls(hello, reader, writer)
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     async def command(
         self, type: str, /, *, timeout: float = _COMMAND_TIMEOUT_S, **fields: object
     ) -> dict[str, Any]:
