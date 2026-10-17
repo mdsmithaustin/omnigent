@@ -155,7 +155,11 @@ class SessionBridge:
                 )
         snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
         # The first attach after launch replays history Omnigent already holds.
-        self._transcript, history = reconcile(self._transcript, snapshot.get("messages", []))
+        self._transcript, history = reconcile(
+            self._transcript,
+            snapshot.get("messages", []),
+            streaming=bool(snapshot.get("state", {}).get("isStreaming")),
+        )
         self._unposted = False
         if post_history:
             await self._post_all(history)

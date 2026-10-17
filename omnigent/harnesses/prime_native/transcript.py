@@ -610,7 +610,7 @@ def reduce(state: TranscriptState, envelope: Envelope) -> tuple[TranscriptState,
 
 
 def reconcile(
-    state: TranscriptState, snapshot_messages: list[Message]
+    state: TranscriptState, snapshot_messages: list[Message], *, streaming: bool
 ) -> tuple[TranscriptState, list[Event]]:
     """
     Emit the items for attach-snapshot messages not yet posted.
@@ -622,6 +622,9 @@ def reconcile(
 
     :param state: Current state, live or fresh.
     :param snapshot_messages: ``snapshot["messages"]`` from ``attach``.
+    :param streaming: ``snapshot["state"]["isStreaming"]``. When ``False``, an
+        agent loop still open in *state* ended while detached, so it is closed
+        as its missed ``agent_end`` would have closed it.
     :returns: The next state and the missing event bodies, in post order.
     """
     out: list[Event] = []
@@ -635,4 +638,8 @@ def reconcile(
             state = _post_tool_result(state, out, response_id, message)
         elif role == "assistant":
             state = _complete_assistant(state, out, message, response_id, live=False)
-    return _flush_usage(state, out), out
+    state = _flush_usage(state, out)
+    if state.loop_response_id is None or streaming:
+        return state, out
+    state, ended = _agent_end(state, {"messages": snapshot_messages}, _Meta("0", 0))
+    return state, out + ended

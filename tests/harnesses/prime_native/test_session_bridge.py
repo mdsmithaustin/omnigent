@@ -530,7 +530,6 @@ async def test_an_item_whose_post_failed_is_reposted_from_the_next_snapshot(
     assert len(bridge.prime.sent("attach")) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_a_turn_that_ended_while_detached_reports_idle_on_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))

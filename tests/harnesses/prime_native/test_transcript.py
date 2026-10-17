@@ -387,21 +387,21 @@ ATTACH_SNAPSHOT_EVENTS = [
 
 
 def test_attach_snapshot_from_scratch_posts_every_message_once_and_skips_custom() -> None:
-    _, events = reconcile(TranscriptState(), snapshot_messages())
+    _, events = reconcile(TranscriptState(), snapshot_messages(), streaming=False)
 
     assert events == ATTACH_SNAPSHOT_EVENTS
 
 
 def test_reconciling_the_same_snapshot_twice_posts_nothing_the_second_time() -> None:
-    state, _ = reconcile(TranscriptState(), snapshot_messages())
+    state, _ = reconcile(TranscriptState(), snapshot_messages(), streaming=False)
 
-    _, again = reconcile(state, snapshot_messages())
+    _, again = reconcile(state, snapshot_messages(), streaming=False)
 
     assert again == []
 
 
 def test_live_replay_after_reconcile_posts_no_conversation_item_again() -> None:
-    state, _ = reconcile(TranscriptState(), snapshot_messages())
+    state, _ = reconcile(TranscriptState(), snapshot_messages(), streaming=False)
 
     _, events = replay(envelopes("tool_call_turn"), state)
 
@@ -454,7 +454,7 @@ def test_reconcile_after_a_partially_streamed_turn_posts_exactly_the_missing_ite
     seen = [e for e in envelopes("tool_call_turn") if e["meta"]["sequence"] <= cut_after_sequence]
     state, live = replay(seen)
 
-    _, recovered = reconcile(state, snapshot_messages()[TURN_MESSAGES])
+    _, recovered = reconcile(state, snapshot_messages()[TURN_MESSAGES], streaming=True)
 
     assert recovered == missing
     _, whole_turn = replay(envelopes("tool_call_turn"))
@@ -489,3 +489,37 @@ def test_a_new_assistant_message_after_a_lost_message_end_streams_under_a_fresh_
         text_delta("pi-turn-1-0-1:msg:0", 0, "lost"),
         text_delta("pi-turn-1-0-1:msg:1", 0, "next"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "ending"),
+    [
+        ("stop", [status("idle", "pi-0-1")]),
+        (
+            "aborted",
+            [
+                {"type": "external_session_interrupted", "data": {"response_id": "pi-0-1"}},
+                status("failed", "pi-0-1"),
+            ],
+        ),
+    ],
+)
+def test_reconcile_closes_a_loop_that_ended_while_detached(
+    stop_reason: str, ending: list[dict]
+) -> None:
+    start = {"type": "session_event", "event": {"type": "agent_start"}, "meta": {"sequence": 1}}
+    state, _ = reduce(TranscriptState(), start)
+    reply = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "done"}],
+        "timestamp": 5,
+        "stopReason": stop_reason,
+    }
+
+    closed, events = reconcile(state, [reply], streaming=False)
+    _, while_running = reconcile(state, [reply], streaming=True)
+
+    assert [e["type"] for e in events[: -len(ending)]] == ["external_conversation_item"]
+    assert events[-len(ending) :] == ending
+    assert closed.loop_response_id is None
+    assert [e["type"] for e in while_running] == ["external_conversation_item"]
