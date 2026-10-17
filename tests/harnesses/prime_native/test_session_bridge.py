@@ -772,7 +772,6 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     assert len(bridge.prime.sent("attach")) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="the inbox prompts the old root until the next follow tick")
 async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
     await ready(bridge)
     fresh = {

@@ -194,7 +194,11 @@ class SessionBridge:
         client = self._client
         if client is None:
             return
-        root = self._tui_root(await client.command("list"))
+        try:
+            root = self._tui_root(await client.command("list"))
+        except DaemonClosedError:
+            # The other caller closed it to re-attach; a lost daemon shows on the reconnect.
+            return
         if root is not None and root.get("id") != self._session:
             _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
             await client.close()
@@ -314,6 +318,8 @@ class SessionBridge:
             ):
                 path.unlink(missing_ok=True)
                 continue
+            # A /new in the TUI since the last tick's check would send this to the old session.
+            await self._reattach_if_needed()
             if client.closed:
                 return
             try:
