@@ -542,7 +542,6 @@ async def test_a_turn_that_ended_while_detached_reports_idle_on_reattach(bridge:
     assert statuses == [("running", "pi-0-1"), ("idle", "pi-0-1")]
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_a_message_refused_while_input_is_suspended_lifts_the_pause(
     bridge: Bridge,
 ) -> None:

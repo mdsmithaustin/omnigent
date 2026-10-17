@@ -40,6 +40,7 @@ _RESULT_TTL_S = 60.0
 _MAX_PROMPT_ATTEMPTS = 5
 _POST_ATTEMPTS = 3
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
+_SUSPENDED = "queued session input is suspended"
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
@@ -245,6 +246,10 @@ class SessionBridge:
                     streamingBehavior="steer",
                 )
             except DaemonCommandError as exc:
+                if _SUSPENDED in exc.error:
+                    # An abort or a TUI Esc pauses input until resumed; 0.10.0 still admits steer.
+                    with contextlib.suppress(DaemonCommandError):
+                        await client.command("resume_queue", activeSessionId=self._session)
                 attempts = self._prompt_attempts.get(path.name, 0) + 1
                 self._prompt_attempts[path.name] = attempts
                 if attempts < _MAX_PROMPT_ATTEMPTS:
