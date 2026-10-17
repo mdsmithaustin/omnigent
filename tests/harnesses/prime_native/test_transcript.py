@@ -414,6 +414,7 @@ def test_live_replay_after_reconcile_posts_no_conversation_item_again() -> None:
 
 
 TURN_MESSAGES = slice(2, 6)
+AGENT_END_SEQUENCE = 41
 
 
 @pytest.mark.parametrize(
@@ -454,7 +455,11 @@ def test_reconcile_after_a_partially_streamed_turn_posts_exactly_the_missing_ite
     seen = [e for e in envelopes("tool_call_turn") if e["meta"]["sequence"] <= cut_after_sequence]
     state, live = replay(seen)
 
-    _, recovered = reconcile(state, snapshot_messages()[TURN_MESSAGES], streaming=True)
+    _, recovered = reconcile(
+        state,
+        snapshot_messages()[TURN_MESSAGES],
+        streaming=cut_after_sequence < AGENT_END_SEQUENCE,
+    )
 
     assert recovered == missing
     _, whole_turn = replay(envelopes("tool_call_turn"))

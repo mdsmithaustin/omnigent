@@ -587,7 +587,6 @@ async def test_an_idle_status_lost_in_an_outage_is_reposted(bridge: Bridge) -> N
     assert statuses == [("running", "pi-0-1"), ("idle", "pi-0-1")]
 
 
-@pytest.mark.xfail(strict=True, reason="reconcile opens no loop for a streaming snapshot")
 async def test_reattaching_mid_turn_reports_running_until_the_turn_ends(bridge: Bridge) -> None:
     await ready(bridge)
     bridge.prime.messages = [_user("still working", 5)]

@@ -624,7 +624,8 @@ def reconcile(
     :param snapshot_messages: ``snapshot["messages"]`` from ``attach``.
     :param streaming: ``snapshot["state"]["isStreaming"]``. When ``False``, an
         agent loop still open in *state* ended while detached, so it is closed
-        as its missed ``agent_end`` would have closed it.
+        as its missed ``agent_end`` would have closed it. When ``True`` and no
+        loop is open, one started while detached, so it is opened as ``running``.
     :returns: The next state and the missing event bodies, in post order.
     """
     out: list[Event] = []
@@ -639,6 +640,9 @@ def reconcile(
         elif role == "assistant":
             state = _complete_assistant(state, out, message, response_id, live=False)
     state = _flush_usage(state, out)
+    if streaming and state.loop_response_id is None:
+        state = replace(state, loop_response_id=response_id)
+        return state, [*out, _status("running", response_id)]
     if state.loop_response_id is None or streaming:
         return state, out
     state, ended = _agent_end(state, {"messages": snapshot_messages}, _Meta("0", 0))
