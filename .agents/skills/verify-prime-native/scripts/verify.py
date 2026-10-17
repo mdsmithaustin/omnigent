@@ -162,7 +162,11 @@ def wait_for(check, description: str, timeout: float = 90):
     raise RuntimeError(f"Timed out waiting for {description}")
 
 
-def make_model(evidence: Path) -> ThreadingHTTPServer:
+def pong(_request: dict) -> list[tuple[dict, str | None]]:
+    return [({"role": "assistant", "content": PONG}, None), ({}, "stop")]
+
+
+def make_model(evidence: Path, respond=pong) -> ThreadingHTTPServer:
     class ModelHandler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             return
@@ -179,7 +183,7 @@ def make_model(evidence: Path) -> ThreadingHTTPServer:
             self.end_headers()
             # Distinct per completion, like real providers; Omnigent dedupes replies by it.
             completion_id = f"verify-completion-{uuid.uuid4().hex}"
-            for delta, reason in (({"role": "assistant", "content": PONG}, None), ({}, "stop")):
+            for delta, reason in respond(request):
                 chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
@@ -237,15 +241,7 @@ def owned_prime_processes(runtime: Path) -> list[psutil.Process]:
     return owned
 
 
-def drive(
-    prime: str,
-    evidence: Path,
-    runtime: Path,
-    env: dict[str, str],
-    expected: str,
-    inspect_seconds: int = 0,
-) -> None:
-    model = make_model(evidence)
+def write_prime_config(runtime: Path, model: ThreadingHTTPServer) -> None:
     prime_config = runtime / "prime"
     prime_config.mkdir()
     (prime_config / "models.json").write_text(
@@ -279,6 +275,19 @@ def drive(
             }
         )
     )
+
+
+def drive(
+    prime: str,
+    evidence: Path,
+    runtime: Path,
+    env: dict[str, str],
+    expected: str,
+    inspect_seconds: int = 0,
+) -> None:
+    model = make_model(evidence)
+    write_prime_config(runtime, model)
+    prime_config = runtime / "prime"
     env["PRIME_AGENT_CODING_AGENT_DIR"] = str(prime_config)
     env["OMNIGENT_PRIME_PATH"] = prime
     help_text = subprocess.run(
