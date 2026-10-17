@@ -18,9 +18,9 @@ Run the executable helper with a real Prime binary only when its
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
 ```
 
-The helper starts a local Omnigent API server and drives `omnigent prime-native` in a PTY. It uses a local OpenAI-compatible model endpoint for deterministic replies. That endpoint replaces only the external model service. Prime, its extension, Omnigent, the host, and the runner remain real processes.
+The helper starts a local Omnigent API server and drives `omnigent prime-native` in a PTY. It uses a local OpenAI-compatible model endpoint for deterministic replies. That endpoint replaces only the external model service. Prime, its transcript bridge, Omnigent, the host, and the runner remain real processes. The bridge is the extension on Prime 0.9.x and the daemon session bridge on 0.10 or newer.
 
-Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that Prime loaded the extension and reached the model endpoint. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
+Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that the bridge delivered it and Prime reached the model endpoint. Prime 0.10 has no `--no-tools`, so the drive passes it only when `prime-agent --help` lists it. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
 
 The drive's default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. The helper prints its evidence directory. A nonzero exit or any `FAIL` record means the scenario failed. A missing native command is a failed prerequisite.
 

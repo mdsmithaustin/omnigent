@@ -281,6 +281,9 @@ def drive(
     )
     env["PRIME_AGENT_CODING_AGENT_DIR"] = str(prime_config)
     env["OMNIGENT_PRIME_PATH"] = prime
+    help_text = subprocess.run(
+        [prime, "--help"], capture_output=True, text=True, timeout=30, check=True
+    ).stdout
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -331,7 +334,8 @@ def drive(
                     "verify",
                     "--model",
                     "fixture",
-                    "--no-tools",
+                    # Prime 0.10 has no --no-tools and rejects unknown options.
+                    *(["--no-tools"] if "--no-tools" in help_text else []),
                     "--no-context-files",
                 ]
                 (evidence / "launch.json").write_text(
