@@ -101,7 +101,12 @@ class SessionBridge:
             asyncio.create_task(self._session_loop()),
             *(
                 asyncio.create_task(self._every_tick(step))
-                for step in (self._heartbeat, self._dispatch_controls, self._deliver_inbox)
+                for step in (
+                    self._heartbeat,
+                    self._dispatch_controls,
+                    self._deliver_inbox,
+                    self._follow_tui,
+                )
             ),
         ]
         try:
@@ -140,21 +145,46 @@ class SessionBridge:
             await asyncio.sleep(_TICK_S)
 
     async def _root_session(self, client: DaemonClient) -> dict[str, Any]:
-        session_dir = self._paths.session_dir.resolve()
         waiting = False
-        while True:
-            for session in (await client.command("list")).get("sessions", []):
-                session_file = session.get("sessionFile")
-                if (
-                    session.get("rlmDepth") == 0
-                    and isinstance(session_file, str)
-                    and Path(session_file).resolve().is_relative_to(session_dir)
-                ):
-                    return session
+        while (root := self._tui_root(await client.command("list"))) is None:
             if not waiting:
                 waiting = True
-                _logger.info("Waiting for a Prime root session under %s", session_dir)
+                _logger.info("Waiting for a Prime root session under %s", self._paths.session_dir)
             await asyncio.sleep(_TICK_S)
+        return root
+
+    def _tui_root(self, listing: dict[str, Any]) -> dict[str, Any] | None:
+        """
+        The root session the TUI shows, since ``/new`` and ``/resume`` switch it.
+
+        That is the root with a client besides this bridge, else the root the bridge
+        last attached, else the first root under this runtime's session dir.
+        """
+        session_dir = self._paths.session_dir.resolve()
+        roots = [
+            session
+            for session in listing.get("sessions", [])
+            if session.get("rlmDepth") == 0
+            and isinstance(session.get("sessionFile"), str)
+            and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
+        ]
+        for root in roots:
+            # The count includes this bridge on its root, briefly also after it detached.
+            own = 1 if root.get("id") == self._session else 0
+            clients = root.get("attachedClients")
+            if isinstance(clients, int) and clients > own:
+                return root
+        current = next((root for root in roots if root.get("id") == self._session), None)
+        return current or (roots[0] if roots else None)
+
+    async def _follow_tui(self) -> None:
+        client = self._client
+        if client is None:
+            return
+        root = self._tui_root(await client.command("list"))
+        if root is not None and root.get("id") != self._session:
+            _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
+            await client.close()
 
     async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
         session = str(root["id"])

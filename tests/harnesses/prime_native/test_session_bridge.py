@@ -66,7 +66,8 @@ class FakePrime:
     suspended: bool = False
     commands: list[dict[str, Any]] = field(default_factory=list)
     writers: list[asyncio.StreamWriter] = field(default_factory=list)
-    root_clients: int = 2
+    tui_root: str = ROOT_ID
+    attached: dict[asyncio.StreamWriter, str] = field(default_factory=dict)
     new_roots: list[dict[str, Any]] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
@@ -75,8 +76,11 @@ class FakePrime:
         root = {"id": ROOT_ID, "rlmDepth": 0, "sessionId": NATIVE_ID}
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
-        root["attachedClients"] = self.root_clients
-        return [foreign, child, root, *self.new_roots]
+        roots = [root, *self.new_roots]
+        viewers = [*self.attached.values(), self.tui_root]
+        for session in roots:
+            session["attachedClients"] = viewers.count(session["id"])
+        return [foreign, child, *roots]
 
     def reply(self, command: dict[str, Any]) -> dict[str, Any]:
         kind = command["type"]
@@ -111,10 +115,14 @@ class FakePrime:
             command = json.loads(line)["command"]
             self.commands.append(command)
             if command["type"] in self.dropped:
+                self.attached.pop(writer, None)
                 writer.close()
                 return
+            if command["type"] == "attach":
+                self.attached[writer] = command["activeSessionId"]
             if command["type"] not in self.hung:
                 await self.send(writer, self.reply(command))
+        self.attached.pop(writer, None)
 
     @staticmethod
     async def send(writer: asyncio.StreamWriter, frame: dict[str, Any]) -> None:
@@ -680,7 +688,6 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     assert len(bridge.prime.sent("attach")) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
     await ready(bridge)
     fresh = {
@@ -690,18 +697,23 @@ async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge
         "sessionFile": str(
             bridge.paths.session_dir / "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8.jsonl"
         ),
-        "attachedClients": 1,
     }
     bridge.prime.messages = [_user("in the new session", 11)]
-
     bridge.prime.new_roots.append(fresh)
-    bridge.prime.root_clients = 1
+
+    bridge.prime.tui_root = fresh["id"]
 
     await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
     items = await eventually(
         lambda: [e for e in bridge.posted() if e["type"] == "external_conversation_item"]
     )
-    assert bridge.prime.sent("attach")[-1]["activeSessionId"] == "dddddddddddd"
+    await asyncio.sleep(3 * TICK_S)
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, fresh["id"]]
     assert items[0]["data"]["item_data"]["content"][0]["text"] == "in the new session"
     patches = [json.loads(r.content) for r in bridge.requests if r.method == "PATCH"]
     assert patches[-1] == {"external_session_id": fresh["sessionId"]}
+
+    bridge.prime.tui_root = ROOT_ID
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 3)
+    assert bridge.prime.sent("attach")[-1]["activeSessionId"] == ROOT_ID
