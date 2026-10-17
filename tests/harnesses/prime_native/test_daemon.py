@@ -147,7 +147,6 @@ async def test_connect_accepts_both_build_schema_ids(serve: Serve, hello: dict[s
 
     async with await DaemonClient.connect(await serve(script)) as client:
         assert client.hello.client_id == "09f581326094"
-        assert client.hello.schema_id == hello["schemaId"]
         assert client.hello.app_version == hello["appVersion"]
         assert client.hello.supervisor_pid == 9555
 
@@ -340,7 +339,6 @@ async def test_an_unanswered_command_times_out_and_the_connection_stays_usable(
             assert await client.command("get_state") == {}
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 async def test_an_event_backlog_past_its_bound_ends_the_connection(
     serve: Serve, monkeypatch: pytest.MonkeyPatch
 ) -> None:

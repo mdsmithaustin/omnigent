@@ -19,6 +19,7 @@ DAEMON_SCHEMA_REVISION = 30
 _LINE_LIMIT = 64 * 1024 * 1024
 _HELLO_TIMEOUT_S = 5.0
 _COMMAND_TIMEOUT_S = 30.0
+_EVENT_BACKLOG = 1024
 
 
 class DaemonError(Exception):
@@ -45,7 +46,6 @@ class DaemonCommandError(DaemonError):
 @dataclass(frozen=True)
 class DaemonHello:
     client_id: str
-    schema_id: str | None
     app_version: str | None
     socket_path: str | None
     supervisor_socket_path: str | None
@@ -75,7 +75,6 @@ def parse_hello(raw: Mapping[str, object]) -> DaemonHello:
         raise DaemonProtocolError("daemon_hello has no clientId")
     return DaemonHello(
         client_id=client_id,
-        schema_id=_optional_str(raw.get("schemaId")),
         app_version=_optional_str(raw.get("appVersion")),
         socket_path=_optional_str(raw.get("socketPath")),
         supervisor_socket_path=_optional_str(raw.get("supervisorSocketPath")),
@@ -200,6 +199,12 @@ class DaemonClient:
                     case "response":
                         self._resolve(frame)
                     case "session_event":
+                        if self._events.qsize() >= _EVENT_BACKLOG:
+                            # A consumer this far behind re-attaches and recovers by snapshot.
+                            while not self._events.empty():
+                                self._events.get_nowait()
+                            failure = DaemonClosedError("session event backlog overflowed")
+                            break
                         self._events.put_nowait(frame)
                     case "daemon_closing":
                         break
