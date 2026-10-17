@@ -539,7 +539,6 @@ async def test_an_item_whose_post_failed_is_reposted_from_the_next_snapshot(
     assert len(bridge.prime.sent("attach")) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="a failed re-post waits for the next agent_end")
 async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
     bridge: Bridge,
 ) -> None:
@@ -696,15 +695,17 @@ async def test_an_outage_logs_one_warning_until_posting_recovers(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
     await ready(bridge)
+    await bridge.prime.emit(_event(1, {"type": "agent_start"}))
+    await eventually(bridge.statuses)
     bridge.outage.extend([503] * 6)
 
     await bridge.prime.emit(
-        _event(1, {"type": "message_end", "message": _user("first", 1)}),
-        _event(2, {"type": "message_end", "message": _user("second", 2)}),
+        _event(2, {"type": "message_end", "message": _user("first", 1)}),
+        _event(3, {"type": "message_end", "message": _user("second", 2)}),
     )
     await eventually(lambda: not bridge.outage)
-    await bridge.prime.emit(_event(3, {"type": "message_end", "message": _user("third", 3)}))
-    await eventually(lambda: len(bridge.posted()) > 3)
+    await bridge.prime.emit(_event(4, {"type": "message_end", "message": _user("third", 3)}))
+    await eventually(lambda: "external_conversation_item" in bridge.posted_types())
 
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]

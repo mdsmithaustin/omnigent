@@ -30,7 +30,12 @@ import httpx
 
 from omnigent.harnesses.pi_native.bridge import _atomic_text, config_path
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
-from omnigent.harnesses.prime_native.daemon import DaemonClient, DaemonCommandError, DaemonError
+from omnigent.harnesses.prime_native.daemon import (
+    DaemonClient,
+    DaemonClosedError,
+    DaemonCommandError,
+    DaemonError,
+)
 from omnigent.harnesses.prime_native.transcript import TranscriptState, reconcile, reduce
 from omnigent.native import owner_claim
 
@@ -43,6 +48,8 @@ _MAX_PROMPT_ATTEMPTS = 5
 _DELIVERED_CAP = 4096
 _LOG_BYTES = 1_000_000
 _POST_ATTEMPTS = 3
+_REPOST_FIRST_S = 1.0
+_REPOST_MAX_S = 30.0
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
 
@@ -83,6 +90,8 @@ class SessionBridge:
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
+        self._repost_at = 0.0
+        self._repost_delay = _REPOST_FIRST_S
         self._unreachable = False
         self._claimed = False
         self._client: DaemonClient | None = None
@@ -105,7 +114,7 @@ class SessionBridge:
                     self._heartbeat,
                     self._dispatch_controls,
                     self._deliver_inbox,
-                    self._follow_tui,
+                    self._reattach_if_needed,
                 )
             ),
         ]
@@ -177,13 +186,20 @@ class SessionBridge:
         current = next((root for root in roots if root.get("id") == self._session), None)
         return current or (roots[0] if roots else None)
 
-    async def _follow_tui(self) -> None:
+    async def _reattach_if_needed(self) -> None:
+        """Re-attach when the TUI moved to another root, or to retry a failed re-post once idle."""
         client = self._client
         if client is None:
             return
         root = self._tui_root(await client.command("list"))
         if root is not None and root.get("id") != self._session:
             _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
+            await client.close()
+        elif (
+            self._unposted
+            and self._transcript.loop_response_id is None
+            and time.monotonic() >= self._repost_at
+        ):
             await client.close()
 
     async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
@@ -207,6 +223,12 @@ class SessionBridge:
         self._unposted = False
         if post_history:
             await self._post_all(history)
+        # Omnigent is still unreachable, so retry on a backoff while Prime stays idle.
+        if self._unposted:
+            self._repost_at = time.monotonic() + self._repost_delay
+            self._repost_delay = min(2 * self._repost_delay, _REPOST_MAX_S)
+        else:
+            self._repost_delay = _REPOST_FIRST_S
         self._client, self._session = client, session
         self._attached.set()
         _logger.info("Attached to Prime session %s (%s)", session, native_id)
@@ -226,9 +248,10 @@ class SessionBridge:
         self._transcript, events = reduce(self._transcript, envelope)
         await self._post_all(events)
         if envelope.get("event", {}).get("type") == "agent_end":
-            # The daemon emits no event for a model or effort picked in the TUI.
+            # The daemon emits no event for a model or effort picked in the TUI. A re-attach
+            # can close the client first; its snapshot then carries the settings.
             async with self._settings_lock:
-                with contextlib.suppress(DaemonCommandError):
+                with contextlib.suppress(DaemonCommandError, DaemonClosedError):
                     state = await client.command("get_state", activeSessionId=self._session)
                     await self._publish_settings(state)
 
