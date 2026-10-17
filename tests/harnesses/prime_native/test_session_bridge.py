@@ -598,7 +598,6 @@ async def test_a_superseded_bridge_leaves_binding_inbox_and_controls_alone(
     assert bridge.prime.sent("prompt") == []
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 @pytest.mark.parametrize("bridge", [{"policyNotice": POLICY_NOTICE}], indirect=True)
 async def test_a_launch_policy_notice_is_posted_as_a_session_warning(bridge: Bridge) -> None:
     await ready(bridge)

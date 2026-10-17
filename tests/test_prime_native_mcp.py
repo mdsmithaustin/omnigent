@@ -220,13 +220,7 @@ _TOOL_POLICY_NOTICE = (
 @pytest.mark.parametrize(
     ("extension", "phase", "notice"),
     [
-        pytest.param(
-            False,
-            Phase.TOOL_CALL,
-            _TOOL_POLICY_NOTICE,
-            id="0.10-tool-call",
-            marks=pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch"),
-        ),
+        pytest.param(False, Phase.TOOL_CALL, _TOOL_POLICY_NOTICE, id="0.10-tool-call"),
         pytest.param(True, Phase.TOOL_CALL, None, id="0.9-extension-enforces"),
         pytest.param(False, Phase.REQUEST, None, id="0.10-request-only"),
     ],

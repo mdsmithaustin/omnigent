@@ -75,6 +75,7 @@ class SessionBridge:
             f"{config['serverUrl']}/v1/sessions/{quote(config['sessionId'], safe='')}"
         )
         self._inbox = Path(config["inboxDir"])
+        self._policy_notice: str | None = config.get("policyNotice")
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -178,6 +179,8 @@ class SessionBridge:
                 if (selector := _model_selector(model))
             ]
             await self._post({"type": "external_model_options", "data": {"models": options}})
+        if self._policy_notice and await self._post(_policy_notice(self._policy_notice)):
+            self._policy_notice = None
 
     async def _mirror(self, client: DaemonClient, envelope: dict[str, Any]) -> None:
         self._transcript, events = reduce(self._transcript, envelope)
@@ -437,6 +440,23 @@ _CONTROLS: dict[
     "compact": SessionBridge._compact,
     "interrupt": SessionBridge._interrupt,
 }
+
+
+def _policy_notice(message: str) -> Event:
+    # The web UI shows this code as a standing banner, as for codex-native's degraded hook.
+    return {
+        "type": "external_conversation_item",
+        "data": {
+            "response_id": "prime-policy-notice",
+            "item_type": "error",
+            "item_data": {
+                "source": "execution",
+                "code": "native_policy_not_enforced",
+                "message": message,
+            },
+            "source_id": "prime:policy-notice",
+        },
+    }
 
 
 def _dropped_message(message_id: object, error: str) -> Event:
