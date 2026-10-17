@@ -68,6 +68,17 @@ def read_owner_claim(directory: Path) -> OwnerClaim | None:
     return OwnerClaim(pid=pid, pid_ns=pid_ns, boot_id=fields.get("boot") or None)
 
 
+def held_by_current_process(directory: Path) -> bool:
+    """Whether *directory*'s claim names this process, in this namespace and boot."""
+    claim = read_owner_claim(directory)
+    return (
+        claim is not None
+        and claim.pid == os.getpid()
+        and claim.pid_ns == current_pid_namespace()
+        and claim.boot_id == current_boot_id()
+    )
+
+
 def owner_is_gone(claim: OwnerClaim, *, process_alive: Callable[[int], bool]) -> bool:
     """Require a dead process in the same boot and known namespace."""
     boot_id = current_boot_id()

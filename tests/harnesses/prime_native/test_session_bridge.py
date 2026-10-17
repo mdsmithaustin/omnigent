@@ -566,7 +566,6 @@ def _reclaim_runtime(paths: PrimeRuntimePaths) -> None:
     (paths.root / owner_claim.OWNER_PID_FILENAME).write_text("1\npid_ns=elsewhere\n")
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 @pytest.mark.parametrize(
     "supersede",
     [_replace_binding, _reclaim_runtime],

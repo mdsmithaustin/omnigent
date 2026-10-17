@@ -31,6 +31,7 @@ from omnigent.harnesses.pi_native.bridge import _atomic_text, config_path
 from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
 from omnigent.harnesses.prime_native.daemon import DaemonClient, DaemonCommandError, DaemonError
 from omnigent.harnesses.prime_native.transcript import TranscriptState, reconcile, reduce
+from omnigent.native import owner_claim
 
 _logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class SessionBridge:
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
+        self._claimed = False
         self._client: DaemonClient | None = None
         self._session = ""
         self._posted_settings: dict[str, str] = {}
@@ -223,7 +225,7 @@ class SessionBridge:
 
     async def _deliver_inbox(self) -> None:
         client = self._client
-        if client is None:
+        if client is None or not self._owns_binding():
             return
         ready = self._paths.root / "input_ready"
         if not ready.exists():
@@ -259,8 +261,28 @@ class SessionBridge:
             path.unlink(missing_ok=True)
 
     async def _heartbeat(self) -> None:
+        # The first beat claims the binding, as the extension does on load; later beats only
+        # renew it, so a superseded bridge goes quiet instead of taking it back.
+        eligible = self._owns_binding() if self._claimed else self._owns_runtime()
+        if not eligible:
+            return
         binding = {"incarnation": self._incarnation, "pid": os.getpid(), "heartbeat": _now_ms()}
         _atomic_text(self._paths.controls_dir / "binding.json", json.dumps(binding))
+        self._claimed = True
+
+    def _owns_runtime(self) -> bool:
+        return owner_claim.held_by_current_process(self._paths.root)
+
+    def _owns_binding(self) -> bool:
+        try:
+            record = json.loads((self._paths.controls_dir / "binding.json").read_text())
+        except (OSError, ValueError):
+            return False
+        return (
+            isinstance(record, dict)
+            and record.get("incarnation") == self._incarnation
+            and self._owns_runtime()
+        )
 
     def _release_binding(self) -> None:
         binding = self._paths.controls_dir / "binding.json"
@@ -269,6 +291,8 @@ class SessionBridge:
                 binding.unlink()
 
     async def _dispatch_controls(self) -> None:
+        if not self._owns_binding():
+            return
         results = self._paths.controls_dir / "results"
         for path in results.iterdir():
             with contextlib.suppress(FileNotFoundError):
@@ -296,6 +320,8 @@ class SessionBridge:
                 outcome = await self._apply(request)
         else:
             outcome = await self._apply(request)
+        if not self._owns_binding():
+            return
         result = {"id": request["id"], "incarnation": request.get("incarnation"), **outcome}
         results = self._paths.controls_dir / "results"
         _atomic_text(results / f"{request['id']}.json", json.dumps(result))

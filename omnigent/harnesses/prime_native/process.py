@@ -1110,16 +1110,6 @@ def _process_alive(process: psutil.Process) -> bool:
         ) from exc
 
 
-def _wrapper_still_owns_runtime(paths: PrimeRuntimePaths) -> bool:
-    claim = owner_claim.read_owner_claim(paths.root)
-    if claim is None or claim.pid != os.getpid():
-        return False
-    return (
-        claim.pid_ns == owner_claim.current_pid_namespace()
-        and claim.boot_id == owner_claim.current_boot_id()
-    )
-
-
 def _finalize_wrapper_runtime(
     paths: PrimeRuntimePaths, expected_terminal: _TerminalIdentity
 ) -> None:
@@ -1128,7 +1118,7 @@ def _finalize_wrapper_runtime(
             return
         if _read_terminal_identity(paths) != expected_terminal:
             return
-        if not _wrapper_still_owns_runtime(paths):
+        if not owner_claim.held_by_current_process(paths.root):
             return
         reservation = _read_launch_reservation(paths)
         if reservation is not None and reservation.token != expected_terminal.launch_token:
