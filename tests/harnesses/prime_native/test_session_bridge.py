@@ -66,6 +66,8 @@ class FakePrime:
     suspended: bool = False
     commands: list[dict[str, Any]] = field(default_factory=list)
     writers: list[asyncio.StreamWriter] = field(default_factory=list)
+    root_clients: int = 2
+    new_roots: list[dict[str, Any]] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
         foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
@@ -73,7 +75,8 @@ class FakePrime:
         root = {"id": ROOT_ID, "rlmDepth": 0, "sessionId": NATIVE_ID}
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
-        return [foreign, child, root]
+        root["attachedClients"] = self.root_clients
+        return [foreign, child, root, *self.new_roots]
 
     def reply(self, command: dict[str, Any]) -> dict[str, Any]:
         kind = command["type"]
@@ -675,3 +678,30 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     await eventually(lambda: "external_session_status" in bridge.posted_types())
     await asyncio.sleep(2 * TICK_S)
     assert len(bridge.prime.sent("attach")) == 1
+
+
+@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
+async def test_the_bridge_follows_the_terminal_into_a_new_session(bridge: Bridge) -> None:
+    await ready(bridge)
+    fresh = {
+        "id": "dddddddddddd",
+        "rlmDepth": 0,
+        "sessionId": "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8",
+        "sessionFile": str(
+            bridge.paths.session_dir / "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8.jsonl"
+        ),
+        "attachedClients": 1,
+    }
+    bridge.prime.messages = [_user("in the new session", 11)]
+
+    bridge.prime.new_roots.append(fresh)
+    bridge.prime.root_clients = 1
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    items = await eventually(
+        lambda: [e for e in bridge.posted() if e["type"] == "external_conversation_item"]
+    )
+    assert bridge.prime.sent("attach")[-1]["activeSessionId"] == "dddddddddddd"
+    assert items[0]["data"]["item_data"]["content"][0]["text"] == "in the new session"
+    patches = [json.loads(r.content) for r in bridge.requests if r.method == "PATCH"]
+    assert patches[-1] == {"external_session_id": fresh["sessionId"]}
