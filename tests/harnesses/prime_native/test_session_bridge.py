@@ -587,6 +587,22 @@ async def test_an_idle_status_lost_in_an_outage_is_reposted(bridge: Bridge) -> N
     assert statuses == [("running", "pi-0-1"), ("idle", "pi-0-1")]
 
 
+@pytest.mark.xfail(strict=True, reason="reconcile opens no loop for a streaming snapshot")
+async def test_reattaching_mid_turn_reports_running_until_the_turn_ends(bridge: Bridge) -> None:
+    await ready(bridge)
+    bridge.prime.messages = [_user("still working", 5)]
+    bridge.prime.state["isStreaming"] = True
+
+    bridge.prime.writers[-1].close()
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    await eventually(bridge.statuses)
+    bridge.prime.state["isStreaming"] = False
+    await bridge.prime.emit(_event(9, {"type": "agent_end", "messages": []}))
+    statuses = await eventually(lambda: len(bridge.statuses()) == 2 and bridge.statuses())
+    assert statuses == [("running", "pi-recovered-5"), ("idle", "pi-recovered-5")]
+
+
 async def test_a_turn_that_ended_while_detached_reports_idle_on_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
