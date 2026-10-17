@@ -943,17 +943,20 @@ overwrite a different existing value
 404 Not Found - no session with that id
 
 Prime Native sessions apply `model_override` and `reasoning_effort` through the
-live extension before returning success. Models use exact `provider/model`
+live extension on Prime 0.9.x, or the daemon bridge on Prime 0.10, before
+returning success. Models use exact `provider/model`
 identifiers. A combined PATCH applies the model before the effort. Native
 observations own the active settings, including independent terminal changes.
 The response reads that observed state, which may differ from an earlier
 acknowledgment. Prime can clamp effort for the chosen model.
 
-Settings success requires native callbacks and HTTP 2xx acceptance of their
-observations. If a model switch also clamps effort, both observations must
-publish successfully. A missing or rejected publication after mutation returns
-504 `prime_control_unknown`. Prime 0.9.6 does not emit a callback for a setting
-that is already active, so a same-value request can return this outcome too.
+Settings success requires a native observation and HTTP 2xx acceptance of it.
+On 0.9.x the observation is the extension's callback. On 0.10 the bridge reads
+the setting back with `get_state` and publishes that. If a model switch also
+clamps effort, both observations must publish successfully. A missing or
+rejected publication after mutation returns 504 `prime_control_unknown`. Prime
+0.9.6 does not emit a callback for a setting that is already active, so a
+same-value request can return this outcome too.
 Each runner serializes its admitted settings in order. Native terminal
 selections remain independent, and interrupt bypasses that queue.
 
@@ -1210,12 +1213,14 @@ mirror that status into the parent stream as `session.child_session.updated`
 when the child is registered for fan-out. New user-facing event types should
 default to the queue.
 
-Prime Native uses its extension's control receipts. A successful interrupt
-returns HTTP 202 with `{"queued": true, "status": "interrupt_accepted"}`.
-That reply reports abort admission. The extension publishes the later native
-interruption separately, and the reply does not establish descendant settlement.
-A successful compact returns HTTP 202 with `{"queued": false}` after Prime's
-completion callback. Native rejection returns 409, a missing live binding
+Prime Native uses control receipts from its extension on Prime 0.9.x and from
+its daemon bridge on Prime 0.10. A successful interrupt returns HTTP 202 with
+`{"queued": true, "status": "interrupt_accepted"}`. That reply reports abort
+admission. The extension or bridge publishes the later native interruption
+separately, and the reply does not establish descendant settlement. A successful
+compact returns HTTP 202 with `{"queued": false}` after Prime's completion
+callback on 0.9.x, or once Prime's daemon answers `compact` on 0.10. Native
+rejection returns 409, a missing live binding
 returns 503, and an unproved result after possible mutation returns 504. Omnigent
 does not retry that uncertain control. Prime Native message events retain HTTP
 202 admission semantics, including requests for a streamed response. An inbox

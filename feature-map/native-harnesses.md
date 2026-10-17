@@ -176,9 +176,11 @@ both the native CLI terminal and the public HTTP message path. Require both
 literal replies, same-session reattachment, and no owned processes after
 cleanup. The shared mock environment does not configure Prime. Web launch,
 controls, resources, permissions, and uncertain launch cases use the Prime
-skill's feature recipes and adapter probe; the terminal/HTTP test alone does
-not prove those entry points. Record an absent binary or skipped test as an
-unverified prerequisite.
+skill's feature recipes and adapter probe, which accepts only Prime 0.9.6. On
+Prime 0.10 drive those by hand, except relay tools and a policy denial, which
+`verify.py --scenario relay` drives. The terminal/HTTP test alone does not prove
+those entry points. Record an absent binary or skipped test as an unverified
+prerequisite.
 
 Cross-harness journeys:
 

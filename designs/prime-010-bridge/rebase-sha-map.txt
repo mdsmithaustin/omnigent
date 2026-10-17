@@ -1,0 +1,66 @@
+# old(pre-rebase, backup/prime-010-bridge-premerge) -> new(feat/prime-010-bridge at f75fc088d), matched by subject
+1cde8b2c8 -> 2f7a6c1a8  docs(prime-native): log the round-3 review
+88da09e80 -> 964766ed9  docs(prime-native): log the round-2 verification
+c7afe8e5f -> c48ce03e5  docs(prime-native): log the timing-test removal
+8c48684c4 -> 715b3cba8  test(prime-native): drop the wall-clock post-retry test
+d55cfe13a -> 8af043402  docs(prime-native): log the second review-fix round
+2979b2c0f -> 37b11db15  test(prime-native): pin the bridge's closed-client guards and newer-status check
+17fd99a38 -> 089b90385  docs(prime-native): name exactly which lost posts the 0.10 bridge drops
+68cfb222e -> 6e3d24830  docs(prime-native): correct the 0.10 recovery claims an independent review flagged
+56f27dc3d -> 84f302236  refactor(prime-native): split the idle re-post retry from the TUI root check
+304114f40 -> b0589541f  docs(prime-native): describe idle re-post retries, mid-turn status, and backlog loss
+1259e8e6a -> dbe67f9c0  fix(prime-native): log when the daemon event backlog overflows
+0c010deec -> d7dc641e6  test(prime-native): pin that a daemon event backlog overflow logs a warning
+7b4dc773d -> 6378bd32e  fix(prime-native): check the TUI's root before steering a web message
+0dc269653 -> 5ea65ef7e  test(prime-native): pin that a web message sent just after /new reaches the new session
+cfd8cc1aa -> c533a9e65  fix(prime-native): report running after re-attaching to a streaming turn
+bd1a4d5dd -> 826a24846  test(prime-native): pin that a mid-turn re-attach reports the turn running
+aca9e7d03 -> 04e4863fa  fix(prime-native): re-post a session status lost in an outage
+e31862817 -> 8e763f561  test(prime-native): pin that an idle status lost in an outage is re-posted
+fd7d9505a -> ee9ccfc24  fix(prime-native): retry a failed re-post on a backoff while Prime is idle
+fc8fce85e -> 38398cfbf  test(prime-native): pin that an outage past the re-attach recovers while Prime is idle
+24eb3f547 -> 3af8d1f41  fix(prime-native): stop waiting after the bridge's last failed post attempt
+9d108b040 -> 848acf35b  test(prime-native): pin that an unreachable post does not delay the next one
+41ad64c55 -> 833e8c4ef  docs(prime-native): log the fix-round verification
+d88179b1b -> 8c095d5ba  docs(prime-native): log the final doc review pass
+393ff2d61 -> 135e0f0e3  docs(prime-native): scope the resume id note to a relaunched Prime
+d788b3572 -> ef9f02a53  docs(prime-native): say that a /new session does not replace the resume id
+a1a7d7805 -> 083d70fb3  docs(prime-native): finish the 0.10 corrections from the second review
+e7fbeaaba -> e4aa2fe8f  docs(prime-native): correct the 0.10 bridge claims an independent review flagged
+96ed0151f -> e28dc3ba7  docs(prime-native): log the review fix round
+05c21e398 -> 3c1233c95  docs(prime-native): describe the 0.10 bridge's recovery, follow, and gaps
+32ff3c6ba -> 6872bfa9d  chore(prime-native): mark the 0.9 extension launch for removal in 0.19.0
+e43e734e7 -> 82693e1b7  fix(prime-native): keep a user's own omnigent MCP server and report unreadable settings
+31dbb8863 -> 37caf1951  fix(prime-native): finalize the Prime runtime even when the bridge stop raises
+f960271da -> 8c29bd544  test(prime-native): pin that the wrapper finalizes when the bridge stop fails
+1fdf91c36 -> 7d634c9a9  fix(prime-native): follow the Prime TUI across /new and /resume
+831864291 -> 282ebac13  test(prime-native): pin that the bridge follows the TUI into a /new session
+78a729991 -> c6d1e39c2  fix(prime-native): bound the daemon client's event backlog
+48f7dc5c7 -> a11543db9  fix(prime-native): bound and detach the bridge log, and log a root-session wait
+a088eb42e -> 8dbb153e3  fix(prime-native): deliver each web message to Prime at most once
+39d9b338b -> 05e4277a1  fix(prime-native): re-post only items the server never received
+1b01ae8d4 -> 7c1ef034f  test(prime-native): pin that a rejected item does not force a re-attach
+09c0b3bff -> ed2529abb  feat(prime-native): warn when Prime 0.10's own tools skip tool policies
+2fed68c43 -> acb0264c9  fix(prime-native): stop a superseded Prime bridge from retaking the binding
+e971d547d -> 765d98470  fix(prime-native): lift Prime's input pause before retrying a web message
+970f179dc -> cd9ff30f6  fix(prime-native): settle a turn that ended while the bridge was detached
+7794b0248 -> 6c825682c  fix(prime-native): re-post items whose post failed from the next snapshot
+31df1d3ee -> 1a2c7a3ec  fix(prime-native): keep controls answering while a daemon command hangs
+cd021b85c -> cfa50e358  test(prime-native): pin the bridge review findings as expected failures
+3009e75a6 -> 912080923  docs(prime-native): log the test sweep
+915919126 -> 311d93af2  docs(prime-native): log the relay verification
+6ec7b87fe -> 3bece618e  docs(prime-native): describe relay tools on Prime 0.10 and update its known gaps
+541eb8f1e -> 9b601d46d  test(verify-prime-native): call Omnigent relay tools and a policy denial from Prime 0.10
+20cfa4b3e -> 867b08010  refactor(verify-prime-native): split the Prime config writer and model fixture responder out of the drive
+c530dc4b1 -> ec46a0128  feat(prime-native): expose Omnigent relay tools to Prime 0.10 as an MCP server
+a469b8223 -> 3dd8262d5  docs(prime-native): log the bridge runtime decisions
+1f9b9d9b7 -> 17f3451df  docs(prime-native): note the 0.10 bridge's protocol and recovery limits
+9a8b5d1f2 -> 71dba23ee  fix(prime-native): harden the daemon bridge's binding, logging, and start
+970f6e482 -> 39991d9ff  docs(prime-native): describe the Prime 0.10 daemon bridge and its gaps
+37c208788 -> 9da85af5a  fix(verify-prime-native): drive Prime 0.10 without --no-tools
+c38ff22c1 -> 57fdd5509  feat(prime-native): launch Prime 0.10 through the daemon bridge
+702af4b25 -> 3318e381d  feat(prime-native): mirror a Prime 0.10 session over its daemon socket
+88cf9288e -> ?  Merge branch 'feat/prime-010-transcript' into feat/prime-010-bridge
+b5f0d2638 -> 4caad24b1  feat(prime-native): map Prime daemon session events to Omnigent events
+5061a1c56 -> 5061a1c56  feat(prime-native): add an asyncio client for the Prime daemon socket
+ff76d9ad2 -> ff76d9ad2  docs(prime-native): design the Prime 0.10 daemon bridge

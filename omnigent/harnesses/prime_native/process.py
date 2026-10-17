@@ -16,10 +16,10 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 import click
 import psutil
@@ -35,10 +35,17 @@ from omnigent.harnesses.prime_native.bridge import (
     bridge_roots,
     runtime_paths,
 )
+from omnigent.harnesses.prime_native.daemon import (
+    DAEMON_PROTOCOL,
+    DaemonProtocolError,
+    parse_hello,
+)
 from omnigent.native import native_bridge_common, owner_claim
 from omnigent.native.source_owner import NativeAdmission, NativeStop
 
 MINIMUM_VERSION = "0.9.6"
+DAEMON_SOCKET_ENV_VAR = "PRIME_AGENT_DAEMON_SOCKET"
+RELAY_MCP_SERVER = "omnigent"
 
 
 def meets_minimum_version(version: object) -> bool:
@@ -49,9 +56,6 @@ def meets_minimum_version(version: object) -> bool:
         return False
 
 
-_DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
-_DAEMON_SCHEMA_ID = "protocol-7-schema-30-f908f493c9e1"
-_DAEMON_SCHEMA_REVISION = 30
 _SOCKET_IO_TIMEOUT_S = 1.5
 _SHUTDOWN_SETTLE_TIMEOUT_S = 5.0
 _SHUTDOWN_POLL_INTERVAL_S = 0.1
@@ -138,7 +142,14 @@ class _JsonlReader:
         return value
 
 
-def resolve_prime_executable() -> str:
+@dataclass(frozen=True)
+class PrimeExecutable:
+    path: str
+    # @deprecated, remove in 0.19.0: 0.9.x builds that host the shared Pi extension.
+    extension: bool
+
+
+def resolve_prime_executable() -> PrimeExecutable:
     command = os.environ.get("OMNIGENT_PRIME_PATH", "").strip() or "prime-agent"
     executable = resolve_cli_binary(command, which=shutil.which)
     if executable is None:
@@ -154,16 +165,11 @@ def resolve_prime_executable() -> str:
         raise click.ClickException(
             f"Prime Native requires prime-agent {MINIMUM_VERSION} or newer; found {version!r}."
         )
-    # The adapter's transcript bridge is a Prime extension; releases without it cannot host one.
+    # Releases without --extension (0.10+) are mirrored over their daemon socket instead.
     help_text = subprocess.run(
         [executable, "--help"], capture_output=True, text=True, timeout=10, check=True
     ).stdout
-    if "--extension" not in help_text:
-        raise click.ClickException(
-            f"Prime Native needs a prime-agent with extension support (--extension); "
-            f"{version} has none. Install a 0.9.x release or point OMNIGENT_PRIME_PATH at one."
-        )
-    return executable
+    return PrimeExecutable(executable, "--extension" in help_text)
 
 
 def _process_name_aliases(executable: str) -> set[str]:
@@ -175,13 +181,14 @@ def build_prime_launch(
     paths: PrimeRuntimePaths,
     *,
     executable: str,
-    extension: Path,
+    extension: Path | None,
     config: Path,
     extra_args: Sequence[str] = (),
     external_session_id: str | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
     instructions: str | None = None,
+    relay_mcp: bool = False,
     environ: Mapping[str, str] | None = None,
 ) -> PrimeLaunch:
     if IS_WINDOWS:
@@ -211,7 +218,9 @@ def build_prime_launch(
     source_dir = Path(
         source_env.get("PRIME_AGENT_CODING_AGENT_DIR") or Path.home() / ".prime" / "agent"
     ).expanduser()
-    args = ["--extension", str(extension), "--session-dir", str(paths.session_dir), *extra_args]
+    args = ["--session-dir", str(paths.session_dir), *extra_args]
+    if extension is not None:
+        args[:0] = ["--extension", str(extension)]
     if external_session_id:
         args.extend(["--resume", external_session_id])
     if model and not any(arg == "--model" or arg.startswith("--model=") for arg in extra_args):
@@ -227,6 +236,9 @@ def build_prime_launch(
     if instructions:
         args.extend(["--append-system-prompt", instructions])
     env = {**paths.env, PRIME_NATIVE_CONFIG_ENV_VAR: str(config)}
+    if extension is None:
+        # The session bridge and the stop path both find Prime's daemon here.
+        env[DAEMON_SOCKET_ENV_VAR] = str(_default_supervisor_socket(paths))
     if source_env.get("OMNIGENT_DATA_DIR"):
         env["OMNIGENT_DATA_DIR"] = source_env["OMNIGENT_DATA_DIR"]
     kernel_executable = source_env.get("PRIME_AGENT_KERNEL_PYTHON", "")
@@ -247,11 +259,83 @@ def build_prime_launch(
             source, target = source_dir / name, paths.agent_dir / name
             if source.is_file() and not target.exists():
                 _atomic_text(target, source.read_text(encoding="utf-8"))
+        if extension is None:
+            _skip_onboarding(paths.agent_dir / "settings.json")
+            _register_relay_mcp(paths, env, enabled=relay_mcp)
         _atomic_text(paths.executable_file, executable)
         _atomic_text(paths.root / KERNEL_PROCESS_NAMES_FILE, json.dumps(kernel_process_names))
         owner_claim.write_owner_claim(paths.root)
         _ACTIVE_RUNTIMES.add(paths)
     return PrimeLaunch(executable, tuple(args), env)
+
+
+def _read_settings(settings: Path) -> dict[str, object] | None:
+    try:
+        value = json.loads(settings.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _skip_onboarding(settings: Path) -> None:
+    # A fresh agent dir opens Prime's trace-sharing prompt, whose default answer is Share.
+    value = _read_settings(settings)
+    if value is None or "onboardingShown" in value:
+        return
+    value["onboardingShown"] = True
+    value["agentTraces"] = value.get("agentTraces") or {"enabled": False}
+    _atomic_text(settings, json.dumps(value, indent=2))
+
+
+def _relay_mcp_entry(paths: PrimeRuntimePaths, env: Mapping[str, str]) -> dict[str, object]:
+    # Prime hands a stdio server only HOME, PATH, TMPDIR and {"env": NAME} references.
+    from omnigent.harnesses.claude_native.bridge import build_mcp_config
+
+    servers = cast("dict[str, dict[str, object]]", build_mcp_config(paths.root)["mcpServers"])
+    shim = servers[RELAY_MCP_SERVER]
+    entry: dict[str, object] = {
+        "type": "stdio",
+        "command": shim["command"],
+        "args": shim["args"],
+    }
+    if "OMNIGENT_DATA_DIR" in env:
+        entry["env"] = {"OMNIGENT_DATA_DIR": {"env": "OMNIGENT_DATA_DIR"}}
+    return entry
+
+
+def _register_relay_mcp(
+    paths: PrimeRuntimePaths, env: Mapping[str, str], *, enabled: bool
+) -> None:
+    # Prime 0.10 reaches Omnigent's relay tools as the `omnigent` MCP server in settings.json.
+    settings = paths.agent_dir / "settings.json"
+    value = _read_settings(settings)
+    if value is None:
+        if enabled:
+            _logger.warning("%s is not a JSON object; relay tools are not registered", settings)
+        return
+    servers = value.get("mcpServers")
+    servers = dict(servers) if isinstance(servers, dict) else {}
+    if enabled:
+        config = paths.root / "bridge.json"
+        if not config.exists():
+            _atomic_text(config, json.dumps({"token": secrets.token_urlsafe(32)}))
+        servers[RELAY_MCP_SERVER] = _relay_mcp_entry(paths, env)
+    elif _is_relay_entry(servers.get(RELAY_MCP_SERVER), paths):
+        del servers[RELAY_MCP_SERVER]
+    else:
+        return
+    if servers == value.get("mcpServers"):
+        return
+    value["mcpServers"] = servers
+    _atomic_text(settings, json.dumps(value, indent=2))
+
+
+def _is_relay_entry(entry: object, paths: PrimeRuntimePaths) -> bool:
+    # A launch with relay tools wrote it; the user may own another `omnigent` server.
+    args = entry.get("args") if isinstance(entry, dict) else None
+    return isinstance(args, list) and str(paths.root) in args
 
 
 def _replace_with_symlink(link: Path, target: Path) -> None:
@@ -735,9 +819,9 @@ def _stop_terminal(paths: PrimeRuntimePaths) -> None:
 
 
 def _qualify_supervisor_process(
-    pid: object, paths: PrimeRuntimePaths
+    pid: int | None, paths: PrimeRuntimePaths
 ) -> tuple[_ProcessIdentity, set[_ProcessIdentity]]:
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+    if pid is None:
         raise RuntimeError("Prime daemon hello has no qualified supervisor PID; runtime retained.")
     try:
         supervisor = psutil.Process(pid)
@@ -767,27 +851,25 @@ def _qualify_supervisor_process(
     return identity, descendants
 
 
+_UNQUALIFIED_HELLO = "Prime daemon hello did not qualify the private endpoint; runtime retained."
+
+
 def _validate_daemon_hello(
     hello: dict[str, object], endpoint: _SupervisorEndpoint, paths: PrimeRuntimePaths
 ) -> tuple[str, set[_ProcessIdentity]]:
     expected_path = str(endpoint.path)
+    try:
+        parsed = parse_hello(hello)
+    except DaemonProtocolError as exc:
+        raise RuntimeError(_UNQUALIFIED_HELLO) from exc
     if (
-        hello.get("type") != "daemon_hello"
-        or hello.get("protocol") != _DAEMON_PROTOCOL
-        or hello.get("schemaId") != _DAEMON_SCHEMA_ID
-        or hello.get("schemaRevision") != _DAEMON_SCHEMA_REVISION
-        or not meets_minimum_version(hello.get("appVersion"))
-        or hello.get("socketPath") != expected_path
-        or hello.get("supervisorSocketPath") != expected_path
+        not meets_minimum_version(parsed.app_version)
+        or parsed.socket_path != expected_path
+        or parsed.supervisor_socket_path != expected_path
     ):
-        raise RuntimeError(
-            "Prime daemon hello did not qualify the private endpoint; runtime retained."
-        )
-    client_id = hello.get("clientId")
-    if not isinstance(client_id, str) or not client_id:
-        raise RuntimeError("Prime daemon hello has no client identity; runtime retained.")
-    supervisor, descendants = _qualify_supervisor_process(hello.get("supervisorPid"), paths)
-    return client_id, {supervisor, *descendants}
+        raise RuntimeError(_UNQUALIFIED_HELLO)
+    supervisor, descendants = _qualify_supervisor_process(parsed.supervisor_pid, paths)
+    return parsed.client_id, {supervisor, *descendants}
 
 
 def _send_shutdown(
@@ -812,7 +894,7 @@ def _send_shutdown(
         envelope = {
             "type": "command",
             "id": command_id,
-            "protocol": _DAEMON_PROTOCOL,
+            "protocol": DAEMON_PROTOCOL,
             "clientId": client_id,
             "command": {"type": "shutdown", "force": True},
         }
@@ -1036,16 +1118,6 @@ def _process_alive(process: psutil.Process) -> bool:
         ) from exc
 
 
-def _wrapper_still_owns_runtime(paths: PrimeRuntimePaths) -> bool:
-    claim = owner_claim.read_owner_claim(paths.root)
-    if claim is None or claim.pid != os.getpid():
-        return False
-    return (
-        claim.pid_ns == owner_claim.current_pid_namespace()
-        and claim.boot_id == owner_claim.current_boot_id()
-    )
-
-
 def _finalize_wrapper_runtime(
     paths: PrimeRuntimePaths, expected_terminal: _TerminalIdentity
 ) -> None:
@@ -1054,7 +1126,7 @@ def _finalize_wrapper_runtime(
             return
         if _read_terminal_identity(paths) != expected_terminal:
             return
-        if not _wrapper_still_owns_runtime(paths):
+        if not owner_claim.held_by_current_process(paths.root):
             return
         reservation = _read_launch_reservation(paths)
         if reservation is not None and reservation.token != expected_terminal.launch_token:
@@ -1105,6 +1177,16 @@ class _TerminalSignalForwarder:
         self._terminal = terminal
         for signum in self.pending:
             self.forward(signum, None)
+
+
+def _start_session_bridge(paths: PrimeRuntimePaths) -> Callable[[], None]:
+    socket_path = _default_supervisor_socket(paths)
+    # Only an extension-less launch points Prime's daemon at the private socket.
+    if os.environ.get(DAEMON_SOCKET_ENV_VAR) != str(socket_path):
+        return lambda: None
+    from omnigent.harnesses.prime_native.session_bridge import start_in_thread
+
+    return start_in_thread(paths, socket_path)
 
 
 def main() -> int:
@@ -1174,7 +1256,11 @@ def main() -> int:
 
         try:
             terminal_signals.publish(child)
-            return child.wait()
+            stop_bridge = _start_session_bridge(paths)
+            try:
+                return child.wait()
+            finally:
+                stop_bridge()
         finally:
             _finalize_wrapper_runtime(paths, terminal_identity)
     finally:

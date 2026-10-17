@@ -5,7 +5,7 @@ description: Verify Omnigent's prime-native adapter through its real CLI, Prime 
 
 # Verify Prime Native
 
-Use this skill for the Omnigent adapter only. Read [the feature map](features/README.md) before choosing a scenario. The disposable daemon probe qualifies a proposed transport separately from the working extension adapter. Agent Profile Kit is outside this skill's scope. The [no-fork design](../../../designs/prime-native/NO_FORK.md) records both the proposal and its failed qualification gate.
+Use this skill for the Omnigent adapter only. Read [the feature map](features/README.md) before choosing a scenario. The disposable daemon probe qualifies a proposed transport separately from the working extension adapter. Prime 0.10 sessions use the daemon bridge described in [the 0.10 bridge design](../../../designs/prime-010-bridge/DESIGN.md). Agent Profile Kit is outside this skill's scope. The [no-fork design](../../../designs/prime-native/NO_FORK.md) records both the proposal and its failed qualification gate.
 
 ## Launch
 
@@ -18,9 +18,9 @@ Run the executable helper with a real Prime binary only when its
 .agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
 ```
 
-The helper starts a local Omnigent API server and drives `omnigent prime-native` in a PTY. It uses a local OpenAI-compatible model endpoint for deterministic replies. That endpoint replaces only the external model service. Prime, its extension, Omnigent, the host, and the runner remain real processes.
+The helper starts a local Omnigent API server and drives `omnigent prime-native` in a PTY. It uses a local OpenAI-compatible model endpoint for deterministic replies. That endpoint replaces only the external model service. Prime, its transcript bridge, Omnigent, the host, and the runner remain real processes. The bridge is the extension on Prime 0.9.x and the daemon session bridge on 0.10 or newer.
 
-Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that Prime loaded the extension and reached the model endpoint. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
+Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that the bridge delivered it and Prime reached the model endpoint. Prime 0.10 has no `--no-tools`, so the drive passes it only when `prime-agent --help` lists it. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
 
 The drive's default binary path is `OMNIGENT_PRIME_PATH`, then `prime-agent` on PATH. The helper prints its evidence directory. A nonzero exit or any `FAIL` record means the scenario failed. A missing native command is a failed prerequisite.
 
@@ -72,7 +72,7 @@ Read the matching feature file for model, permission, resource, and lifecycle ch
 
 Evidence lives under a fresh directory in `/tmp/prime-native-verify-*`. It survives cleanup. Capture the command, binary and checkout revisions, terminal transcript, submitted HTTP action, resulting session items, and cleanup outcome.
 
-Exercise public CLI and HTTP routes. Do not replace the extension, invoke internal state setters, or use test-only routes. Compare assistant output with a literal expected reply. Run a wrong-result control when changing the verification helper.
+Exercise public CLI and HTTP routes. Do not replace the 0.9.x extension or the 0.10 daemon bridge, invoke internal state setters, or use test-only routes. Compare assistant output with a literal expected reply. Run a wrong-result control when changing the verification helper.
 
 For mutations, capture the action and independently inspect the resulting file or resource. A permission proof must show a denied operation and an absent marker file. Mocking the execution gate cannot prove enforcement.
 
@@ -87,6 +87,8 @@ The helper deletes its owned scratch session through the public API while the se
 ## Helpers
 
 `scripts/verify.py` is executable and uses `uv run --no-sync python`. Its default invocation runs launch, doctor, the HTTP and terminal message scenarios, and cleanup. `--doctor` runs only the [metadata checks](#doctor). `--expected WRONG` supplies a drive negative control and must exit nonzero when the fixture replies `PRIME_NATIVE_PONG`.
+
+`--scenario relay` runs on Prime 0.10 only. It creates a session whose agent denies `sys_os_write`, then has the fixture model drive Prime's `ipython` tool to call `mcp.call_tool("omnigent", ...)`. Require a `sys_os_read` result carrying the file nonce in a `function_call_output` item, a `Denied by policy` output for `sys_os_write`, no denied file, and no surviving `serve-mcp` process. Break the `relay_mcp` launch wiring to run the negative control; it must exit 1 at the read check. The adapter and MCP probes above stay 0.9.6-only because they pin that binary and assert the extension.
 
 `--inspect-seconds 120` retains the live session for two minutes after the assertions, then runs cleanup. The helper prints the exact conversation URL. The API server skips the bundled web UI. To inspect the conversation in a browser, run the repository's Vite development server with `OMNIGENT_URL` set to that API server's origin. Evidence and assertions remain the same.
 

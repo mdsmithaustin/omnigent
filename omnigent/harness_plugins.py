@@ -947,8 +947,7 @@ _BUILTIN_CONTRIBUTION = HarnessContribution(
             binary="prime-agent",
             package=None,
             install_hint=(
-                "Install Prime Agent 0.9.6 or a newer release with extension support, "
-                "then configure its login or models.json."
+                "Install Prime Agent 0.9.6 or newer, then configure its login or models.json."
             ),
             min_version="0.9.6",
         ),
