@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -339,8 +340,11 @@ async def test_an_unanswered_command_times_out_and_the_connection_stays_usable(
             assert await client.command("get_state") == {}
 
 
+@pytest.mark.xfail(
+    strict=True, reason="a backlog overflow closes the connection without a log line"
+)
 async def test_an_event_backlog_past_its_bound_ends_the_connection(
-    serve: Serve, monkeypatch: pytest.MonkeyPatch
+    serve: Serve, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(daemon, "_EVENT_BACKLOG", 2)
     updates = [_session_event(n, {"type": "message_update"}) for n in range(1, 6)]
@@ -354,3 +358,7 @@ async def test_an_event_backlog_past_its_bound_ends_the_connection(
             assert [event async for event in client.events()] == []
             with pytest.raises(DaemonClosedError):
                 await client.command("list")
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "Prime session events backed up past 2; dropping them and closing the daemon connection"
+    ]
