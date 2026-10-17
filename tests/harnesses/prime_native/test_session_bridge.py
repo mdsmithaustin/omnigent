@@ -674,7 +674,6 @@ async def test_an_outage_logs_one_warning_until_posting_recovers(
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
 
 
-@pytest.mark.xfail(strict=True, reason="_post sleeps 0.2 s after its last failed attempt")
 async def test_a_post_that_stays_unreachable_does_not_hold_up_the_next_one(bridge: Bridge) -> None:
     await ready(bridge)
     bridge.outage.extend([503] * 3)

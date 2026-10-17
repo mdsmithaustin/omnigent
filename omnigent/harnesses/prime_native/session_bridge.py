@@ -477,6 +477,8 @@ class SessionBridge:
             ``None`` when it stayed unreachable.
         """
         for attempt in range(_POST_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(0.05 * 2 ** (attempt - 1))
             try:
                 response = await self._http.post(
                     f"{self._session_url}/events", json=event, headers=self._headers()
@@ -492,7 +494,6 @@ class SessionBridge:
                         "Omnigent rejected %s: %s", event["type"], response.status_code
                     )
                 return response.is_success
-            await asyncio.sleep(0.05 * 2**attempt)
         if not self._unreachable:
             self._unreachable = True
             _logger.warning(
