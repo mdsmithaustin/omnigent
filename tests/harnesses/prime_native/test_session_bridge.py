@@ -539,6 +539,42 @@ async def test_an_item_whose_post_failed_is_reposted_from_the_next_snapshot(
     assert len(bridge.prime.sent("attach")) == 2
 
 
+@pytest.mark.xfail(strict=True, reason="a failed re-post waits for the next agent_end")
+async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
+    bridge: Bridge,
+) -> None:
+    await ready(bridge)
+    user = _user("final reply lost", 21)
+    assistant = {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "answer"}],
+        "timestamp": 22,
+        "responseId": "r1",
+        "stopReason": "stop",
+    }
+    bridge.prime.messages = [user, assistant]
+    await bridge.prime.emit(_event(1, {"type": "agent_start"}))
+    await eventually(bridge.statuses)
+    # Three attempts each: the two live items, the idle status, then both items re-posted.
+    bridge.outage.extend([503] * 15)
+
+    await bridge.prime.emit(
+        _event(2, {"type": "message_end", "message": user}),
+        _event(3, {"type": "message_end", "message": assistant}),
+        _event(4, {"type": "agent_end", "messages": [user, assistant]}),
+    )
+
+    await eventually(lambda: not bridge.outage)
+    items = await eventually(
+        lambda: [
+            (e["data"]["item_data"]["role"], e["data"]["item_data"]["content"][0]["text"])
+            for e in bridge.posted()
+            if e["type"] == "external_conversation_item"
+        ]
+    )
+    assert items == [("user", "final reply lost"), ("assistant", "answer")]
+
+
 async def test_a_turn_that_ended_while_detached_reports_idle_on_reattach(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
