@@ -1246,13 +1246,14 @@ def main() -> int:
                         _launch_reservation_path(paths).unlink()
                 raise
 
-        bridge = contextlib.ExitStack()
         try:
             terminal_signals.publish(child)
-            bridge.callback(_start_session_bridge(paths))
-            return child.wait()
+            stop_bridge = _start_session_bridge(paths)
+            try:
+                return child.wait()
+            finally:
+                stop_bridge()
         finally:
-            bridge.close()
             _finalize_wrapper_runtime(paths, terminal_identity)
     finally:
         terminal_signals.restore()

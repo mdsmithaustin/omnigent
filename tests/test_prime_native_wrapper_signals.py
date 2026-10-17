@@ -484,7 +484,6 @@ def test_main_restores_caller_stop_handlers(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in a later commit of this branch")
 def test_main_finalizes_the_runtime_when_stopping_the_bridge_fails(
     admitted_wrapper_paths: PrimeRuntimePaths,
     caller_stop_handlers: None,
