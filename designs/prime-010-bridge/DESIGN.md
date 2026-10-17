@@ -14,14 +14,15 @@ The 0.9 extension path stays for prime-agent builds whose `--help` lists
 attach ignored replay cursors and a killed worker did not recover. Prime 0.10
 still reports `replay.status: "unavailable"`. The extension alternative is gone,
 so the bridge accepts the limit and recovers by snapshot: after any reconnect it
-posts the snapshot messages it has not posted, keyed by stable `source_id`s, so a
-repeat post is harmless. A conversation item whose post finds Omnigent
-unreachable leaves the posted set, and the bridge keeps the newest status post
-lost that way. The bridge re-attaches after the next `agent_end`, so the snapshot
-posts the items again and the lost status follows them. While a re-post still
-fails, the bridge retries whenever no agent loop is open, waiting 1 s and
-doubling the wait up to 30 s. Other posts lost that way, such as usage,
-compaction, interrupt, and delta events, are not recovered. Worker-crash
+posts the snapshot messages it has not posted, keyed by stable `source_id`s, so
+a repeat post is harmless. A conversation item whose post finds Omnigent
+unreachable leaves the posted set. When the latest session status post fails
+that way, the bridge keeps that status. The bridge re-attaches after the next
+`agent_end`, so the snapshot posts the items again and the kept status follows
+them. While a re-post still fails, the bridge retries whenever no agent loop is
+open, waiting 1 s and doubling the wait up to 30 s. Model and effort changes are
+posted again at the next attach or `agent_end`. Usage, compaction, interrupt,
+delta, and dropped-message posts lost that way are not recovered. Worker-crash
 recovery stays unqualified.
 
 `--mode rpc`, `--mode json`, and `--mode acp` each run a private session that no

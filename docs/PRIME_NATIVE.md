@@ -322,16 +322,16 @@ deltas. A turn that ended while the bridge was detached shows as idle, or as
 failed when it was aborted or ended in a model error. A turn that started while
 the bridge was detached shows as running. When Omnigent cannot be reached, the
 bridge retries each post briefly. At the end of the turn it reattaches and posts
-the conversation items and the latest session status that did not arrive. If
-Omnigent is still unreachable, the bridge tries again while Prime is idle, first
-after 1 second and then doubling the wait up to 30 seconds. Other posts lost in
-an outage, such as usage, compaction progress, interrupt notices, and streamed
-deltas, are not re-posted. Only the bridge that currently holds the
-conversation's control binding reads web messages and answers controls. A new
-conversation's Prime settings skip the first-run prompt and leave trace sharing
-off, unless the host settings already answer that prompt. The bridge writes its
-diagnostics to `bridge.log` in the conversation's runtime directory, rotated at
-1 MB with one backup.
+the conversation items that did not arrive, and the session status if its latest
+post failed. If Omnigent is still unreachable, the bridge tries again while
+Prime is idle, first after 1 second and then doubling the wait up to 30 seconds.
+Usage, compaction progress, interrupt notices, streamed deltas, and
+dropped-message notices lost in an outage are not re-posted. Only the bridge
+that currently holds the conversation's control binding reads web messages and
+answers controls. A new conversation's Prime settings skip the first-run prompt
+and leave trace sharing off, unless the host settings already answer that
+prompt. The bridge writes its diagnostics to `bridge.log` in the conversation's
+runtime directory, rotated at 1 MB with one backup.
 
 Omnigent's relay tools (`sys_os_*`, session, comment, and the other built-in
 relay surface) reach Prime 0.10 as an `omnigent` MCP server. At launch Omnigent
