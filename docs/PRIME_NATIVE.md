@@ -12,8 +12,8 @@ chooses the transcript bridge from the binary's `--help`. A release that lists
 `--extension` (0.9.x) loads the Omnigent extension. That path is deprecated and
 is removed in Omnigent 0.19.0. A release without it, such as the 0.10.0 Rust
 build, runs with a [daemon bridge](#prime-010-daemon-bridge) instead. Releases
-other than 0.9.6 and 0.10.0 are not separately qualified, and Stop requires
-daemon protocol 7 and schema revision 30. Configure Prime's authentication
+other than 0.9.6 and 0.10.0 are not separately qualified. Stop and the 0.10
+bridge require daemon protocol 7 and schema revision 30. Configure Prime's authentication
 before launching.
 For xAI, run `/login` in Prime and select the xAI subscription or API-key entry.
 Complete the selected flow as described in the
@@ -269,8 +269,10 @@ executing in Prime. Their extension instances do not consume root controls or
 publish their transcript as the Omnigent root conversation. Missing or invalid
 depth is unknown and does not admit a root binding.
 
-The published daemon failed the replay-cursor and tested worker-recovery gates.
-The adapter therefore keeps the extension transport. Durable recovery across
+The published daemon failed the replay-cursor and tested worker-recovery gates,
+so the 0.9.x adapter keeps the extension transport. Prime 0.10 has no extension,
+so its bridge accepts that limit and recovers missed messages from the attach
+snapshot. Durable recovery across
 missed events, global control exclusivity, completion-dependent declared children,
 and whole-descendant settlement remain unqualified. Agent Profile Kit is outside
 this implementation. Root policy hooks do not confine arbitrary Python code or
