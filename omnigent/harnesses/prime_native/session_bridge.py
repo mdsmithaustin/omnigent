@@ -1,0 +1,428 @@
+"""
+Mirror a Prime 0.10 TUI session into its Omnigent session over the daemon socket.
+
+Prime 0.10 cannot load the shared Pi extension, so this bridge does the
+extension's Prime-mode jobs with the same files and routes: session events go
+to ``POST /events``, ``inbox/`` messages become ``prompt`` commands, and
+``controls/requests`` become daemon commands answered in ``controls/results``.
+It runs on its own event loop inside the terminal wrapper, next to Prime.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import os
+import re
+import threading
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from omnigent.harnesses.pi_native.bridge import _atomic_text, config_path
+from omnigent.harnesses.prime_native.bridge import PrimeRuntimePaths
+from omnigent.harnesses.prime_native.daemon import DaemonClient, DaemonCommandError, DaemonError
+from omnigent.harnesses.prime_native.transcript import TranscriptState, reconcile, reduce
+
+_logger = logging.getLogger(__name__)
+
+_TICK_S = 0.25
+_STOP_TIMEOUT_S = 2.0
+_RESULT_TTL_S = 60.0
+_MAX_PROMPT_ATTEMPTS = 5
+_POST_ATTEMPTS = 3
+_REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
+
+Event = dict[str, Any]
+Outcome = dict[str, object]
+
+
+def _now_ms() -> float:
+    return time.time() * 1000
+
+
+def _model_selector(model: object) -> str | None:
+    if not isinstance(model, dict):
+        return None
+    provider, model_id = model.get("provider"), model.get("id")
+    if not isinstance(provider, str) or not isinstance(model_id, str) or not model_id:
+        return None
+    return f"{provider}/{model_id}" if provider else model_id
+
+
+def _effort(level: object) -> str | None:
+    """Prime's thinking level in Omnigent's spelling (``off`` is ``none``)."""
+    return ("none" if level == "off" else level) if isinstance(level, str) and level else None
+
+
+class SessionBridge:
+    def __init__(self, paths: PrimeRuntimePaths, socket_path: Path, http: httpx.AsyncClient):
+        config = json.loads(config_path(paths.root).read_text(encoding="utf-8"))
+        self._paths = paths
+        self._socket_path = socket_path
+        self._http = http
+        self._session_url = (
+            f"{config['serverUrl']}/v1/sessions/{quote(config['sessionId'], safe='')}"
+        )
+        self._inbox = Path(config["inboxDir"])
+        self._incarnation = str(uuid.uuid4())
+        self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
+        self._client: DaemonClient | None = None
+        self._session = ""
+        self._posted_settings: dict[str, str] = {}
+        self._prompt_attempts: dict[str, int] = {}
+        self._settings_lock = asyncio.Lock()
+        self._attached = asyncio.Event()
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    async def run(self, stop: asyncio.Event) -> None:
+        loops = [asyncio.create_task(self._session_loop()), asyncio.create_task(self._poll_loop())]
+        try:
+            await stop.wait()
+        finally:
+            for task in (*loops, *self._tasks):
+                task.cancel()
+            await asyncio.gather(*loops, *self._tasks, return_exceptions=True)
+            self._release_binding()
+
+    async def _session_loop(self) -> None:
+        first_attach = True
+        while True:
+            try:
+                async with await DaemonClient.connect(self._socket_path) as client:
+                    root = await self._root_session(client)
+                    await self._attach(client, root, post_history=not first_attach)
+                    first_attach = False
+                    async for envelope in client.events():
+                        await self._mirror(client, envelope)
+            except (DaemonError, OSError) as exc:
+                if self._client is not None:
+                    _logger.info("Prime daemon connection lost: %s", exc)
+            except Exception:
+                _logger.exception("Prime session mirror failed; reconnecting")
+            finally:
+                self._client = None
+            await asyncio.sleep(_TICK_S)
+
+    async def _root_session(self, client: DaemonClient) -> dict[str, Any]:
+        session_dir = self._paths.session_dir.resolve()
+        while True:
+            for session in (await client.command("list")).get("sessions", []):
+                session_file = session.get("sessionFile")
+                if (
+                    session.get("rlmDepth") == 0
+                    and isinstance(session_file, str)
+                    and Path(session_file).resolve().is_relative_to(session_dir)
+                ):
+                    return session
+            await asyncio.sleep(_TICK_S)
+
+    async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
+        session = str(root["id"])
+        native_id = root.get("sessionId")
+        if isinstance(native_id, str) and native_id:
+            # Prime resumes by this stable UUID; the runtime id changes on every resume.
+            with contextlib.suppress(httpx.HTTPError):
+                await self._http.patch(
+                    self._session_url,
+                    json={"external_session_id": native_id},
+                    headers=self._headers(),
+                )
+        snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
+        # The first attach after launch replays history Omnigent already holds.
+        self._transcript, history = reconcile(self._transcript, snapshot.get("messages", []))
+        if post_history:
+            for event in history:
+                await self._post(event)
+        self._client, self._session = client, session
+        self._attached.set()
+        _logger.info("Attached to Prime session %s (%s)", session, native_id)
+        await self._publish_settings(snapshot.get("state", {}))
+        with contextlib.suppress(DaemonCommandError):
+            catalog = await client.command("get_available_models", activeSessionId=session)
+            options = [
+                {"id": selector, "model": selector, "displayName": model.get("name") or selector}
+                for model in catalog.get("models", [])
+                if (selector := _model_selector(model))
+            ]
+            await self._post({"type": "external_model_options", "data": {"models": options}})
+
+    async def _mirror(self, client: DaemonClient, envelope: dict[str, Any]) -> None:
+        if envelope.get("activeSessionId") != self._session:
+            return
+        self._transcript, events = reduce(self._transcript, envelope)
+        for event in events:
+            await self._post(event)
+        if envelope.get("event", {}).get("type") == "agent_end":
+            # The daemon emits no event for a model or effort picked in the TUI.
+            async with self._settings_lock:
+                with contextlib.suppress(DaemonCommandError):
+                    state = await client.command("get_state", activeSessionId=self._session)
+                    await self._publish_settings(state)
+
+    async def _publish_settings(self, state: dict[str, Any], *, force: str | None = None) -> bool:
+        """Post each setting that changed since the last post, plus *force* regardless."""
+        observed = {
+            "model": _model_selector(state.get("model")),
+            "effort": _effort(state.get("thinkingLevel")),
+        }
+        published = True
+        for kind, value in observed.items():
+            if value is None or (value == self._posted_settings.get(kind) and kind != force):
+                continue
+            event_type, key = _SETTING_EVENTS[kind]
+            if await self._post({"type": event_type, "data": {key: value}}):
+                self._posted_settings[kind] = value
+            else:
+                published = False
+        return published
+
+    async def _poll_loop(self) -> None:
+        await self._attached.wait()
+        (self._paths.root / "input_ready").write_text("")
+        while True:
+            try:
+                self._heartbeat()
+                self._dispatch_controls()
+                if self._client is not None:
+                    await self._deliver_inbox(self._client)
+            except (DaemonError, OSError) as exc:
+                _logger.info("Prime bridge tick failed: %s", exc)
+            except Exception:
+                _logger.exception("Prime bridge tick failed")
+            await asyncio.sleep(_TICK_S)
+
+    async def _deliver_inbox(self, client: DaemonClient) -> None:
+        for path in sorted(self._inbox.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            content = payload.get("content") if isinstance(payload, dict) else None
+            if not isinstance(content, str) or payload.get("type") != "user_message":
+                path.unlink(missing_ok=True)
+                continue
+            try:
+                # Steer joins a running turn and starts one when idle.
+                await client.command(
+                    "prompt",
+                    activeSessionId=self._session,
+                    message=content,
+                    streamingBehavior="steer",
+                )
+            except DaemonCommandError as exc:
+                attempts = self._prompt_attempts.get(path.name, 0) + 1
+                self._prompt_attempts[path.name] = attempts
+                if attempts < _MAX_PROMPT_ATTEMPTS:
+                    return
+                await self._post(_dropped_message(payload.get("id"), exc.error))
+            self._prompt_attempts.pop(path.name, None)
+            path.unlink(missing_ok=True)
+
+    def _heartbeat(self) -> None:
+        binding = {"incarnation": self._incarnation, "pid": os.getpid(), "heartbeat": _now_ms()}
+        _atomic_text(self._paths.controls_dir / "binding.json", json.dumps(binding))
+
+    def _release_binding(self) -> None:
+        binding = self._paths.controls_dir / "binding.json"
+        with contextlib.suppress(OSError, ValueError):
+            if json.loads(binding.read_text()).get("incarnation") == self._incarnation:
+                binding.unlink()
+
+    def _dispatch_controls(self) -> None:
+        results = self._paths.controls_dir / "results"
+        for path in results.iterdir():
+            with contextlib.suppress(FileNotFoundError):
+                if time.time() - path.stat().st_mtime > _RESULT_TTL_S:
+                    path.unlink()
+        for path in sorted((self._paths.controls_dir / "requests").iterdir()):
+            if not _REQUEST_NAME.fullmatch(path.name):
+                continue
+            try:
+                request = json.loads(path.read_text(encoding="utf-8"))
+                path.unlink()
+            except (OSError, ValueError):
+                continue
+            if isinstance(request, dict) and request.get("id") == path.stem:
+                self._spawn(self._answer(request))
+
+    def _spawn(self, work: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(work)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _answer(self, request: dict[str, Any]) -> None:
+        if request.get("type") in ("model", "effort"):
+            async with self._settings_lock:
+                outcome = await self._apply(request)
+        else:
+            outcome = await self._apply(request)
+        result = {"id": request["id"], "incarnation": request.get("incarnation"), **outcome}
+        results = self._paths.controls_dir / "results"
+        _atomic_text(results / f"{request['id']}.json", json.dumps(result))
+
+    async def _apply(self, request: dict[str, Any]) -> Outcome:
+        expires_at = request.get("expiresAt")
+        if (
+            request.get("incarnation") != self._incarnation
+            or not isinstance(expires_at, (int, float))
+            or expires_at <= _now_ms()
+        ):
+            return {"status": "rejected", "detail": "Expired or stale Prime control"}
+        handler = _CONTROLS.get(str(request.get("type")))
+        client = self._client
+        if handler is None:
+            return {"status": "rejected", "detail": "Unsupported Prime control"}
+        if client is None:
+            return {"status": "unavailable", "detail": "Prime daemon is not attached"}
+        try:
+            return await handler(self, client, request)
+        except DaemonCommandError as exc:
+            return {"status": "rejected", "detail": exc.error}
+        except (DaemonError, OSError):
+            return {"status": "unknown", "detail": "Prime control outcome unknown; not retried"}
+
+    async def _set_model(self, client: DaemonClient, request: dict[str, Any]) -> Outcome:
+        selector = f"{request.get('provider')}/{request.get('modelId')}"
+        await client.command(
+            "set_model",
+            activeSessionId=self._session,
+            provider=request.get("provider"),
+            modelId=request.get("modelId"),
+        )
+        state = await client.command("get_state", activeSessionId=self._session)
+        if _model_selector(state.get("model")) != selector or not await self._publish_settings(
+            state, force="model"
+        ):
+            return {"status": "unknown", "detail": "Prime model observation was not confirmed"}
+        return {"status": "applied", "model": selector}
+
+    async def _set_effort(self, client: DaemonClient, request: dict[str, Any]) -> Outcome:
+        level = request.get("level")
+        await client.command("set_thinking_level", activeSessionId=self._session, level=level)
+        state = await client.command("get_state", activeSessionId=self._session)
+        effort = _effort(state.get("thinkingLevel"))
+        if effort is None or not await self._publish_settings(state, force="effort"):
+            return {"status": "unknown", "detail": "Prime effort observation was not confirmed"}
+        return {"status": "applied", "effort": effort}
+
+    async def _compact(self, client: DaemonClient, request: dict[str, Any]) -> Outcome:
+        # compaction_start/compaction_end events carry the progress to the web UI.
+        instructions = request.get("customInstructions")
+        fields = {"customInstructions": instructions} if instructions else {}
+        await client.command("compact", activeSessionId=self._session, **fields)
+        return {"status": "applied"}
+
+    async def _interrupt(self, client: DaemonClient, _request: dict[str, Any]) -> Outcome:
+        state = await client.command("get_state", activeSessionId=self._session)
+        if not state.get("isStreaming"):
+            return {"status": "unavailable", "detail": "Prime loop is not abortable"}
+        await client.command("abort", activeSessionId=self._session)
+        # abort suspends queued input; resume_queue lifts that even when nothing is queued.
+        with contextlib.suppress(DaemonCommandError):
+            await client.command("resume_queue", activeSessionId=self._session)
+        return {"status": "interrupt_accepted"}
+
+    def _headers(self) -> dict[str, str]:
+        # The executor refreshes authHeaders in config.json as its bearer rotates.
+        try:
+            auth = json.loads(config_path(self._paths.root).read_text()).get("authHeaders")
+        except (OSError, ValueError):
+            auth = None
+        return {"content-type": "application/json", **(auth if isinstance(auth, dict) else {})}
+
+    async def _post(self, event: Event) -> bool:
+        for attempt in range(_POST_ATTEMPTS):
+            try:
+                response = await self._http.post(
+                    f"{self._session_url}/events", json=event, headers=self._headers()
+                )
+            except httpx.HTTPError:
+                response = None
+            if response is not None and response.status_code < 500:
+                return response.is_success
+            await asyncio.sleep(0.05 * 2**attempt)
+        _logger.warning("Prime bridge could not post %s", event.get("type"))
+        return False
+
+
+_SETTING_EVENTS = {
+    "model": ("external_model_change", "model"),
+    "effort": ("external_reasoning_effort_change", "reasoning_effort"),
+}
+
+_CONTROLS: dict[
+    str, Callable[[SessionBridge, DaemonClient, dict[str, Any]], Awaitable[Outcome]]
+] = {
+    "model": SessionBridge._set_model,
+    "effort": SessionBridge._set_effort,
+    "compact": SessionBridge._compact,
+    "interrupt": SessionBridge._interrupt,
+}
+
+
+def _dropped_message(message_id: object, error: str) -> Event:
+    return {
+        "type": "external_conversation_item",
+        "data": {
+            "response_id": f"pi-deliver-dropped-{int(_now_ms())}",
+            "item_type": "error",
+            "item_data": {
+                "source": "execution",
+                "code": "pi_followup_delivery_dropped",
+                "message": (
+                    f"Omnigent: a queued message (id {message_id or '(no id)'}) could not be "
+                    f"delivered to Prime after {_MAX_PROMPT_ATTEMPTS} attempts and was dropped: "
+                    f"{error}"
+                ),
+            },
+        },
+    }
+
+
+async def run_bridge(
+    paths: PrimeRuntimePaths,
+    socket_path: Path,
+    stop: asyncio.Event,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Mirror the Prime session behind *socket_path* until *stop* is set."""
+    async with httpx.AsyncClient(timeout=5.0, transport=transport) as http:
+        await SessionBridge(paths, socket_path, http).run(stop)
+
+
+def start_in_thread(paths: PrimeRuntimePaths, socket_path: Path) -> Callable[[], None]:
+    """Run the bridge on a daemon thread; the returned callable stops it."""
+    # The wrapper's stderr is Prime's terminal, so this process logs to the runtime root.
+    handler = logging.FileHandler(paths.root / "bridge.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(handler)
+    _logger.setLevel(logging.INFO)
+    loop = asyncio.new_event_loop()
+    stop = asyncio.Event()
+
+    def serve() -> None:
+        try:
+            loop.run_until_complete(run_bridge(paths, socket_path, stop))
+        except Exception:
+            _logger.exception("Prime session bridge stopped")
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=serve, name="prime-session-bridge", daemon=True)
+    thread.start()
+
+    def shutdown() -> None:
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(stop.set)
+        thread.join(_STOP_TIMEOUT_S)
+
+    return shutdown
