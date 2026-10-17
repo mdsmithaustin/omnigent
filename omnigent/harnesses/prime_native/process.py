@@ -35,6 +35,11 @@ from omnigent.harnesses.prime_native.bridge import (
     bridge_roots,
     runtime_paths,
 )
+from omnigent.harnesses.prime_native.daemon import (
+    DAEMON_PROTOCOL,
+    DaemonProtocolError,
+    parse_hello,
+)
 from omnigent.native import native_bridge_common, owner_claim
 from omnigent.native.source_owner import NativeAdmission, NativeStop
 
@@ -49,9 +54,6 @@ def meets_minimum_version(version: object) -> bool:
         return False
 
 
-_DAEMON_PROTOCOL = {"name": "prime-agent.daemon", "version": 7}
-_DAEMON_SCHEMA_ID = "protocol-7-schema-30-f908f493c9e1"
-_DAEMON_SCHEMA_REVISION = 30
 _SOCKET_IO_TIMEOUT_S = 1.5
 _SHUTDOWN_SETTLE_TIMEOUT_S = 5.0
 _SHUTDOWN_POLL_INTERVAL_S = 0.1
@@ -735,9 +737,9 @@ def _stop_terminal(paths: PrimeRuntimePaths) -> None:
 
 
 def _qualify_supervisor_process(
-    pid: object, paths: PrimeRuntimePaths
+    pid: int | None, paths: PrimeRuntimePaths
 ) -> tuple[_ProcessIdentity, set[_ProcessIdentity]]:
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+    if pid is None:
         raise RuntimeError("Prime daemon hello has no qualified supervisor PID; runtime retained.")
     try:
         supervisor = psutil.Process(pid)
@@ -767,27 +769,25 @@ def _qualify_supervisor_process(
     return identity, descendants
 
 
+_UNQUALIFIED_HELLO = "Prime daemon hello did not qualify the private endpoint; runtime retained."
+
+
 def _validate_daemon_hello(
     hello: dict[str, object], endpoint: _SupervisorEndpoint, paths: PrimeRuntimePaths
 ) -> tuple[str, set[_ProcessIdentity]]:
     expected_path = str(endpoint.path)
+    try:
+        parsed = parse_hello(hello)
+    except DaemonProtocolError as exc:
+        raise RuntimeError(_UNQUALIFIED_HELLO) from exc
     if (
-        hello.get("type") != "daemon_hello"
-        or hello.get("protocol") != _DAEMON_PROTOCOL
-        or hello.get("schemaId") != _DAEMON_SCHEMA_ID
-        or hello.get("schemaRevision") != _DAEMON_SCHEMA_REVISION
-        or not meets_minimum_version(hello.get("appVersion"))
-        or hello.get("socketPath") != expected_path
-        or hello.get("supervisorSocketPath") != expected_path
+        not meets_minimum_version(parsed.app_version)
+        or parsed.socket_path != expected_path
+        or parsed.supervisor_socket_path != expected_path
     ):
-        raise RuntimeError(
-            "Prime daemon hello did not qualify the private endpoint; runtime retained."
-        )
-    client_id = hello.get("clientId")
-    if not isinstance(client_id, str) or not client_id:
-        raise RuntimeError("Prime daemon hello has no client identity; runtime retained.")
-    supervisor, descendants = _qualify_supervisor_process(hello.get("supervisorPid"), paths)
-    return client_id, {supervisor, *descendants}
+        raise RuntimeError(_UNQUALIFIED_HELLO)
+    supervisor, descendants = _qualify_supervisor_process(parsed.supervisor_pid, paths)
+    return parsed.client_id, {supervisor, *descendants}
 
 
 def _send_shutdown(
@@ -812,7 +812,7 @@ def _send_shutdown(
         envelope = {
             "type": "command",
             "id": command_id,
-            "protocol": _DAEMON_PROTOCOL,
+            "protocol": DAEMON_PROTOCOL,
             "clientId": client_id,
             "command": {"type": "shutdown", "force": True},
         }

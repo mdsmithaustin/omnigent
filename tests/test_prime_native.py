@@ -1457,12 +1457,19 @@ def test_maintenance_skips_runtime_during_preparation(tmp_path: Path) -> None:
             holder.wait(timeout=5)
 
 
-@pytest.mark.parametrize("app_version", ["0.9.6", "0.10.0"])
+@pytest.mark.parametrize(
+    ("app_version", "schema_id"),
+    [
+        ("0.9.6", "protocol-7-schema-30-f908f493c9e1"),
+        ("0.10.0", "protocol-7-schema-30-8e4b17c2a9f5"),
+    ],
+)
 def test_stop_sends_one_qualified_socket_shutdown_and_preserves_history(
-    tmp_path: Path, app_version: str
+    tmp_path: Path, app_version: str, schema_id: str
 ) -> None:
     paths = _shutdown_paths(tmp_path)
-    with _prime_daemon(paths, tmp_path, hello={"appVersion": app_version}) as daemon:
+    hello: dict[str, object] = {"appVersion": app_version, "schemaId": schema_id}
+    with _prime_daemon(paths, tmp_path, hello=hello) as daemon:
         stop_prime_runtime(paths)
         daemon.process.wait(timeout=5)
 
@@ -1495,7 +1502,7 @@ def test_stop_accepts_eof_after_command_only_when_runtime_disappears(tmp_path: P
     "hello",
     [
         {"protocol": {"name": "prime-agent.daemon", "version": 6}},
-        {"schemaId": "protocol-7-schema-29-wrong", "schemaRevision": 29},
+        {"schemaRevision": 29},
         {"appVersion": "0.9.5"},
         {"socketPath": "/tmp/not-this-runtime.sock"},
         {"supervisorPid": os.getpid()},
