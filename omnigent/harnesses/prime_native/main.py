@@ -331,6 +331,7 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
             build_prime_launch,
             paths,
             executable=prime.path,
+            # @deprecated, remove in 0.19.0: the 0.9.x launch that loads the shared Pi extension.
             extension=extension if prime.extension else None,
             config=extension_config,
             extra_args=config.terminal_launch_args or (),

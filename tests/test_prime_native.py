@@ -1649,6 +1649,7 @@ def test_maintenance_skips_runtime_during_preparation(tmp_path: Path) -> None:
     [
         ("0.9.6", "protocol-7-schema-30-f908f493c9e1"),
         ("0.10.0", "protocol-7-schema-30-8e4b17c2a9f5"),
+        ("0.10.1", "protocol-7-schema-30-a-future-build"),
     ],
 )
 def test_stop_sends_one_qualified_socket_shutdown_and_preserves_history(
