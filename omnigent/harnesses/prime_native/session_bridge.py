@@ -70,11 +70,13 @@ class Pin:
     The one Prime chat this Omnigent session mirrors, and whether the terminal shows it.
 
     ``chat`` is Prime's stable sessionId: the saved id on a resume launch, else the first
-    chat seen. ``away`` is true while the terminal shows another chat and ``shown`` while
+    chat seen. ``held`` turns true once that chat has a message; until then the pin follows
+    the terminal. ``away`` is true while the terminal shows another chat and ``shown`` while
     the web says so; ``episodes`` counts departures so each notice has its own key.
     """
 
     chat: str | None = None
+    held: bool = False
     away: bool = False
     shown: bool = False
     episodes: int = 0
@@ -83,11 +85,18 @@ class Pin:
         """Record the listed root sessions and the one the terminal shows, when known."""
         if self.chat is None and (first := tui or next(iter(roots), None)):
             self.chat = first["sessionId"]
+        if not self.held and tui is not None and not self._has_messages(roots):
+            # Prime's /resume picker omits empty chats, so the pin follows the terminal off one.
+            self.chat = tui["sessionId"]
+        self.held = self.held or self._has_messages(roots)
         if tui is not None:
             away = tui["sessionId"] != self.chat
             if away and not self.away:
                 self.episodes += 1
             self.away = away
+
+    def _has_messages(self, roots: list[Root]) -> bool:
+        return any(root.get("messageCount") for root in roots if root["sessionId"] == self.chat)
 
 
 def _now_ms() -> float:
@@ -120,7 +129,11 @@ class SessionBridge:
         self._inbox = Path(config["inboxDir"])
         self._policy_notice: str | None = config.get("policyNotice")
         saved = config.get("externalSessionId")
-        self._pin = Pin(chat=saved if isinstance(saved, str) and saved else None)
+        saved = saved if isinstance(saved, str) and saved else None
+        self._pin = Pin(chat=saved, held=saved is not None)
+        # The server keeps external_session_id write-once, and a resume launch's is already set.
+        self._recorded = saved is not None
+        self._record_failure = ""
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -219,14 +232,17 @@ class SessionBridge:
             and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
         ]
         tui = self._tui_root(roots)
-        was_away = self._pin.away
+        chat, was_away = self._pin.chat, self._pin.away
         self._pin.observe(roots, tui)
+        if chat is not None and self._pin.chat != chat:
+            _logger.info("Prime TUI left empty chat %s; following it to %s", chat, self._pin.chat)
         if self._pin.away != was_away:
             _logger.info(
                 "Prime TUI %s the chat this session mirrors",
                 "left" if self._pin.away else "returned to",
             )
         await self._announce()
+        await self._record()
         pinned = [root for root in roots if root["sessionId"] == self._pin.chat]
         if tui in pinned:
             return tui
@@ -260,6 +276,35 @@ class SessionBridge:
         ):
             pin.shown = notice == "detached"
 
+    async def _record(self) -> None:
+        """Store the pinned chat's id on the Omnigent session once the pin holds."""
+        if self._recorded or not self._pin.held:
+            return
+        try:
+            # Prime resumes by this stable UUID; the runtime id changes on every resume.
+            response = await self._http.patch(
+                self._session_url,
+                json={"external_session_id": self._pin.chat},
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            failure = repr(exc)
+        else:
+            if not _retryable(response.status_code):
+                self._recorded = True
+                if not response.is_success:
+                    _logger.warning(
+                        "Omnigent refused external_session_id %s: %s",
+                        self._pin.chat,
+                        response.status_code,
+                    )
+                return
+            failure = str(response.status_code)
+        # Retried at every survey, so only a changed failure is logged.
+        if failure != self._record_failure:
+            self._record_failure = failure
+            _logger.warning("Could not record Prime session %s: %s", self._pin.chat, failure)
+
     async def _track(self) -> None:
         """Survey the terminal, and re-attach when the pinned chat is on another runtime."""
         client = self._client
@@ -283,24 +328,6 @@ class SessionBridge:
 
     async def _attach(self, client: DaemonClient, root: Root, *, post_history: bool):
         session = str(root["id"])
-        native_id = root.get("sessionId")
-        if isinstance(native_id, str) and native_id:
-            # Prime resumes by this stable UUID; the runtime id changes on every resume.
-            try:
-                response = await self._http.patch(
-                    self._session_url,
-                    json={"external_session_id": native_id},
-                    headers=self._headers(),
-                )
-            except httpx.HTTPError as exc:
-                _logger.warning("Could not record Prime session %s: %r", native_id, exc)
-            else:
-                if not response.is_success:
-                    _logger.warning(
-                        "Omnigent refused external_session_id %s: %s",
-                        native_id,
-                        response.status_code,
-                    )
         snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
         # The first attach after launch replays history Omnigent already holds.
         self._transcript, history = reconcile(
@@ -320,7 +347,7 @@ class SessionBridge:
             self._repost_delay = _REPOST_FIRST_S
         self._client, self._session = client, session
         self._started.set()
-        _logger.info("Attached to Prime session %s (%s)", session, native_id)
+        _logger.info("Attached to Prime session %s (%s)", session, root["sessionId"])
         await self._publish_settings(snapshot.get("state", {}))
         with contextlib.suppress(DaemonCommandError):
             catalog = await client.command("get_available_models", activeSessionId=session)
