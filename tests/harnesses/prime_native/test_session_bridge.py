@@ -830,7 +830,7 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
 
     assert [e["item_data"]["code"] for e in notice] == ["prime_terminal_detached"]
     assert notice[0]["item_data"]["level"] == "info"
-    assert "start a new session from the web UI" in notice[0]["item_data"]["message"].lower()
+    assert "Start a new session from the web UI" in notice[0]["item_data"]["message"]
     assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
     assert _patched_ids(bridge) == [NATIVE_ID]
     assert _message_texts(bridge) == []
