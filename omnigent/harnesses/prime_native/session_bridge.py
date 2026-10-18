@@ -56,6 +56,7 @@ _STATUS = "external_session_status"
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
+Root = dict[str, Any]
 Notice = Literal["detached", "returned"]
 _AWAY_DETAIL = (
     "The terminal is on a different Prime chat than this web session mirrors. "
@@ -69,28 +70,24 @@ class Pin:
     The one Prime chat this Omnigent session mirrors, and whether the terminal shows it.
 
     ``chat`` is Prime's stable sessionId: the saved id on a resume launch, else the first
-    chat attached. ``away`` is true while the terminal shows another chat. ``owed`` is the
-    web notice not yet posted; ``episodes`` counts departures so each notice has its own key.
+    chat seen. ``away`` is true while the terminal shows another chat and ``shown`` while
+    the web says so; ``episodes`` counts departures so each notice has its own key.
     """
 
     chat: str | None = None
     away: bool = False
-    owed: Notice | None = None
+    shown: bool = False
     episodes: int = 0
 
-    def observe(self, shown: object) -> bool:
-        """Record the chat the terminal shows; ``True`` when it is the pinned one."""
-        if self.chat is None:
-            self.chat = shown if isinstance(shown, str) else None
-        away = shown != self.chat
-        if away != self.away:
-            self.away = away
-            if away:
+    def observe(self, roots: list[Root], tui: Root | None) -> None:
+        """Record the listed root sessions and the one the terminal shows, when known."""
+        if self.chat is None and (first := tui or next(iter(roots), None)):
+            self.chat = first["sessionId"]
+        if tui is not None:
+            away = tui["sessionId"] != self.chat
+            if away and not self.away:
                 self.episodes += 1
-                self.owed = "detached"
-            else:
-                self.owed = None if self.owed == "detached" else "returned"
-        return not away
+            self.away = away
 
 
 def _now_ms() -> float:
@@ -153,7 +150,7 @@ class SessionBridge:
                     self._heartbeat,
                     self._dispatch_controls,
                     self._deliver_inbox,
-                    self._follow_tui,
+                    self._track,
                     self._retry_reposts,
                 )
             ),
@@ -193,78 +190,89 @@ class SessionBridge:
                 self._client = None
             await asyncio.sleep(_TICK_S)
 
-    async def _pinned_root(self, client: DaemonClient) -> dict[str, Any]:
-        """Wait for the terminal to show the pinned chat, noting when it shows another."""
+    async def _pinned_root(self, client: DaemonClient) -> Root:
+        """Wait until the pinned chat is listed, noting where the terminal is meanwhile."""
         waiting = False
-        while True:
-            root = self._tui_root(await client.command("list"))
-            if root is None:
-                if not waiting:
-                    waiting = True
-                    _logger.info(
-                        "Waiting for a Prime root session under %s", self._paths.session_dir
-                    )
-            elif await self._track(root):
-                return root
-            else:
-                # Away: still claim the binding so controls get a clear answer.
+        while (root := await self._survey(client)) is None:
+            if self._pin.chat is not None:
+                # The pinned chat is not listed yet, as on a resume launch; controls still answer.
                 self._started.set()
+            if not waiting:
+                waiting = True
+                _logger.info("Waiting for a Prime root session under %s", self._paths.session_dir)
             await asyncio.sleep(_TICK_S)
+        return root
 
-    async def _track(self, root: dict[str, Any]) -> bool:
-        """Update the pin from the terminal's *root*, post any notice owed, return if pinned."""
+    async def _survey(self, client: DaemonClient) -> Root | None:
+        """
+        Note from one daemon listing where the terminal is, and tell the web when that changed.
+
+        :returns: The pinned chat's root to mirror, or ``None`` while it is not listed.
+        """
+        session_dir = self._paths.session_dir.resolve()
+        roots = [
+            session
+            for session in (await client.command("list")).get("sessions", [])
+            if session.get("rlmDepth") == 0
+            and isinstance(session.get("sessionId"), str)
+            and isinstance(session.get("sessionFile"), str)
+            and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
+        ]
+        tui = self._tui_root(roots)
         was_away = self._pin.away
-        on_pin = self._pin.observe(root.get("sessionId"))
+        self._pin.observe(roots, tui)
         if self._pin.away != was_away:
             _logger.info(
                 "Prime TUI %s the chat this session mirrors",
                 "left" if self._pin.away else "returned to",
             )
         await self._announce()
-        return on_pin
+        pinned = [root for root in roots if root["sessionId"] == self._pin.chat]
+        if tui in pinned:
+            return tui
+        return next(
+            (root for root in pinned if root["id"] == self._session), next(iter(pinned), None)
+        )
+
+    def _tui_root(self, roots: list[Root]) -> Root | None:
+        """
+        The root the terminal shows, or ``None`` while it shows none, as in the /resume picker.
+
+        Only positive evidence counts: a client besides this bridge. The bridge attaches only to
+        the pinned chat, so a client on another chat is the terminal.
+        """
+        client = self._client
+        attached = self._session if client is not None and not client.closed else None
+        viewed = [root for root in roots if _clients(root) > (root["id"] == attached)]
+        others = [root for root in viewed if root["sessionId"] != self._pin.chat]
+        return next(iter(others or viewed), None)
 
     async def _announce(self) -> None:
-        notice, self._pin.owed = self._pin.owed, None
-        if notice is None:
+        """Post the notice that brings the web up to date with where the terminal is."""
+        pin = self._pin
+        if pin.away == pin.shown:
             return
-        key = f"{self._incarnation}:{self._pin.episodes}"
-        if await self._post(_pin_notice(notice, key)) is None and self._pin.owed is None:
-            self._pin.owed = notice
+        notice: Notice = "detached" if pin.away else "returned"
+        # A lost post is retried at the next survey; the repeat carries the same key.
+        if (
+            await self._post(_pin_notice(notice, f"{self._incarnation}:{pin.episodes}"))
+            is not None
+        ):
+            pin.shown = notice == "detached"
 
-    def _tui_root(self, listing: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        The root session the TUI shows, since ``/new`` and ``/resume`` switch it.
-
-        The bridge stays on its root while another client views it, since the daemon
-        briefly still counts the bridge on a root it left. Otherwise it is the root with
-        a client besides this bridge, else the first root under this runtime's session dir.
-        """
-        session_dir = self._paths.session_dir.resolve()
-        roots = [
-            session
-            for session in listing.get("sessions", [])
-            if session.get("rlmDepth") == 0
-            and isinstance(session.get("sessionFile"), str)
-            and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
-        ]
-        current = next((root for root in roots if root.get("id") == self._session), None)
-        viewed = [root for root in roots if _clients(root) > (root is current)]
-        if current in viewed or (current and not viewed):
-            return current
-        return viewed[0] if viewed else (roots[0] if roots else None)
-
-    async def _follow_tui(self) -> None:
+    async def _track(self) -> None:
+        """Survey the terminal, and re-attach when the pinned chat is on another runtime."""
         client = self._client
         if client is None:
             return
         try:
-            root = self._tui_root(await client.command("list"))
+            root = await self._survey(client)
         except DaemonClosedError:
             return
-        if root is None:
-            return
-        if await self._track(root) and root.get("id") != self._session:
-            _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
+        if root is not None and root["id"] != self._session:
+            _logger.info(
+                "Prime chat %s is on session %s; re-attaching", self._pin.chat, root["id"]
+            )
             await client.close()
 
     async def _retry_reposts(self) -> None:
@@ -273,7 +281,7 @@ class SessionBridge:
         if client is not None and self._unposted and idle and time.monotonic() >= self._repost_at:
             await client.close()
 
-    async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
+    async def _attach(self, client: DaemonClient, root: Root, *, post_history: bool):
         session = str(root["id"])
         native_id = root.get("sessionId")
         if isinstance(native_id, str) and native_id:
@@ -389,7 +397,7 @@ class SessionBridge:
             ):
                 path.unlink(missing_ok=True)
                 continue
-            await self._follow_tui()
+            await self._track()
             if client.closed or self._pin.away:
                 return
             try:
@@ -627,7 +635,7 @@ _CONTROLS: dict[
 }
 
 
-def _clients(root: dict[str, Any]) -> int:
+def _clients(root: Root) -> int:
     clients = root.get("attachedClients")
     return clients if isinstance(clients, int) else 0
 
@@ -657,10 +665,11 @@ _PIN_NOTICES: dict[Notice, tuple[str, str, str]] = {
     "detached": (
         "prime_terminal_detached",
         "Terminal moved to another Prime chat",
-        "The terminal switched to a Prime chat that this web session does not mirror. "
-        "Its messages will not appear here, and messages sent from the web wait until the "
-        "terminal returns. Start a new session from the web UI for the other chat, or "
-        "return to the original chat in the terminal.",
+        "The terminal switched to another Prime chat. This web session mirrors only its "
+        "original chat, so the other chat's messages do not appear here, and messages sent "
+        "from the web wait until the terminal returns. To continue here, return to the "
+        "original chat in the terminal, for example with /resume. A chat started with /new "
+        "in this terminal is not shown on the web.",
     ),
     "returned": (
         "prime_terminal_returned",

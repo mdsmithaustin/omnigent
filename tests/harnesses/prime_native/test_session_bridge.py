@@ -896,18 +896,15 @@ async def test_a_resumed_launch_mirrors_only_the_saved_chat(bridge: Bridge) -> N
     await asyncio.sleep(2 * TICK_S)
 
     assert [e["item_data"]["code"] for e in notice] == ["prime_terminal_detached"]
-    assert bridge.prime.sent("attach") == []
-    assert _patched_ids(bridge) == []
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [saved["id"]]
     assert await PrimeExtensionBinding(bridge.paths.root).wait_until_ready()
 
     bridge.prime.tui_root = saved["id"]
 
     await eventually(
-        lambda: [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [saved["id"]]
-    )
-    await eventually(
         lambda: bridge.error_codes() == ["prime_terminal_detached", "prime_terminal_returned"]
     )
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [saved["id"]]
     assert bridge.stored == [NEW_CHAT]
 
 
