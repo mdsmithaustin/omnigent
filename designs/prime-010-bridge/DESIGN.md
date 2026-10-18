@@ -126,7 +126,8 @@ still the pinned chat. On a resume launch the pin is the session's saved
 the bridge sees, and it follows the TUI to whatever chat the TUI shows until
 the pinned chat has a message (`messageCount` above 0 in the listing). Prime's
 `/resume` picker omits empty chats, so an empty pin left by `/new` could never
-be returned to.
+be returned to. A listing with no `messageCount` field holds the pin at once, so
+a Prime that drops the field still records the chat id.
 
 The bridge mirrors the pinned chat whenever the daemon lists it, wherever the
 TUI is, so a reconnect while the TUI is away still mirrors the pinned chat's

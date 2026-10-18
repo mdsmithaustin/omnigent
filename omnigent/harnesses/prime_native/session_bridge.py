@@ -96,7 +96,8 @@ class Pin:
             self.away = away
 
     def _has_messages(self, roots: list[Root]) -> bool:
-        return any(root.get("messageCount") for root in roots if root["sessionId"] == self.chat)
+        # A listing without message counts holds the pin on the first chat.
+        return any(root.get("messageCount", 1) for root in roots if root["sessionId"] == self.chat)
 
 
 def _now_ms() -> float:
