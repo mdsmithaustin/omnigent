@@ -77,10 +77,12 @@ class FakePrime:
         root = {"id": ROOT_ID, "rlmDepth": 0, "sessionId": NATIVE_ID}
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
+        root["messageCount"] = len(self.messages)
         roots = [root, *self.new_roots]
         viewers = [*self.attached.values(), self.tui_root]
         for session in roots:
             session["attachedClients"] = viewers.count(session["id"])
+            session.setdefault("messageCount", 0)
         return [foreign, child, *roots]
 
     def reply(self, command: dict[str, Any]) -> dict[str, Any]:
@@ -147,6 +149,8 @@ class Bridge:
     outage: list[int]
     # The Omnigent session's external_session_id; the server keeps it write-once.
     stored: list[str]
+    # Statuses for the next external_session_id updates, before the write-once check.
+    patch_faults: list[int]
 
     def posted(self) -> list[dict[str, Any]]:
         return [json.loads(r.content) for r in self.requests if r.url.path.endswith("/events")]
@@ -222,6 +226,7 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
     paths = _runtime(tmp_path / "runtime", "http://omnigent.test", **config)
     requests: list[httpx.Request] = []
     outage: list[int] = []
+    patch_faults: list[int] = []
     stored = [config["externalSessionId"]] if "externalSessionId" in config else []
 
     def record(request: httpx.Request) -> httpx.Response:
@@ -229,6 +234,8 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
             return httpx.Response(outage.pop(0))
         requests.append(request)
         if request.method == "PATCH":
+            if patch_faults:
+                return httpx.Response(patch_faults.pop(0))
             chosen = json.loads(request.content)["external_session_id"]
             if stored and stored[0] != chosen:
                 return httpx.Response(400, json={"detail": "external_session_id is already set"})
@@ -248,7 +255,7 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
         await asyncio.wait_for(running, 5)
 
     try:
-        yield Bridge(paths, prime, requests, shutdown, outage, stored)
+        yield Bridge(paths, prime, requests, shutdown, outage, stored, patch_faults)
     finally:
         await shutdown()
         server.close()
@@ -818,9 +825,10 @@ def _patched_ids(bridge: Bridge) -> list[str]:
 async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
     binding = await ready(bridge)
     other = _chat(bridge)
-    bridge.prime.messages = [_user("in the other chat", 11)]
+    bridge.prime.messages = [*bridge.prime.messages, _user("in the other chat", 11)]
     bridge.prime.tui_root = other["id"]
     enqueue_user_message(bridge.paths.root, "sent while away")
 
@@ -872,11 +880,12 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
 async def test_a_dropped_connection_while_away_reattaches_to_the_original_chat(
     bridge: Bridge,
 ) -> None:
+    bridge.prime.messages = [_user("before the switch", 11)]
     binding = await ready(bridge)
     other = _chat(bridge)
     bridge.prime.tui_root = other["id"]
     await eventually(bridge.errors)
-    bridge.prime.messages = [_user("said in the original chat", 12)]
+    bridge.prime.messages = [*bridge.prime.messages, _user("said in the original chat", 12)]
     bridge.prime.state["isStreaming"] = True
 
     bridge.prime.writers[-1].close()
@@ -906,16 +915,59 @@ async def test_a_resumed_launch_mirrors_only_the_saved_chat(bridge: Bridge) -> N
     )
     assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [saved["id"]]
     assert bridge.stored == [NEW_CHAT]
+    assert _patched_ids(bridge) == []
 
 
-async def test_a_refused_identity_update_is_logged(
+async def test_a_new_chat_before_any_message_takes_the_pin(bridge: Bridge) -> None:
+    await ready(bridge)
+    other = _chat(bridge)
+
+    bridge.prime.tui_root = other["id"]
+
+    await eventually(
+        lambda: (
+            [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, other["id"]]
+        )
+    )
+    enqueue_user_message(bridge.paths.root, "first message")
+    await eventually(lambda: bridge.prime.sent("prompt"))
+    assert [c["activeSessionId"] for c in bridge.prime.sent("prompt")] == [other["id"]]
+    assert _patched_ids(bridge) == []
+    other["messageCount"] = 1
+    await eventually(lambda: bridge.stored == [NEW_CHAT])
+    assert bridge.errors() == []
+
+    bridge.prime.tui_root = ROOT_ID
+
+    await eventually(lambda: bridge.error_codes() == ["prime_terminal_detached"])
+    assert _patched_ids(bridge) == [NEW_CHAT]
+
+
+async def test_the_chat_id_is_recorded_once_the_chat_has_a_message(bridge: Bridge) -> None:
+    await ready(bridge)
+    await asyncio.sleep(2 * TICK_S)
+    assert _patched_ids(bridge) == []
+    bridge.patch_faults.append(503)
+
+    bridge.prime.messages = [_user("first", 1)]
+
+    await eventually(lambda: bridge.stored == [NATIVE_ID])
+    bridge.prime.writers[-1].close()
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    await asyncio.sleep(2 * TICK_S)
+    assert _patched_ids(bridge) == [NATIVE_ID, NATIVE_ID]
+
+
+async def test_a_refused_identity_update_is_logged_and_not_retried(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
     await ready(bridge)
     bridge.stored[:] = ["01a14b3e-0000-0000-0000-000000000000"]
 
-    bridge.prime.writers[-1].close()
+    bridge.prime.messages = [_user("first", 1)]
 
-    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    await eventually(lambda: _patched_ids(bridge))
+    await asyncio.sleep(2 * TICK_S)
+    assert _patched_ids(bridge) == [NATIVE_ID]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("external_session_id" in w and "400" in w for w in warnings)
