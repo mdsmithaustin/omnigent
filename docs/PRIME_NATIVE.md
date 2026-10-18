@@ -296,14 +296,17 @@ records each original requirement and its remaining evidence.
 
 Prime 0.10 cannot load extensions. Omnigent starts it with a private daemon
 socket, and a bridge in the terminal wrapper attaches to the root session (RLM
-depth 0) that the TUI shows under the conversation's session directory. When
-`/new` or `/resume` in the TUI switches sessions, the bridge reattaches to the
-new one and posts its messages. It also sends that session's UUID, but the
-server keeps the first UUID it recorded. When Omnigent has to relaunch Prime,
-`omnigent prime-native --resume` reopens that recorded session. While the Prime
-terminal is still running, resume reattaches to it on whichever session it
-shows. Web messages are sent as steered prompts and appear in the TUI as normal
-user turns.
+depth 0) that the TUI shows under the conversation's session directory. One
+Omnigent session mirrors one Prime chat: the chat the bridge first attaches to,
+or on a resume launch the chat recorded as the session's UUID. When `/new` or
+`/resume` in the TUI moves to a different chat, the bridge mirrors nothing from
+it, keeps web messages queued, rejects model, effort, compact, and interrupt
+requests, and the conversation shows a notice to start a new session from the
+web UI or return to the original chat in the terminal. When the TUI returns to
+the original chat, the queued messages are delivered and a second notice says
+so. When Omnigent has to relaunch Prime, `omnigent prime-native --resume`
+reopens the recorded chat. Web messages are sent as steered prompts and appear
+in the TUI as normal user turns.
 Each web message reaches Prime at most once. If the daemon connection fails
 before Prime confirms a prompt, the conversation shows that the message may not
 have arrived, and it is not resent. Model, effort, compact, and interrupt map to
@@ -355,7 +358,7 @@ Prime 0.10 lacks these 0.9.x features:
   function policies that declare no phase, the launch logs a warning in the
   runner log, and the conversation shows a `native_policy_not_enforced` notice
   that names them. The agent that `omnigent prime-native` creates declares none.
-- The injected task list is not registered.
+- The injected task list is not registered, and is not planned: Prime 0.10 has no native todo tool or hooks.
 - An interrupt during a running tool may leave Prime's last stop reason
   `toolUse`, which the bridge reports as idle rather than interrupted. This is
   not yet observed on 0.10.
@@ -365,9 +368,9 @@ Prime 0.10 lacks these 0.9.x features:
   session events behind, for example while posts to Omnigent stall during a long
   reply, it drops those events, logs a warning in `bridge.log`, and reattaches.
   The reply then appears whole from the snapshot.
-- The TUI has no `/omnigent` command and no Omnigent status line or title. On
-  0.9.x the extension showed the conversation URL there. Use the `Web UI:` link
-  that `omnigent prime-native` prints before it attaches.
+- The TUI has no `/omnigent` command and no Omnigent status line or title, and
+  none is planned. On 0.9.x the extension showed the conversation URL there. Use
+  the `Web UI:` link that `omnigent prime-native` prints before it attaches.
 
 ## Remaining roadmap
 
