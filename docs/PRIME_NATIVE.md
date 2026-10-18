@@ -295,18 +295,24 @@ records each original requirement and its remaining evidence.
 ### Prime 0.10 daemon bridge
 
 Prime 0.10 cannot load extensions. Omnigent starts it with a private daemon
-socket, and a bridge in the terminal wrapper attaches to the root session (RLM
-depth 0) that the TUI shows under the conversation's session directory. One
-Omnigent session mirrors one Prime chat: the chat the bridge first attaches to,
-or on a resume launch the chat recorded as the session's UUID. When `/new` or
-`/resume` in the TUI moves to a different chat, the bridge mirrors nothing from
-it, keeps web messages queued, rejects model, effort, and compact requests
-(interrupt still stops a turn running in the original chat), and the conversation shows a notice to start a new session from the
-web UI or return to the original chat in the terminal. When the TUI returns to
-the original chat, the queued messages are delivered and a second notice says
-so. When Omnigent has to relaunch Prime, `omnigent prime-native --resume`
-reopens the recorded chat. Web messages are sent as steered prompts and appear
-in the TUI as normal user turns.
+socket, and a bridge in the terminal wrapper mirrors one root session (RLM
+depth 0) under the conversation's session directory. One Omnigent session
+mirrors one Prime chat: on a resume launch the chat recorded as the session's
+UUID, otherwise the chat the TUI shows. Until that chat has a message the
+bridge follows the TUI to a chat opened with `/new`, because Prime's `/resume`
+picker does not list empty chats. The bridge records the chat's UUID once the
+chat has a message. When `/new` or `/resume` in the TUI later moves to a
+different chat, the bridge keeps mirroring the original chat and nothing from
+the other one. It keeps web messages queued and rejects model, effort, and
+compact requests, though interrupt still stops a turn running in the original
+chat. The conversation shows a notice that the web session mirrors only its
+original chat, that `/resume` in the terminal returns to it, and that a chat
+started with `/new` is not shown on the web. While the `/resume` picker is
+open nothing changes, since the bridge cannot tell which chat will be picked.
+When the TUI returns to the original chat, the queued messages are delivered
+and a second notice says so. When Omnigent has to relaunch Prime, `omnigent
+prime-native --resume` reopens the recorded chat. Web messages are sent as
+steered prompts and appear in the TUI as normal user turns.
 Each web message reaches Prime at most once. If the daemon connection fails
 before Prime confirms a prompt, the conversation shows that the message may not
 have arrived, and it is not resent. Model, effort, compact, and interrupt map to
@@ -320,8 +326,8 @@ Prime's session UUID.
 
 The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
-reattaches and posts the messages it missed as whole messages, without streamed
-deltas. A turn that ended while the bridge was detached shows as idle, or as
+reattaches to the original chat, even while the TUI shows another one, and
+posts the messages it missed as whole messages, without streamed deltas. A turn that ended while the bridge was detached shows as idle, or as
 failed when it was aborted or ended in a model error. A turn that started while
 the bridge was detached shows as running. When Omnigent cannot be reached, the
 bridge retries each post briefly. At the end of the turn it reattaches and posts

@@ -56,11 +56,21 @@ Probe logs live outside the repo; each fact below was observed on 0.10.0 darwin-
 - `/new` in the TUI starts a separate runtime: a new `rlmDepth: 0` id with its own
   `sessionId`, and an attach to the old id receives nothing for it. `/resume` in
   the TUI, while the earlier runtime is still live, returns to that runtime's id.
-  `list` reports `attachedClients` per session, counting the TUI and any other
-  attached client, this bridge included, which shows the root the TUI is on.
   The server keeps `external_session_id` write-once and answers 400 to a
   different value, so a bridge that followed the TUI into another chat could not
   record that chat's id.
+- `list` reports `attachedClients` per root, counting the TUI and every other
+  attached client, this bridge included. No list field, command, or frame names
+  the root a given client is on: `get_connection_state` and `get_session_header`
+  are per session, a client that is not attached receives no frame when the TUI
+  switches, and the agent dir does not change. The count is the only signal.
+- While the `/resume` picker is open the TUI is attached to no root. Escape on
+  the picker exits Prime with status 0.
+- A chat with no messages stays listed with `lifecycle: "draft"` and
+  `messageCount: 0`, and the `/resume` picker omits it. `messageCount` grows
+  with the chat's messages.
+- A client that closes its connection is no longer counted in the next `list`
+  reply (3 of 3 tries).
 - `set_model` and `set_thinking_level` emit no event. `get_state` reflects them.
 - `compact` emits `compaction_start` and `compaction_end` (with `errorMessage` on failure).
 - `--resume <session UUID>` restores the conversation under a new runtime id;
@@ -84,32 +94,52 @@ reconcile(state, msgs,   pure; returns events for snapshot messages whose
                         that started while detached
                         (omnigent/harnesses/prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
-                        attach to the pinned chat's root, then a session loop
-                        (events -> POST /events) and one task per tick step:
-                        binding.json heartbeat, controls/requests -> daemon
-                        commands -> controls/results, inbox -> prompt (plus
-                        input_ready), and re-attach when the TUI returns on a
-                        new runtime of the pinned chat, or when posts failed,
-                        no agent loop is open, and the retry backoff has
-                        passed. The inbox checks the TUI's root before each
-                        prompt.
+                        attach to the pinned chat's root as soon as it is
+                        listed, then a session loop (events -> POST /events)
+                        and one task per tick step: binding.json heartbeat,
+                        controls/requests -> daemon commands ->
+                        controls/results, inbox -> prompt (plus input_ready),
+                        and a survey of the listing that re-attaches when the
+                        pinned chat is on another runtime or the pin moved,
+                        or when posts failed, no agent loop is open, and the
+                        retry backoff has passed. The inbox surveys again
+                        before each prompt.
                         The first beat claims binding.json while the
                         wrapper's owner claim names this process; after that
                         the beat, inbox, and control answers also require
                         binding.json to name this bridge.
-Pin                     the Prime sessionId this Omnigent session mirrors, set
-                        once (the saved id on a resume launch, else the first
-                        chat attached), plus `away` (the TUI shows another
-                        chat) and `owed` (the notice not yet posted).
+Pin                     the Prime sessionId this Omnigent session mirrors (the
+                        saved id on a resume launch, else the first chat seen),
+                        `held` (that chat has a message, or the launch resumed
+                        it), `away` (the TUI shows another chat), `shown` (the
+                        web was told so), and `episodes` (departures, to key
+                        the notices).
 ```
 
 ## `/new` and `/resume`
 
-One Omnigent session is one Prime chat. The bridge pins to the chat it first
-attaches to, or on a resume launch to the session's saved `external_session_id`
-(`main.py` writes it to `config.json` as `externalSessionId`). The key is Prime's
-`sessionId`, not the runtime id, so a `/resume` that returns on a new runtime of
-the same chat is still the pinned chat.
+One Omnigent session is one Prime chat. The key is Prime's `sessionId`, not the
+runtime id, so a `/resume` that returns on a new runtime of the same chat is
+still the pinned chat. On a resume launch the pin is the session's saved
+`external_session_id` (`main.py` writes it to `config.json` as
+`externalSessionId`) and holds from the start. Otherwise it is the first chat
+the bridge sees, and it follows the TUI to whatever chat the TUI shows until
+the pinned chat has a message (`messageCount` above 0 in the listing). Prime's
+`/resume` picker omits empty chats, so an empty pin left by `/new` could never
+be returned to.
+
+The bridge mirrors the pinned chat whenever the daemon lists it, wherever the
+TUI is, so a reconnect while the TUI is away still mirrors the pinned chat's
+turns and interrupt still reaches it. The TUI's location only gates web
+messages and the model, effort and compact controls, and drives the notices.
+
+The TUI's location comes from `attachedClients`, the only signal Prime 0.10
+gives. A root shows the TUI only on positive evidence: a client besides this
+bridge. The bridge attaches only to the pinned chat, so a client on any other
+chat is the TUI, and that wins over a count on the pinned chat. When no root has
+such a client, as while the `/resume` picker is open, the bridge keeps the last
+state. A return is therefore seen only once the TUI is attached to the pinned
+chat again.
 
 When the TUI shows another chat, the bridge:
 
@@ -122,19 +152,27 @@ When the TUI shows another chat, the bridge:
 - keeps the binding and its heartbeat, since the process and the daemon are
   still this session's, and a control should get that reason instead of "no
   live binding";
-- posts one info-level error item, code `prime_terminal_detached`, telling the
-  user to start a new session from the web UI or return to the original chat.
-  The notice is a durable transcript item, so it cannot be withdrawn. When the TUI
-  returns, a `prime_terminal_returned` item follows. A return before the first
-  notice posts neither. Both are keyed by bridge incarnation and departure, so a
-  re-post is idempotent.
+- posts one info-level error item, code `prime_terminal_detached`, saying that
+  this web session mirrors only its original chat, that the user can return to
+  it in the terminal (for example with `/resume`), and that a chat started with
+  `/new` in this terminal is not shown on the web. A new web session would start
+  another Prime chat, so it cannot show the other chat either. When the TUI
+  returns, a `prime_terminal_returned` item follows.
 
-A refused `external_session_id` update is logged as a warning. The identity
-update itself is unchanged: it carries the pinned id, which the server accepts.
+The notices follow from `away` and `shown`: a post that does not reach Omnigent
+is tried again at the next survey, and a return before the away notice lands
+posts neither. The notice is a durable transcript item, so it cannot be
+withdrawn. Both are keyed by bridge incarnation and departure, so a re-post is
+idempotent.
 
-Inferred, not observed: a stale client count on the pinned chat right after a
-reconnect could read as a return for about 30 ms, and a poll in that window would
-post a returned notice and then a new detached one.
+`external_session_id` is set once the pin holds, retried at each survey while
+Omnigent is unreachable or answers 5xx, and not sent again after it is accepted
+or refused. A refusal is logged as a warning. A resume launch sends none, since
+the saved id is already set.
+
+Observed on 0.10.0: before this rule, opening the `/resume` picker from another
+chat read as a return, since the pinned chat then showed only the bridge. Not
+observed: a stale count on a root after a client leaves it.
 
 ### Rejected: rotation
 
