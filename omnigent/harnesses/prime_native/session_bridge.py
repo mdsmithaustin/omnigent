@@ -21,9 +21,9 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -56,6 +56,41 @@ _STATUS = "external_session_status"
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
+Notice = Literal["detached", "returned"]
+_AWAY_DETAIL = (
+    "The terminal is on a different Prime chat than this web session mirrors. "
+    "Return to the original chat in the terminal."
+)
+
+
+@dataclass
+class Pin:
+    """
+    The one Prime chat this Omnigent session mirrors, and whether the terminal shows it.
+
+    ``chat`` is Prime's stable sessionId: the saved id on a resume launch, else the first
+    chat attached. ``away`` is true while the terminal shows another chat. ``owed`` is the
+    web notice not yet posted; ``episodes`` counts departures so each notice has its own key.
+    """
+
+    chat: str | None = None
+    away: bool = False
+    owed: Notice | None = None
+    episodes: int = 0
+
+    def observe(self, shown: object) -> bool:
+        """Record the chat the terminal shows; ``True`` when it is the pinned one."""
+        if self.chat is None:
+            self.chat = shown if isinstance(shown, str) else None
+        away = shown != self.chat
+        if away != self.away:
+            self.away = away
+            if away:
+                self.episodes += 1
+                self.owed = "detached"
+            else:
+                self.owed = None if self.owed == "detached" else "returned"
+        return not away
 
 
 def _now_ms() -> float:
@@ -87,6 +122,8 @@ class SessionBridge:
         )
         self._inbox = Path(config["inboxDir"])
         self._policy_notice: str | None = config.get("policyNotice")
+        saved = config.get("externalSessionId")
+        self._pin = Pin(chat=saved if isinstance(saved, str) and saved else None)
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -103,7 +140,7 @@ class SessionBridge:
         # Ids of consumed inbox messages, oldest first, so a re-read file is not prompted twice.
         self._delivered: dict[str, None] = {}
         self._settings_lock = asyncio.Lock()
-        self._attached = asyncio.Event()
+        self._started = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -135,7 +172,7 @@ class SessionBridge:
         while True:
             try:
                 async with await DaemonClient.connect(self._socket_path) as client:
-                    root = await self._root_session(client)
+                    root = await self._pinned_root(client)
                     await self._attach(client, root, post_history=not first_attach)
                     first_attach, last_failure = False, ""
                     async for envelope in client.events():
@@ -156,14 +193,43 @@ class SessionBridge:
                 self._client = None
             await asyncio.sleep(_TICK_S)
 
-    async def _root_session(self, client: DaemonClient) -> dict[str, Any]:
+    async def _pinned_root(self, client: DaemonClient) -> dict[str, Any]:
+        """Wait for the terminal to show the pinned chat, noting when it shows another."""
         waiting = False
-        while (root := self._tui_root(await client.command("list"))) is None:
-            if not waiting:
-                waiting = True
-                _logger.info("Waiting for a Prime root session under %s", self._paths.session_dir)
+        while True:
+            root = self._tui_root(await client.command("list"))
+            if root is None:
+                if not waiting:
+                    waiting = True
+                    _logger.info(
+                        "Waiting for a Prime root session under %s", self._paths.session_dir
+                    )
+            elif await self._track(root):
+                return root
+            else:
+                # Away: still claim the binding so controls get a clear answer.
+                self._started.set()
             await asyncio.sleep(_TICK_S)
-        return root
+
+    async def _track(self, root: dict[str, Any]) -> bool:
+        """Update the pin from the terminal's *root*, post any notice owed, return if pinned."""
+        was_away = self._pin.away
+        on_pin = self._pin.observe(root.get("sessionId"))
+        if self._pin.away != was_away:
+            _logger.info(
+                "Prime TUI %s the chat this session mirrors",
+                "left" if self._pin.away else "returned to",
+            )
+        await self._announce()
+        return on_pin
+
+    async def _announce(self) -> None:
+        notice, self._pin.owed = self._pin.owed, None
+        if notice is None:
+            return
+        key = f"{self._incarnation}:{self._pin.episodes}"
+        if await self._post(_pin_notice(notice, key)) is None and self._pin.owed is None:
+            self._pin.owed = notice
 
     def _tui_root(self, listing: dict[str, Any]) -> dict[str, Any] | None:
         """
@@ -195,7 +261,9 @@ class SessionBridge:
             root = self._tui_root(await client.command("list"))
         except DaemonClosedError:
             return
-        if root is not None and root.get("id") != self._session:
+        if root is None:
+            return
+        if await self._track(root) and root.get("id") != self._session:
             _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
             await client.close()
 
@@ -210,12 +278,21 @@ class SessionBridge:
         native_id = root.get("sessionId")
         if isinstance(native_id, str) and native_id:
             # Prime resumes by this stable UUID; the runtime id changes on every resume.
-            with contextlib.suppress(httpx.HTTPError):
-                await self._http.patch(
+            try:
+                response = await self._http.patch(
                     self._session_url,
                     json={"external_session_id": native_id},
                     headers=self._headers(),
                 )
+            except httpx.HTTPError as exc:
+                _logger.warning("Could not record Prime session %s: %r", native_id, exc)
+            else:
+                if not response.is_success:
+                    _logger.warning(
+                        "Omnigent refused external_session_id %s: %s",
+                        native_id,
+                        response.status_code,
+                    )
         snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
         # The first attach after launch replays history Omnigent already holds.
         self._transcript, history = reconcile(
@@ -234,7 +311,7 @@ class SessionBridge:
         else:
             self._repost_delay = _REPOST_FIRST_S
         self._client, self._session = client, session
-        self._attached.set()
+        self._started.set()
         _logger.info("Attached to Prime session %s (%s)", session, native_id)
         await self._publish_settings(snapshot.get("state", {}))
         with contextlib.suppress(DaemonCommandError):
@@ -276,7 +353,7 @@ class SessionBridge:
         return published
 
     async def _every_tick(self, step: Callable[[], Awaitable[None]]) -> None:
-        await self._attached.wait()
+        await self._started.wait()
         last_failure = ""
         while True:
             try:
@@ -294,7 +371,7 @@ class SessionBridge:
 
     async def _deliver_inbox(self) -> None:
         client = self._client
-        if client is None or not self._owns_binding():
+        if client is None or self._pin.away or not self._owns_binding():
             return
         ready = self._paths.root / "input_ready"
         if not ready.exists():
@@ -313,7 +390,7 @@ class SessionBridge:
                 path.unlink(missing_ok=True)
                 continue
             await self._follow_tui()
-            if client.closed:
+            if client.closed or self._pin.away:
                 return
             try:
                 # Steer joins a running turn and starts one when idle.
@@ -425,6 +502,8 @@ class SessionBridge:
         client = self._client
         if handler is None:
             return {"status": "rejected", "detail": "Unsupported Prime control"}
+        if self._pin.away:
+            return {"status": "rejected", "detail": _AWAY_DETAIL}
         if client is None:
             return {"status": "unavailable", "detail": "Prime daemon is not attached"}
         try:
@@ -569,6 +648,43 @@ def _policy_notice(message: str) -> Event:
                 "message": message,
             },
             "source_id": "prime:policy-notice",
+        },
+    }
+
+
+_PIN_NOTICES: dict[Notice, tuple[str, str, str]] = {
+    "detached": (
+        "prime_terminal_detached",
+        "Terminal moved to another Prime chat",
+        "The terminal switched to a Prime chat that this web session does not mirror. "
+        "Its messages will not appear here, and messages sent from the web wait until the "
+        "terminal returns. Start a new session from the web UI for the other chat, or "
+        "return to the original chat in the terminal.",
+    ),
+    "returned": (
+        "prime_terminal_returned",
+        "Terminal is back on this chat",
+        "The terminal returned to the Prime chat this web session mirrors. "
+        "Messages sent from the web are delivered again.",
+    ),
+}
+
+
+def _pin_notice(notice: Notice, key: str) -> Event:
+    code, title, message = _PIN_NOTICES[notice]
+    return {
+        "type": "external_conversation_item",
+        "data": {
+            "response_id": f"prime-pin-{notice}-{key}",
+            "item_type": "error",
+            "item_data": {
+                "source": "execution",
+                "code": code,
+                "level": "info",
+                "title": title,
+                "message": message,
+            },
+            "source_id": f"prime:pin:{notice}:{key}",
         },
     }
 
