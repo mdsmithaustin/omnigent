@@ -993,6 +993,19 @@ async def test_the_chat_id_is_recorded_once_the_chat_has_a_message(
     assert _patched_ids(bridge) == [NATIVE_ID, NATIVE_ID]
 
 
+async def test_a_failing_chat_id_record_backs_off_between_attempts(bridge: Bridge) -> None:
+    await ready(bridge)
+    bridge.patch_faults.extend([503, 503])
+
+    bridge.prime.messages = [_user("first", 1)]
+
+    await eventually(lambda: _patched_ids(bridge))
+    await asyncio.sleep(3 * TICK_S)
+    assert _patched_ids(bridge) == [NATIVE_ID]
+    await eventually(lambda: bridge.stored == [NATIVE_ID])
+    assert _patched_ids(bridge) == [NATIVE_ID] * 3
+
+
 async def test_a_listing_without_message_counts_records_the_first_chat(
     bridge: Bridge,
 ) -> None:
