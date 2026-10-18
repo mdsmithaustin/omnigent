@@ -840,6 +840,11 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
     assert refused.status == ControlStatus.REJECTED
     assert "different Prime chat" in refused.detail
     assert bridge.prime.sent("compact") == []
+    bridge.prime.state["isStreaming"] = True
+    stopped = await binding.execute(Interrupt())
+    bridge.prime.state["isStreaming"] = False
+    assert stopped.status == ControlStatus.INTERRUPT_ACCEPTED
+    assert [c["activeSessionId"] for c in bridge.prime.sent("abort")] == [ROOT_ID]
 
     bridge.prime.tui_root = ROOT_ID
 
