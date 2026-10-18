@@ -66,11 +66,10 @@ class FakePrime:
     suspended: bool = False
     commands: list[dict[str, Any]] = field(default_factory=list)
     writers: list[asyncio.StreamWriter] = field(default_factory=list)
-    tui_root: str = ROOT_ID
+    # None while the TUI shows no chat, as in the /resume picker.
+    tui_root: str | None = ROOT_ID
     attached: dict[asyncio.StreamWriter, str] = field(default_factory=dict)
     new_roots: list[dict[str, Any]] = field(default_factory=list)
-    # Clients the daemon still counts after they detached.
-    lingering: list[str] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
         foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
@@ -79,7 +78,7 @@ class FakePrime:
         child["sessionFile"] = str(self.session_dir / "child.jsonl")
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
         roots = [root, *self.new_roots]
-        viewers = [*self.attached.values(), self.tui_root, *self.lingering]
+        viewers = [*self.attached.values(), self.tui_root]
         for session in roots:
             session["attachedClients"] = viewers.count(session["id"])
         return [foreign, child, *roots]
@@ -830,7 +829,13 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
 
     assert [e["item_data"]["code"] for e in notice] == ["prime_terminal_detached"]
     assert notice[0]["item_data"]["level"] == "info"
-    assert "Start a new session from the web UI" in notice[0]["item_data"]["message"]
+    assert notice[0]["item_data"]["message"] == (
+        "The terminal switched to another Prime chat. This web session mirrors only its "
+        "original chat, so the other chat's messages do not appear here, and messages sent "
+        "from the web wait until the terminal returns. To continue here, return to the "
+        "original chat in the terminal, for example with /resume. A chat started with /new "
+        "in this terminal is not shown on the web."
+    )
     assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
     assert _patched_ids(bridge) == [NATIVE_ID]
     assert _message_texts(bridge) == []
@@ -846,6 +851,12 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
     assert stopped.status == ControlStatus.INTERRUPT_ACCEPTED
     assert [c["activeSessionId"] for c in bridge.prime.sent("abort")] == [ROOT_ID]
 
+    bridge.prime.tui_root = None
+    await asyncio.sleep(4 * TICK_S)
+
+    assert bridge.error_codes() == ["prime_terminal_detached"]
+    assert bridge.prime.sent("prompt") == []
+
     bridge.prime.tui_root = ROOT_ID
 
     await eventually(lambda: not list((bridge.paths.root / "inbox").iterdir()))
@@ -858,28 +869,23 @@ async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
-async def test_a_dropped_connection_while_away_reattaches_only_to_the_original_chat(
+async def test_a_dropped_connection_while_away_reattaches_to_the_original_chat(
     bridge: Bridge,
 ) -> None:
-    await ready(bridge)
+    binding = await ready(bridge)
     other = _chat(bridge)
     bridge.prime.tui_root = other["id"]
     await eventually(bridge.errors)
     bridge.prime.messages = [_user("said in the original chat", 12)]
-    bridge.prime.lingering.append(ROOT_ID)
+    bridge.prime.state["isStreaming"] = True
 
     bridge.prime.writers[-1].close()
-    await asyncio.sleep(4 * TICK_S)
 
-    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
-    assert bridge.error_codes() == ["prime_terminal_detached"]
-
-    bridge.prime.lingering.clear()
-    bridge.prime.tui_root = ROOT_ID
-
-    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
     assert await eventually(lambda: _message_texts(bridge)) == ["said in the original chat"]
     assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, ROOT_ID]
+    stopped = await binding.execute(Interrupt())
+    assert stopped.status == ControlStatus.INTERRUPT_ACCEPTED
+    assert bridge.error_codes() == ["prime_terminal_detached"]
 
 
 @pytest.mark.parametrize("bridge", [{"externalSessionId": NEW_CHAT}], indirect=True)
