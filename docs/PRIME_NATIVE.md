@@ -327,9 +327,10 @@ Prime's session UUID.
 The daemon reports no event for a model or effort chosen in the TUI, so the web
 UI learns it when that turn ends. After a lost daemon connection the bridge
 reattaches to the original chat, even while the TUI shows another one, and
-posts the messages it missed as whole messages, without streamed deltas. A turn that ended while the bridge was detached shows as idle, or as
-failed when it was aborted or ended in a model error. A turn that started while
-the bridge was detached shows as running. When Omnigent cannot be reached, the
+posts the messages it missed as whole messages, without streamed deltas. A turn
+that ended while the bridge was detached shows as idle, or as failed when it was
+aborted or ended in a model error. A turn that started while the bridge was
+detached shows as running. When Omnigent cannot be reached, the
 bridge retries each post briefly. At the end of the turn it reattaches and posts
 the conversation items that did not arrive, and the session status if its latest
 post failed. If Omnigent is still unreachable, the bridge tries again while
@@ -364,7 +365,8 @@ Prime 0.10 lacks these 0.9.x features:
   function policies that declare no phase, the launch logs a warning in the
   runner log, and the conversation shows a `native_policy_not_enforced` notice
   that names them. The agent that `omnigent prime-native` creates declares none.
-- The injected task list is not registered, and is not planned: Prime 0.10 has no native todo tool or hooks.
+- The injected task list is not registered, and is not planned: Prime 0.10 has no
+  native todo tool or hooks.
 - An interrupt during a running tool may leave Prime's last stop reason
   `toolUse`, which the bridge reports as idle rather than interrupted. This is
   not yet observed on 0.10.

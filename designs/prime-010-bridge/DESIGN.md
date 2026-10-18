@@ -166,14 +166,15 @@ posts neither. The notice is a durable transcript item, so it cannot be
 withdrawn. Both are keyed by bridge incarnation and departure, so a re-post is
 idempotent.
 
-`external_session_id` is set once the pin holds, retried at each survey while
-Omnigent is unreachable or answers 5xx, and not sent again after it is accepted
-or refused. A refusal is logged as a warning. A resume launch sends none, since
-the saved id is already set.
+`external_session_id` is set once the pin holds and retried at each survey with
+the current auth headers until Omnigent accepts it or refuses the id itself, with
+400 (invalid or already set) or 409. Any other answer is retried, including a 401
+from a bearer that expired while the web was idle. A refusal is logged as a
+warning. A resume launch sends none, since the saved id is already set.
 
-Observed on 0.10.0: before this rule, opening the `/resume` picker from another
-chat read as a return, since the pinned chat then showed only the bridge. Not
-observed: a stale count on a root after a client leaves it.
+Observed on 0.10.0: opening the `/resume` picker from another chat leaves the
+pinned chat with only the bridge attached, which is not a return. Not observed:
+a stale count on a root after a client leaves it.
 
 ### Rejected: rotation
 
@@ -218,6 +219,10 @@ Observed on 0.10.0: no approval prompt in the TUI, and a denied call raises
 - Events missed during a disconnect are recovered as whole messages, without deltas.
   When 1024 events wait unread, the daemon client logs a warning, drops them, and
   closes the connection, so they are recovered the same way.
+- If the saved chat's session file is deleted, Prime opens the picker with no
+  root, so the pinned chat is never listed and the terminal cannot return to it.
+  A chat started there reads as the terminal having moved, and the notice points
+  at a chat that no longer exists.
 
 ## Won't do on 0.10
 
