@@ -70,6 +70,7 @@ class FakePrime:
     tui_root: str | None = ROOT_ID
     attached: dict[asyncio.StreamWriter, str] = field(default_factory=dict)
     new_roots: list[dict[str, Any]] = field(default_factory=list)
+    lists_message_counts: bool = True
 
     def sessions(self) -> list[dict[str, Any]]:
         foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
@@ -83,6 +84,8 @@ class FakePrime:
         for session in roots:
             session["attachedClients"] = viewers.count(session["id"])
             session.setdefault("messageCount", 0)
+            if not self.lists_message_counts:
+                del session["messageCount"]
         return [foreign, child, *roots]
 
     def reply(self, command: dict[str, Any]) -> dict[str, Any]:
@@ -956,6 +959,16 @@ async def test_the_chat_id_is_recorded_once_the_chat_has_a_message(bridge: Bridg
     await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
     await asyncio.sleep(2 * TICK_S)
     assert _patched_ids(bridge) == [NATIVE_ID, NATIVE_ID]
+
+
+async def test_a_listing_without_message_counts_records_the_first_chat(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.lists_message_counts = False
+
+    await ready(bridge)
+
+    await eventually(lambda: bridge.stored == [NATIVE_ID])
 
 
 async def test_a_refused_identity_update_is_logged_and_not_retried(
