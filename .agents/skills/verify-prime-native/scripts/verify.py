@@ -318,6 +318,16 @@ def keep_bridge_log(session: str, runtime: Path, evidence: Path) -> None:
             shutil.copy(root / "bridge.log", evidence / "bridge.log")
 
 
+def keep_switch_evidence(
+    client: httpx.Client, session: str, runtime: Path, evidence: Path
+) -> None:
+    """Keep the session's items and bridge.log, whether or not the chat switch passed."""
+    with contextlib.suppress(httpx.HTTPError, OSError, ValueError):
+        items = client.get(f"/v1/sessions/{session}/items")
+        (evidence / "switch-items.json").write_text(json.dumps(items.json(), indent=2))
+    keep_bridge_log(session, runtime, evidence)
+
+
 def new_chat_before_any_message(
     client: httpx.Client, session: str, runtime: Path, evidence: Path
 ) -> tuple[Path, str]:
@@ -374,7 +384,6 @@ def switch_chats(
     session: str,
     metadata: dict,
     evidence: Path,
-    runtime: Path,
     original_prompt: str,
 ) -> None:
     """Move the terminal to a new Prime chat and back; the web session must stay on its chat."""
@@ -432,7 +441,6 @@ def switch_chats(
     wait_for(lambda: notices("prime_terminal_returned") == 1, "the return notice")
     wait_for(lambda: replies() == 3, "the queued message's reply")
     time.sleep(3)
-    (evidence / "switch-items.json").write_text(json.dumps(items(), indent=2))
     if (
         replies() != 3
         or json.dumps(items()).count(prompt) != 1
@@ -444,7 +452,6 @@ def switch_chats(
     if notices("prime_terminal_detached") != 1 or notices("prime_terminal_returned") != 1:
         raise RuntimeError("The chat-switch notices were not posted exactly once each")
     external_id_unchanged()
-    keep_bridge_log(session, runtime, evidence)
 
 
 def drive(
@@ -612,7 +619,10 @@ def drive(
                 resource.raise_for_status()
                 metadata = resource.json()["metadata"]
                 if daemon_bridge:
-                    switch_chats(client, session, metadata, evidence, runtime, prompt)
+                    try:
+                        switch_chats(client, session, metadata, evidence, prompt)
+                    finally:
+                        keep_switch_evidence(client, session, runtime, evidence)
                 else:
                     print("SKIP chat switch: Prime 0.9.x runs the extension adapter")
                 before = sorted(process.pid for process in owned_prime_processes(runtime))
