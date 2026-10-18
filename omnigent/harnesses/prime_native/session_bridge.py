@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -53,8 +53,11 @@ _REPOST_MAX_S = 30.0
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
 _STATUS = "external_session_status"
-# The statuses that mean the server refused the id itself: invalid input, or already set.
+# The statuses that mean the server refused the id itself: 400 for an invalid id or one that
+# differs from the id already set, 409 for a conflict.
 _VALUE_REFUSED = (400, 409)
+# The statuses that mean the server refused the event itself; any other failure may pass later.
+_EVENT_REFUSED = (400, 413, 422)
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
@@ -102,6 +105,33 @@ class Pin:
         return any(root.get("messageCount", 1) for root in roots if root["sessionId"] == self.chat)
 
 
+@dataclass
+class Backoff:
+    """The wait before a failed request is tried again: 1 s, doubling to 30 s."""
+
+    at: float = 0.0
+    delay: float = field(default_factory=lambda: _REPOST_FIRST_S)
+
+    def ready(self) -> bool:
+        return time.monotonic() >= self.at
+
+    def failed(self) -> None:
+        self.at = time.monotonic() + self.delay
+        self.delay = min(2 * self.delay, _REPOST_MAX_S)
+
+    def succeeded(self) -> None:
+        self.delay = _REPOST_FIRST_S
+
+
+def _retryable(status: int) -> bool:
+    return status in (408, 429) or status >= 500
+
+
+def _notice_pending(status: int) -> bool:
+    """A notice must land, so only a success or a refusal of the event settles it."""
+    return not 200 <= status < 300 and status not in _EVENT_REFUSED
+
+
 def _now_ms() -> float:
     return time.time() * 1000
 
@@ -137,8 +167,8 @@ class SessionBridge:
         # The server keeps external_session_id write-once, and a resume launch's is already set.
         self._recorded = saved is not None
         self._record_failure = ""
-        self._record_at = 0.0
-        self._record_delay = _REPOST_FIRST_S
+        self._record_backoff = Backoff()
+        self._notice_backoff = Backoff()
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -271,19 +301,20 @@ class SessionBridge:
     async def _announce(self) -> None:
         """Post the notice that brings the web up to date with where the terminal is."""
         pin = self._pin
-        if pin.away == pin.shown:
+        if pin.away == pin.shown or not self._notice_backoff.ready():
             return
         notice: Notice = "detached" if pin.away else "returned"
-        # A lost post is retried at the next survey; the repeat carries the same key.
-        if (
-            await self._post(_pin_notice(notice, f"{self._incarnation}:{pin.episodes}"))
-            is not None
-        ):
-            pin.shown = notice == "detached"
+        # A lost post is retried with backoff; the repeat carries the same key.
+        event = _pin_notice(notice, f"{self._incarnation}:{pin.episodes}")
+        if await self._post(event, retry=_notice_pending) is None:
+            self._notice_backoff.failed()
+            return
+        self._notice_backoff.succeeded()
+        pin.shown = notice == "detached"
 
     async def _record(self) -> None:
         """Store the pinned chat's id on the Omnigent session once the pin holds."""
-        if self._recorded or not self._pin.held or time.monotonic() < self._record_at:
+        if self._recorded or not self._pin.held or not self._record_backoff.ready():
             return
         try:
             # Prime resumes by this stable UUID; the runtime id changes on every resume.
@@ -305,10 +336,9 @@ class SessionBridge:
                     )
                 return
             failure = str(response.status_code)
-        # Any other answer, such as a stale bearer's 401, may pass later. Retried with
-        # backoff and the current headers, so only a changed failure is logged.
-        self._record_at = time.monotonic() + self._record_delay
-        self._record_delay = min(2 * self._record_delay, _REPOST_MAX_S)
+        # Any other answer, such as a stale bearer's 401, may pass later; the retry uses the
+        # current headers. Log a failure only when it changes.
+        self._record_backoff.failed()
         if failure != self._record_failure:
             self._record_failure = failure
             _logger.warning("Could not record Prime session %s: %s", self._pin.chat, failure)
@@ -622,9 +652,11 @@ class SessionBridge:
                 self._transcript = replace(self._transcript, posted=posted)
                 self._unposted = True
 
-    async def _post(self, event: Event) -> bool | None:
+    async def _post(
+        self, event: Event, *, retry: Callable[[int], bool] = _retryable
+    ) -> bool | None:
         """
-        POST one event, retrying while the server is unreachable.
+        POST one event, retrying while the server is unreachable or *retry* holds for its status.
 
         :returns: ``True`` once accepted, ``False`` when the server rejects it,
             ``None`` when it stayed unreachable.
@@ -638,7 +670,7 @@ class SessionBridge:
                 )
             except httpx.HTTPError:
                 response = None
-            if response is not None and not _retryable(response.status_code):
+            if response is not None and not retry(response.status_code):
                 if self._unreachable:
                     self._unreachable = False
                     _logger.info("Prime bridge reaches Omnigent again")
@@ -673,10 +705,6 @@ _CONTROLS: dict[
 def _clients(root: Root) -> int:
     clients = root.get("attachedClients")
     return clients if isinstance(clients, int) else 0
-
-
-def _retryable(status: int) -> bool:
-    return status in (408, 429) or status >= 500
 
 
 def _policy_notice(message: str) -> Event:
