@@ -146,6 +146,8 @@ class Bridge:
     requests: list[httpx.Request]
     stop: Callable[[], Awaitable[None]]
     outage: list[int]
+    # The Omnigent session's external_session_id; the server keeps it write-once.
+    stored: list[str]
 
     def posted(self) -> list[dict[str, Any]]:
         return [json.loads(r.content) for r in self.requests if r.url.path.endswith("/events")]
@@ -162,6 +164,9 @@ class Bridge:
 
     def errors(self) -> list[dict[str, Any]]:
         return [e["data"] for e in self.posted() if e["data"].get("item_type") == "error"]
+
+    def error_codes(self) -> list[str]:
+        return [error["item_data"]["code"] for error in self.errors()]
 
 
 async def eventually(check: Callable[[], Any], timeout: float = 5.0) -> Any:
@@ -214,14 +219,21 @@ def _stage_request(controls: Path, request: dict[str, Any]) -> Path:
 
 @pytest.fixture
 async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterator[Bridge]:
-    paths = _runtime(tmp_path / "runtime", "http://omnigent.test", **getattr(request, "param", {}))
+    config = getattr(request, "param", {})
+    paths = _runtime(tmp_path / "runtime", "http://omnigent.test", **config)
     requests: list[httpx.Request] = []
     outage: list[int] = []
+    stored = [config["externalSessionId"]] if "externalSessionId" in config else []
 
     def record(request: httpx.Request) -> httpx.Response:
         if outage and request.url.path.endswith("/events"):
             return httpx.Response(outage.pop(0))
         requests.append(request)
+        if request.method == "PATCH":
+            chosen = json.loads(request.content)["external_session_id"]
+            if stored and stored[0] != chosen:
+                return httpx.Response(400, json={"detail": "external_session_id is already set"})
+            stored[:] = [chosen]
         return httpx.Response(200, json={})
 
     prime = FakePrime(paths.session_dir)
@@ -237,7 +249,7 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
         await asyncio.wait_for(running, 5)
 
     try:
-        yield Bridge(paths, prime, requests, shutdown, outage)
+        yield Bridge(paths, prime, requests, shutdown, outage, stored)
     finally:
         await shutdown()
         server.close()
@@ -773,68 +785,129 @@ async def test_an_item_the_server_rejects_does_not_force_a_reattach(bridge: Brid
     assert len(bridge.prime.sent("attach")) == 1
 
 
-async def _right_after_a_root_check(bridge: Bridge) -> None:
-    checks = len(bridge.prime.sent("list"))
-    while len(bridge.prime.sent("list")) == checks:
-        await asyncio.sleep(0.001)
+NEW_CHAT = "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8"
 
 
-async def test_a_stale_client_count_on_the_old_root_does_not_pull_the_bridge_back(
-    bridge: Bridge,
-) -> None:
-    await ready(bridge)
-    fresh = {
-        "id": "dddddddddddd",
+def _chat(bridge: Bridge, session_id: str = NEW_CHAT, runtime_id: str = "dddddddddddd") -> dict:
+    root = {
+        "id": runtime_id,
         "rlmDepth": 0,
-        "sessionId": "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8",
-        "sessionFile": str(
-            bridge.paths.session_dir / "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8.jsonl"
-        ),
+        "sessionId": session_id,
+        "sessionFile": str(bridge.paths.session_dir / f"{session_id}.jsonl"),
     }
-    bridge.prime.new_roots.append(fresh)
-    bridge.prime.tui_root = fresh["id"]
-    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
-
-    bridge.prime.lingering.append(ROOT_ID)
-    await asyncio.sleep(4 * TICK_S)
-
-    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, fresh["id"]]
+    bridge.prime.new_roots.append(root)
+    return root
 
 
-async def test_the_bridge_follows_the_terminal_into_a_new_session(
+def _message_texts(bridge: Bridge) -> list[str]:
+    return [
+        event["data"]["item_data"]["content"][0]["text"]
+        for event in bridge.posted()
+        if event["type"] == "external_conversation_item"
+        and event["data"]["item_type"] == "message"
+    ]
+
+
+def _patched_ids(bridge: Bridge) -> list[str]:
+    return [
+        json.loads(r.content)["external_session_id"]
+        for r in bridge.requests
+        if r.method == "PATCH"
+    ]
+
+
+async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
-    await ready(bridge)
-    fresh = {
-        "id": "dddddddddddd",
-        "rlmDepth": 0,
-        "sessionId": "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8",
-        "sessionFile": str(
-            bridge.paths.session_dir / "01a14b3e-b41c-73fd-856d-c1b3cc28c6b8.jsonl"
-        ),
-    }
-    bridge.prime.messages = [_user("in the new session", 11)]
-    bridge.prime.new_roots.append(fresh)
-    await _right_after_a_root_check(bridge)
+    binding = await ready(bridge)
+    other = _chat(bridge)
+    bridge.prime.messages = [_user("in the other chat", 11)]
+    bridge.prime.tui_root = other["id"]
+    enqueue_user_message(bridge.paths.root, "sent while away")
 
-    bridge.prime.tui_root = fresh["id"]
-    enqueue_user_message(bridge.paths.root, "sent right after /new")
+    notice = await eventually(bridge.errors)
+    await asyncio.sleep(4 * TICK_S)
 
-    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
-    items = await eventually(
-        lambda: [e for e in bridge.posted() if e["type"] == "external_conversation_item"]
-    )
-    await asyncio.sleep(3 * TICK_S)
-    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, fresh["id"]]
-    assert items[0]["data"]["item_data"]["content"][0]["text"] == "in the new session"
-    patches = [json.loads(r.content) for r in bridge.requests if r.method == "PATCH"]
-    assert patches[-1] == {"external_session_id": fresh["sessionId"]}
-    assert [(c["activeSessionId"], c["message"]) for c in bridge.prime.sent("prompt")] == [
-        (fresh["id"], "sent right after /new")
-    ]
+    assert [e["item_data"]["code"] for e in notice] == ["prime_terminal_detached"]
+    assert notice[0]["item_data"]["level"] == "info"
+    assert "start a new session from the web UI" in notice[0]["item_data"]["message"].lower()
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
+    assert _patched_ids(bridge) == [NATIVE_ID]
+    assert _message_texts(bridge) == []
+    assert bridge.prime.sent("prompt") == []
+    assert len(list((bridge.paths.root / "inbox").iterdir())) == 1
+    refused = await binding.execute(Compact())
+    assert refused.status == ControlStatus.REJECTED
+    assert "different Prime chat" in refused.detail
+    assert bridge.prime.sent("compact") == []
 
     bridge.prime.tui_root = ROOT_ID
 
-    await eventually(lambda: len(bridge.prime.sent("attach")) == 3)
-    assert bridge.prime.sent("attach")[-1]["activeSessionId"] == ROOT_ID
+    await eventually(lambda: not list((bridge.paths.root / "inbox").iterdir()))
+    assert [(c["activeSessionId"], c["message"]) for c in bridge.prime.sent("prompt")] == [
+        (ROOT_ID, "sent while away")
+    ]
+    await eventually(
+        lambda: bridge.error_codes() == ["prime_terminal_detached", "prime_terminal_returned"]
+    )
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+async def test_a_dropped_connection_while_away_reattaches_only_to_the_original_chat(
+    bridge: Bridge,
+) -> None:
+    await ready(bridge)
+    other = _chat(bridge)
+    bridge.prime.tui_root = other["id"]
+    await eventually(bridge.errors)
+    bridge.prime.messages = [_user("said in the original chat", 12)]
+    bridge.prime.lingering.append(ROOT_ID)
+
+    bridge.prime.writers[-1].close()
+    await asyncio.sleep(4 * TICK_S)
+
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
+    assert bridge.error_codes() == ["prime_terminal_detached"]
+
+    bridge.prime.lingering.clear()
+    bridge.prime.tui_root = ROOT_ID
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    assert await eventually(lambda: _message_texts(bridge)) == ["said in the original chat"]
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID, ROOT_ID]
+
+
+@pytest.mark.parametrize("bridge", [{"externalSessionId": NEW_CHAT}], indirect=True)
+async def test_a_resumed_launch_mirrors_only_the_saved_chat(bridge: Bridge) -> None:
+    saved = _chat(bridge)
+
+    notice = await eventually(bridge.errors)
+    await asyncio.sleep(2 * TICK_S)
+
+    assert [e["item_data"]["code"] for e in notice] == ["prime_terminal_detached"]
+    assert bridge.prime.sent("attach") == []
+    assert _patched_ids(bridge) == []
+    assert await PrimeExtensionBinding(bridge.paths.root).wait_until_ready()
+
+    bridge.prime.tui_root = saved["id"]
+
+    await eventually(
+        lambda: [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [saved["id"]]
+    )
+    await eventually(
+        lambda: bridge.error_codes() == ["prime_terminal_detached", "prime_terminal_returned"]
+    )
+    assert bridge.stored == [NEW_CHAT]
+
+
+async def test_a_refused_identity_update_is_logged(
+    bridge: Bridge, caplog: pytest.LogCaptureFixture
+) -> None:
+    await ready(bridge)
+    bridge.stored[:] = ["01a14b3e-0000-0000-0000-000000000000"]
+
+    bridge.prime.writers[-1].close()
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("external_session_id" in w and "400" in w for w in warnings)
