@@ -23,6 +23,7 @@ import pexpect
 import psutil
 import yaml
 
+from omnigent.harnesses.prime_native.bridge import bridge_roots
 from omnigent.harnesses.prime_native.process import MINIMUM_VERSION, meets_minimum_version
 
 REPO = Path(__file__).resolve().parents[4]
@@ -278,6 +279,106 @@ def write_prime_config(runtime: Path, model: ThreadingHTTPServer) -> None:
     )
 
 
+def tmux(metadata: dict, *args: str) -> str:
+    return subprocess.run(
+        ["tmux", "-S", metadata["tmux_socket"], *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    ).stdout
+
+
+def pane(metadata: dict) -> str:
+    return tmux(metadata, "capture-pane", "-p", "-t", metadata["tmux_target"])
+
+
+def type_into_prime(metadata: dict, text: str, *, submit: bool = True) -> None:
+    tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "-l", text)
+    if submit:
+        tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
+
+
+def keep_bridge_log(session: str, runtime: Path, evidence: Path) -> None:
+    """Copy this session's bridge.log into the evidence before session deletion removes it."""
+    roots = [*(runtime / "data" / "prime-native").glob("*"), *bridge_roots()[1].glob("*")]
+    for root in roots:
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            if json.loads((root / "config.json").read_text())["sessionId"] == session:
+                shutil.copy(root / "bridge.log", evidence / "bridge.log")
+
+
+def switch_chats(
+    client: httpx.Client,
+    session: str,
+    metadata: dict,
+    evidence: Path,
+    runtime: Path,
+    original_prompt: str,
+) -> None:
+    """Move the terminal to a new Prime chat and back; the web session must stay on its chat."""
+    external_id = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+    prompt = f"Queued while away {uuid.uuid4().hex}. Reply with {PONG}."
+    model_requests = evidence / "model-requests.jsonl"
+
+    def items() -> object:
+        response = client.get(f"/v1/sessions/{session}/items")
+        response.raise_for_status()
+        return response.json()
+
+    def notices(code: str) -> int:
+        return json.dumps(items()).count(f'"code": "{code}"')
+
+    def replies() -> int:
+        return assistant_text(items()).count(PONG)
+
+    def external_id_unchanged() -> None:
+        current = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+        if current != external_id:
+            raise RuntimeError(f"external_session_id changed from {external_id} to {current}")
+
+    type_into_prime(metadata, "/new")
+    wait_for(lambda: notices("prime_terminal_detached") == 1, "the chat-switch notice")
+    (evidence / "pane-after-new.txt").write_text(pane(metadata))
+    action = {
+        "type": "message",
+        "data": {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
+    }
+    client.post(f"/v1/sessions/{session}/events", json=action).raise_for_status()
+    time.sleep(4)
+    (evidence / "pane-while-away.txt").write_text(pane(metadata))
+    if prompt in model_requests.read_text() or prompt in pane(metadata):
+        raise RuntimeError("A web message reached the Prime chat the web session does not mirror")
+    if replies() != 2 or notices("prime_terminal_detached") != 1:
+        raise RuntimeError(
+            "The other Prime chat changed the web session while the terminal was away"
+        )
+    external_id_unchanged()
+
+    type_into_prime(metadata, "/resume")
+    wait_for(lambda: "Search sessions" in pane(metadata), "the resume picker")
+    type_into_prime(metadata, original_prompt[:24], submit=False)
+    time.sleep(1)
+    (evidence / "pane-resume-picker.txt").write_text(pane(metadata))
+    tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
+    wait_for(lambda: notices("prime_terminal_returned") == 1, "the return notice")
+    wait_for(lambda: replies() == 3, "the queued message's reply")
+    time.sleep(3)
+    (evidence / "switch-items.json").write_text(json.dumps(items(), indent=2))
+    if (
+        replies() != 3
+        or json.dumps(items()).count(prompt) != 1
+        or model_requests.read_text().count(prompt) != 1
+    ):
+        raise RuntimeError(
+            "The queued web message was not delivered exactly once after the return"
+        )
+    if notices("prime_terminal_detached") != 1 or notices("prime_terminal_returned") != 1:
+        raise RuntimeError("The chat-switch notices were not posted exactly once each")
+    external_id_unchanged()
+    keep_bridge_log(session, runtime, evidence)
+
+
 def drive(
     prime: str,
     evidence: Path,
@@ -435,6 +536,10 @@ def drive(
                 )
                 resource.raise_for_status()
                 metadata = resource.json()["metadata"]
+                if "--extension" not in help_text:
+                    switch_chats(client, session, metadata, evidence, runtime, prompt)
+                else:
+                    print("SKIP chat switch: Prime 0.9.x runs the extension adapter")
                 before = sorted(process.pid for process in owned_prime_processes(runtime))
                 if not before:
                     raise RuntimeError("No owned Prime process exists before detach")

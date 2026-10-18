@@ -66,6 +66,8 @@ For a manual session, type a prompt in the attached Prime terminal. Then submit 
 
 The helper detaches its owned tmux attachment and runs the public resume command. It requires the same Omnigent conversation, native Prime session ID, and live Prime process IDs. This proves reattachment to the living worker, not kernel persistence after a restart.
 
+On Prime 0.10 the drive also switches chats. After the terminal exchange it types `/new` into the Prime terminal through tmux, requires one `prime_terminal_detached` notice on the session, sends a web message, and requires that the message reaches neither the new chat's model requests nor its pane. It then types `/resume`, filters the picker to the original chat, and requires one `prime_terminal_returned` notice, one reply to the queued message, and an unchanged `external_session_id` throughout. The drive keeps the session's `bridge.log` as evidence and skips this phase on 0.9.x.
+
 Read the matching feature file for model, permission, resource, and lifecycle checks. Record each entry point separately. An API reply does not establish terminal input, and a successful enqueue does not establish model completion.
 
 ## Evidence
