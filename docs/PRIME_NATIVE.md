@@ -310,8 +310,10 @@ original chat, that `/resume` in the terminal returns to it, and that a chat
 started with `/new` is not shown on the web. While the `/resume` picker is
 open nothing changes, since the bridge cannot tell which chat will be picked.
 When the TUI returns to the original chat, the queued messages are delivered
-and a second notice says so. When Omnigent has to relaunch Prime, `omnigent
-prime-native --resume` reopens the recorded chat. Web messages are sent as
+and a second notice says so. If the original chat's session file is deleted,
+the terminal cannot return to it and web messages stay queued. When Omnigent
+has to relaunch Prime, `omnigent prime-native --resume` reopens the recorded
+chat. Web messages are sent as
 steered prompts and appear in the TUI as normal user turns.
 Each web message reaches Prime at most once. If the daemon connection fails
 before Prime confirms a prompt, the conversation shows that the message may not

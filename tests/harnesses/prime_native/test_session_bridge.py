@@ -860,7 +860,7 @@ def _notices(bridge: Bridge) -> list[str]:
 @pytest.fixture
 def backoff(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> float:
     """Shrink the first retry delay; list this fixture before ``bridge`` so it takes effect."""
-    seconds = getattr(request, "param", 0.4)
+    seconds = getattr(request, "param", 1.0)
     monkeypatch.setattr(session_bridge, "_REPOST_FIRST_S", seconds)
     return seconds
 
@@ -883,7 +883,7 @@ def _is_notice(request: httpx.Request) -> bool:
 def _pauses(times: list[float]) -> list[float]:
     """The waits between attempts, leaving out the short gaps inside one post's retries."""
     return [
-        later - earlier for earlier, later in itertools.pairwise(times) if later - earlier > 0.2
+        later - earlier for earlier, later in itertools.pairwise(times) if later - earlier > 0.5
     ]
 
 
