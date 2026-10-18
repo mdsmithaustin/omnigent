@@ -58,10 +58,9 @@ Probe logs live outside the repo; each fact below was observed on 0.10.0 darwin-
   the TUI, while the earlier runtime is still live, returns to that runtime's id.
   `list` reports `attachedClients` per session, counting the TUI and any other
   attached client, this bridge included, which shows the root the TUI is on.
-  A run of the bridge against a real TUI through `/new` and `/resume` posted each
-  turn once and PATCHed the new resume id there and back to a recording fake
-  server. The real server refuses to overwrite `external_session_id`, so the
-  conversation keeps the first session's UUID.
+  The server keeps `external_session_id` write-once and answers 400 to a
+  different value, so a bridge that followed the TUI into another chat could not
+  record that chat's id.
 - `set_model` and `set_thinking_level` emit no event. `get_state` reflects them.
 - `compact` emits `compaction_start` and `compaction_end` (with `errorMessage` on failure).
 - `--resume <session UUID>` restores the conversation under a new runtime id;
@@ -85,19 +84,63 @@ reconcile(state, msgs,   pure; returns events for snapshot messages whose
                         that started while detached
                         (omnigent/harnesses/prime_native/transcript.py).
 run_bridge(root)        lives in the terminal wrapper next to the Prime process:
-                        attach to the root the TUI shows, then a session loop
+                        attach to the pinned chat's root, then a session loop
                         (events -> POST /events) and one task per tick step:
                         binding.json heartbeat, controls/requests -> daemon
                         commands -> controls/results, inbox -> prompt (plus
-                        input_ready), and re-attach when the TUI's root
-                        changes, or when posts failed, no agent loop is open,
-                        and the retry backoff has passed. The inbox checks the
-                        TUI's root before each prompt.
+                        input_ready), and re-attach when the TUI returns on a
+                        new runtime of the pinned chat, or when posts failed,
+                        no agent loop is open, and the retry backoff has
+                        passed. The inbox checks the TUI's root before each
+                        prompt.
                         The first beat claims binding.json while the
                         wrapper's owner claim names this process; after that
                         the beat, inbox, and control answers also require
                         binding.json to name this bridge.
+Pin                     the Prime sessionId this Omnigent session mirrors, set
+                        once (the saved id on a resume launch, else the first
+                        chat attached), plus `away` (the TUI shows another
+                        chat) and `owed` (the notice not yet posted).
 ```
+
+## `/new` and `/resume`
+
+One Omnigent session is one Prime chat. The bridge pins to the chat it first
+attaches to, or on a resume launch to the session's saved `external_session_id`
+(`main.py` writes it to `config.json` as `externalSessionId`). The key is Prime's
+`sessionId`, not the runtime id, so a `/resume` that returns on a new runtime of
+the same chat is still the pinned chat.
+
+When the TUI shows another chat, the bridge:
+
+- mirrors nothing from it and writes nothing into it;
+- leaves web messages in the inbox, unconsumed, and delivers them once the TUI
+  is back on the pinned chat;
+- answers model, effort, compact and interrupt with a `rejected` result (409)
+  that says the terminal is on another chat;
+- keeps the binding and its heartbeat, since the process and the daemon are
+  still this session's, and a control should get that reason instead of "no
+  live binding";
+- posts one info-level error item, code `prime_terminal_detached`, telling the
+  user to start a new session from the web UI or return to the original chat.
+  The notice is a durable transcript item, so it cannot be withdrawn. When the TUI
+  returns, a `prime_terminal_returned` item follows. A return before the first
+  notice posts neither. Both are keyed by bridge incarnation and departure, so a
+  re-post is idempotent.
+
+A refused `external_session_id` update is logged as a warning. The identity
+update itself is unchanged: it carries the pinned id, which the server accepts.
+
+Inferred, not observed: a stale client count on the pinned chat right after a
+reconnect could read as a return for about 30 ms, and a poll in that window would
+post a returned notice and then a new detached one.
+
+### Rejected: rotation
+
+Moving the web session to a new Omnigent session on `/new`, as codex and claude do,
+needs the native terminal to move between sessions. `resource_registry.py` refuses
+that for `prime-native` on purpose, so Stop reaches the terminal's original owner.
+Rotation would reopen that rule. [NEW-ROTATION.md](NEW-ROTATION.md) keeps the design.
 
 Controls map one to one: `model` -> `set_model` then `get_state`; `effort` ->
 `set_thinking_level` then `get_state`; `compact` -> `compact`; `interrupt` ->
@@ -130,10 +173,17 @@ Observed on 0.10.0: no approval prompt in the TUI, and a denied call raises
   observed on 0.10.
 - Tools from an agent's declared MCP servers are not advertised: the `serve-mcp`
   shim lists only the relay's built-in tools (`tool_relay.json`).
-- The injected `task` todo tool is unavailable.
 - Model or effort changed in the TUI reaches the web UI only on the next
   `get_state` poll at a turn boundary.
 - Events missed during a disconnect are recovered as whole messages, without deltas.
   When 1024 events wait unread, the daemon client logs a warning, drops them, and
   closes the connection, so they are recovered the same way.
-- The TUI has no `/omnigent` command, status line, or title; the extension set them.
+
+## Won't do on 0.10
+
+- The injected `task` todo tool. Prime 0.10 has no native todo tool and no hooks,
+  so it would be an MCP call from Prime's Python REPL plus extra instructions to
+  make the model use it.
+- The `/omnigent` command. The launcher already prints the web link.
+- A status line or title. Prime's only status surface is its own session name,
+  which belongs to Prime.
