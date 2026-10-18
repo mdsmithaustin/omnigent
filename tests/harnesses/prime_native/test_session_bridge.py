@@ -71,6 +71,8 @@ class FakePrime:
     attached: dict[asyncio.StreamWriter, str] = field(default_factory=dict)
     new_roots: list[dict[str, Any]] = field(default_factory=list)
     lists_message_counts: bool = True
+    # Further clients attached to a chat besides the bridge and the TUI.
+    also_on: list[str] = field(default_factory=list)
 
     def sessions(self) -> list[dict[str, Any]]:
         foreign = {"id": "cccccccccccc", "rlmDepth": 0, "sessionFile": "/elsewhere/other.jsonl"}
@@ -80,7 +82,7 @@ class FakePrime:
         root["sessionFile"] = str(self.session_dir / f"{NATIVE_ID}.jsonl")
         root["messageCount"] = len(self.messages)
         roots = [root, *self.new_roots]
-        viewers = [*self.attached.values(), self.tui_root]
+        viewers = [*self.attached.values(), self.tui_root, *self.also_on]
         for session in roots:
             session["attachedClients"] = viewers.count(session["id"])
             session.setdefault("messageCount", 0)
@@ -152,8 +154,11 @@ class Bridge:
     outage: list[int]
     # The Omnigent session's external_session_id; the server keeps it write-once.
     stored: list[str]
-    # Statuses for the next external_session_id updates, before the write-once check.
-    patch_faults: list[int]
+    # Statuses, or transport errors, for the next external_session_id updates.
+    patch_faults: list[int | Exception]
+    # Cleared, the Omnigent API holds each event post open until it is set again.
+    gate: asyncio.Event
+    blocked: list[str]
 
     def posted(self) -> list[dict[str, Any]]:
         return [json.loads(r.content) for r in self.requests if r.url.path.endswith("/events")]
@@ -229,16 +234,25 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
     paths = _runtime(tmp_path / "runtime", "http://omnigent.test", **config)
     requests: list[httpx.Request] = []
     outage: list[int] = []
-    patch_faults: list[int] = []
+    patch_faults: list[int | Exception] = []
+    gate, blocked = asyncio.Event(), []
+    gate.set()
     stored = [config["externalSessionId"]] if "externalSessionId" in config else []
 
-    def record(request: httpx.Request) -> httpx.Response:
-        if outage and request.url.path.endswith("/events"):
-            return httpx.Response(outage.pop(0))
+    async def record(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/events"):
+            if not gate.is_set():
+                blocked.append(request.url.path)
+                await gate.wait()
+            if outage:
+                return httpx.Response(outage.pop(0))
         requests.append(request)
         if request.method == "PATCH":
             if patch_faults:
-                return httpx.Response(patch_faults.pop(0))
+                fault = patch_faults.pop(0)
+                if isinstance(fault, Exception):
+                    raise fault
+                return httpx.Response(fault)
             chosen = json.loads(request.content)["external_session_id"]
             if stored and stored[0] != chosen:
                 return httpx.Response(400, json={"detail": "external_session_id is already set"})
@@ -258,8 +272,9 @@ async def bridge(tmp_path: Path, request: pytest.FixtureRequest) -> AsyncIterato
         await asyncio.wait_for(running, 5)
 
     try:
-        yield Bridge(paths, prime, requests, shutdown, outage, stored, patch_faults)
+        yield Bridge(paths, prime, requests, shutdown, outage, stored, patch_faults, gate, blocked)
     finally:
+        gate.set()
         await shutdown()
         server.close()
         for writer in prime.writers:
@@ -825,6 +840,16 @@ def _patched_ids(bridge: Bridge) -> list[str]:
     ]
 
 
+def _notices(bridge: Bridge) -> list[str]:
+    """Each notice code once per source id, as the server dedups a repeated post."""
+    posted = {
+        error["source_id"]: error["item_data"]["code"]
+        for error in bridge.errors()
+        if error["item_data"]["code"].startswith("prime_terminal_")
+    }
+    return list(posted.values())
+
+
 async def test_the_terminal_switching_chats_detaches_the_bridge_until_it_returns(
     bridge: Bridge, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -946,11 +971,18 @@ async def test_a_new_chat_before_any_message_takes_the_pin(bridge: Bridge) -> No
     assert _patched_ids(bridge) == [NEW_CHAT]
 
 
-async def test_the_chat_id_is_recorded_once_the_chat_has_a_message(bridge: Bridge) -> None:
+@pytest.mark.parametrize(
+    "fault",
+    [503, httpx.ConnectError("down"), 401, 403, 404],
+    ids=["server-error", "unreachable", "stale-token", "forbidden", "not-found"],
+)
+async def test_the_chat_id_is_recorded_once_the_chat_has_a_message(
+    bridge: Bridge, fault: int | Exception
+) -> None:
     await ready(bridge)
     await asyncio.sleep(2 * TICK_S)
     assert _patched_ids(bridge) == []
-    bridge.patch_faults.append(503)
+    bridge.patch_faults.append(fault)
 
     bridge.prime.messages = [_user("first", 1)]
 
@@ -984,3 +1016,123 @@ async def test_a_refused_identity_update_is_logged_and_not_retried(
     assert _patched_ids(bridge) == [NATIVE_ID]
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("external_session_id" in w and "400" in w for w in warnings)
+
+
+DETACHED, RETURNED = "prime_terminal_detached", "prime_terminal_returned"
+
+
+@pytest.mark.parametrize(
+    ("returns_first", "expected"),
+    [(False, [DETACHED]), (True, [])],
+    ids=["terminal-stays-away", "terminal-returns-first"],
+)
+async def test_a_departure_notice_lost_to_an_outage_is_retried_not_counted_as_shown(
+    bridge: Bridge, returns_first: bool, expected: list[str]
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    bridge.outage.extend([503] * 1000)
+    bridge.prime.tui_root = _chat(bridge)["id"]
+    await eventually(lambda: len(bridge.outage) <= 997)
+    if returns_first:
+        bridge.prime.tui_root = ROOT_ID
+        await asyncio.sleep(4 * TICK_S)
+
+    bridge.outage.clear()
+
+    await asyncio.sleep(4 * TICK_S)
+    assert _notices(bridge) == expected
+
+
+async def test_a_return_seen_while_the_departure_notice_is_in_flight_still_posts_the_return(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    bridge.gate.clear()
+    bridge.prime.tui_root = _chat(bridge)["id"]
+    await eventually(lambda: bridge.blocked)
+    bridge.prime.tui_root = ROOT_ID
+    bridge.prime.writers[-1].close()
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+
+    bridge.gate.set()
+
+    await eventually(lambda: _notices(bridge) == [DETACHED, RETURNED])
+
+
+async def test_each_departure_posts_its_own_notice_pair(bridge: Bridge) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    other = _chat(bridge)
+
+    steps = [
+        (other["id"], [DETACHED]),
+        (ROOT_ID, [DETACHED, RETURNED]),
+        (other["id"], [DETACHED, RETURNED, DETACHED]),
+        (ROOT_ID, [DETACHED, RETURNED, DETACHED, RETURNED]),
+    ]
+    for terminal, expected in steps:
+        bridge.prime.tui_root = terminal
+        await eventually(lambda expected=expected: _notices(bridge) == expected)
+
+    assert len({error["source_id"] for error in bridge.errors()}) == 4
+
+
+async def test_the_resume_picker_opened_from_the_pinned_chat_is_not_a_departure(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+
+    bridge.prime.tui_root = None
+    await asyncio.sleep(4 * TICK_S)
+    enqueue_user_message(bridge.paths.root, "sent while the picker is open")
+
+    await eventually(lambda: bridge.prime.sent("prompt"))
+    assert [c["activeSessionId"] for c in bridge.prime.sent("prompt")] == [ROOT_ID]
+    assert bridge.errors() == []
+
+
+async def test_a_client_on_another_chat_is_the_terminal_even_when_the_pinned_chat_has_more(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+
+    bridge.prime.also_on.append(ROOT_ID)
+    bridge.prime.tui_root = _chat(bridge)["id"]
+
+    await eventually(lambda: _notices(bridge) == [DETACHED])
+
+
+@pytest.mark.parametrize("bridge", [{"externalSessionId": NATIVE_ID}], indirect=True)
+async def test_a_resumed_launch_with_the_terminal_on_the_saved_chat_just_mirrors_it(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("from before", 10)]
+    await ready(bridge)
+
+    enqueue_user_message(bridge.paths.root, "sent from the web")
+
+    await eventually(lambda: bridge.prime.sent("prompt"))
+    await asyncio.sleep(2 * TICK_S)
+    assert [c["activeSessionId"] for c in bridge.prime.sent("prompt")] == [ROOT_ID]
+    assert bridge.errors() == []
+    assert _patched_ids(bridge) == []
+
+
+async def test_a_conflicting_identity_update_is_logged_and_not_retried(
+    bridge: Bridge, caplog: pytest.LogCaptureFixture
+) -> None:
+    await ready(bridge)
+    bridge.patch_faults.append(409)
+
+    bridge.prime.messages = [_user("first", 1)]
+
+    await eventually(lambda: _patched_ids(bridge))
+    await asyncio.sleep(2 * TICK_S)
+    assert _patched_ids(bridge) == [NATIVE_ID]
+    assert bridge.stored == []
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("external_session_id" in w and "409" in w for w in warnings)
