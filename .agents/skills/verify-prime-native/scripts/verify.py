@@ -310,22 +310,36 @@ def runtime_root(session: str, runtime: Path) -> Path | None:
     return None
 
 
-def keep_bridge_log(session: str, runtime: Path, evidence: Path) -> None:
+def keep_bridge_log(session: str, runtime: Path, evidence: Path, name: str = "bridge.log") -> None:
     """Copy this session's bridge.log into the evidence before session deletion removes it."""
     root = runtime_root(session, runtime)
     if root is not None:
         with contextlib.suppress(OSError):
-            shutil.copy(root / "bridge.log", evidence / "bridge.log")
+            shutil.copy(root / "bridge.log", evidence / name)
 
 
-def keep_switch_evidence(
-    client: httpx.Client, session: str, runtime: Path, evidence: Path
-) -> None:
-    """Keep the session's items and bridge.log, whether or not the chat switch passed."""
+def bridge_log(session: str, runtime: Path) -> tuple[Path | None, str]:
+    """This session's runtime directory and the bridge.log text written so far."""
+    root = runtime_root(session, runtime)
+    with contextlib.suppress(OSError):
+        return root, (root / "bridge.log").read_text() if root else ""
+    return root, ""
+
+
+def chat_notices(client: httpx.Client, session: str) -> tuple[int, int]:
+    """How many detached and returned notices the web session holds."""
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    return (
+        items.count('"code": "prime_terminal_detached"'),
+        items.count('"code": "prime_terminal_returned"'),
+    )
+
+
+def keep_switch_items(client: httpx.Client, session: str, evidence: Path) -> None:
+    """Keep the session's items, whether or not the chat switch passed."""
     with contextlib.suppress(httpx.HTTPError, OSError, ValueError):
         items = client.get(f"/v1/sessions/{session}/items")
         (evidence / "switch-items.json").write_text(json.dumps(items.json(), indent=2))
-    keep_bridge_log(session, runtime, evidence)
 
 
 def new_chat_before_any_message(
@@ -452,6 +466,85 @@ def switch_chats(
     if notices("prime_terminal_detached") != 1 or notices("prime_terminal_returned") != 1:
         raise RuntimeError("The chat-switch notices were not posted exactly once each")
     external_id_unchanged()
+
+
+def exit_prime_from_picker(metadata: dict, runtime: Path, evidence: Path) -> None:
+    """Quit Prime 0.10 with Esc in the /resume picker, which exits with status 0."""
+    type_into_prime(metadata, "/resume")
+    try:
+        # The picker keeps its last filter, so its search hint may be absent.
+        wait_for(lambda: "↑/↓ navigate" in pane(metadata), "the resume picker", 20)
+    finally:
+        (evidence / "pane-before-exit.txt").write_text(pane(metadata))
+    for _ in range(3):
+        tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Escape")
+        with contextlib.suppress(RuntimeError):
+            wait_for(lambda: not owned_prime_processes(runtime), "Prime to exit", 8)
+            return
+    raise RuntimeError("Prime did not exit after Esc in the resume picker")
+
+
+def check_resumed_chat(
+    client: httpx.Client,
+    session: str,
+    runtime: Path,
+    evidence: Path,
+    before: dict,
+    prompts: list[str],
+) -> None:
+    """
+    A relaunch with ``--resume`` mirrors the saved chat and tells the web nothing.
+
+    :param before: What was true before the relaunch: ``log`` (bridge.log text and its runtime
+        directory), ``notices`` (the chat-switch notice counts) and ``saved`` (the chat id).
+    :param prompts: Earlier messages the next model request must carry as history.
+    """
+    root = wait_for(lambda: runtime_root(session, runtime), "the relaunched runtime directory")
+    old_root, old_text = before["log"]
+
+    def fresh() -> str:
+        text = bridge_log(session, runtime)[1]
+        return text[len(old_text) :] if root == old_root and text.startswith(old_text) else text
+
+    wait_for(
+        lambda: f"({before['saved']})" in fresh() and "Attached to Prime session" in fresh(),
+        "the bridge to attach to the saved chat after the relaunch",
+    )
+    keep_bridge_log(session, runtime, evidence, "bridge-relaunch.log")
+    time.sleep(3)
+    nonce = f"After relaunch {uuid.uuid4().hex}. Reply with {PONG}."
+    replies = assistant_text(client.get(f"/v1/sessions/{session}/items").json()).count(PONG)
+    action = {
+        "type": "message",
+        "data": {"role": "user", "content": [{"type": "input_text", "text": nonce}]},
+    }
+    client.post(f"/v1/sessions/{session}/events", json=action).raise_for_status()
+    model_requests = evidence / "model-requests.jsonl"
+    wait_for(lambda: nonce in model_requests.read_text(), "the relaunch message's model request")
+    wait_for(
+        lambda: (
+            assistant_text(client.get(f"/v1/sessions/{session}/items").json()).count(PONG)
+            == replies + 1
+        ),
+        "the relaunch message's reply",
+    )
+    time.sleep(2)
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    (evidence / "relaunch-items.json").write_text(items)
+    last = next(
+        line for line in reversed(model_requests.read_text().splitlines()) if nonce in line
+    )
+    notices = chat_notices(client, session)
+    after = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+    (evidence / "relaunch.json").write_text(
+        json.dumps({"saved": before["saved"], "after": after, "notices": notices}, indent=2)
+    )
+    if "left the chat this session mirrors" in fresh() or notices != before["notices"]:
+        raise RuntimeError("The resume relaunch posted a chat-switch notice")
+    if after != before["saved"]:
+        raise RuntimeError(f"external_session_id changed from {before['saved']} to {after}")
+    if items.count(nonce) != 1 or not all(prompt in last for prompt in prompts):
+        raise RuntimeError("The resumed chat did not carry its earlier messages to the model")
 
 
 def drive(
@@ -622,7 +715,7 @@ def drive(
                     try:
                         switch_chats(client, session, metadata, evidence, prompt)
                     finally:
-                        keep_switch_evidence(client, session, runtime, evidence)
+                        keep_switch_items(client, session, evidence)
                 else:
                     print("SKIP chat switch: Prime 0.9.x runs the extension adapter")
                 before = sorted(process.pid for process in owned_prime_processes(runtime))
@@ -680,6 +773,36 @@ def drive(
                         indent=2,
                     )
                 )
+                if daemon_bridge:
+                    before_relaunch = {
+                        "log": bridge_log(session, runtime),
+                        "notices": chat_notices(client, session),
+                        "saved": snapshot["external_session_id"],
+                    }
+                    keep_bridge_log(session, runtime, evidence, "bridge-first.log")
+                    exit_prime_from_picker(metadata, runtime, evidence)
+                    with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
+                        terminal.expect(pexpect.EOF, timeout=15)
+                    terminal.close(force=True)
+                    terminal = pexpect.spawn(
+                        omni,
+                        resume_args,
+                        cwd=str(runtime / "workspace"),
+                        env=env,
+                        encoding="utf-8",
+                        timeout=90,
+                        dimensions=(32, 120),
+                    )
+                    terminal.logfile_read = terminal_log
+                    terminal.expect(r"Web UI: [^\r\n]*/c/([A-Za-z0-9_-]+)")
+                    check_resumed_chat(
+                        client,
+                        session,
+                        runtime,
+                        evidence,
+                        before_relaunch,
+                        [prompt, native_prompt],
+                    )
                 (evidence / "result.json").write_text(
                     json.dumps(
                         {
@@ -697,6 +820,8 @@ def drive(
                     time.sleep(inspect_seconds)
     finally:
         cleanup_error = None
+        if session is not None:
+            keep_bridge_log(session, runtime, evidence)
         if session is not None and process is not None and process.poll() is None:
             try:
                 response = httpx.delete(f"{url}/v1/sessions/{session}", timeout=30)
