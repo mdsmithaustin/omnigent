@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -299,13 +300,73 @@ def type_into_prime(metadata: dict, text: str, *, submit: bool = True) -> None:
         tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
 
 
-def keep_bridge_log(session: str, runtime: Path, evidence: Path) -> None:
-    """Copy this session's bridge.log into the evidence before session deletion removes it."""
+def runtime_root(session: str, runtime: Path) -> Path | None:
+    """This session's Prime runtime directory, which session deletion removes."""
     roots = [*(runtime / "data" / "prime-native").glob("*"), *bridge_roots()[1].glob("*")]
     for root in roots:
         with contextlib.suppress(OSError, ValueError, KeyError):
             if json.loads((root / "config.json").read_text())["sessionId"] == session:
-                shutil.copy(root / "bridge.log", evidence / "bridge.log")
+                return root
+    return None
+
+
+def keep_bridge_log(session: str, runtime: Path, evidence: Path) -> None:
+    """Copy this session's bridge.log into the evidence before session deletion removes it."""
+    root = runtime_root(session, runtime)
+    if root is not None:
+        with contextlib.suppress(OSError):
+            shutil.copy(root / "bridge.log", evidence / "bridge.log")
+
+
+def new_chat_before_any_message(
+    client: httpx.Client, session: str, runtime: Path, evidence: Path
+) -> tuple[Path, str]:
+    """
+    Type /new in Prime before any message, once the bridge holds the first chat.
+
+    :returns: The runtime directory and the abandoned chat's session UUID.
+    """
+    root = wait_for(lambda: runtime_root(session, runtime), "the Prime runtime directory")
+    log = root / "bridge.log"
+    attached = wait_for(
+        lambda: (
+            log.is_file()
+            and re.search(r"Attached to Prime session \S+ \((\S+)\)", log.read_text())
+        ),
+        "the bridge's first attach",
+    )
+
+    def terminal() -> dict | None:
+        response = client.get(
+            f"/v1/sessions/{session}/resources/terminals/terminal_prime-native_main"
+        )
+        return response.json()["metadata"] if response.is_success else None
+
+    metadata = wait_for(terminal, "the Prime terminal resource")
+    wait_for(lambda: "fixture ·" in pane(metadata), "Prime's input box")
+    type_into_prime(metadata, "/new")
+    wait_for(lambda: "started session" in pane(metadata), "the new Prime chat")
+    (evidence / "pane-new-before-message.txt").write_text(pane(metadata))
+    return root, attached.group(1)
+
+
+def check_pin_followed(
+    client: httpx.Client, session: str, root: Path, abandoned: str, prompt: str
+) -> None:
+    """The web message landed in the chat /new opened, and that chat is the one recorded."""
+    recorded = wait_for(
+        lambda: client.get(f"/v1/sessions/{session}").json().get("external_session_id"),
+        "the recorded Prime chat",
+    )
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    if recorded == abandoned or '"code": "prime_terminal_detached"' in items:
+        raise RuntimeError("The pin did not follow /new off the empty first Prime chat")
+    chat_file = root / "sessions" / f"{recorded}.jsonl"
+    wait_for(
+        lambda: chat_file.is_file() and prompt in chat_file.read_text(),
+        "the web message in the recorded Prime chat",
+        15,
+    )
 
 
 def switch_chats(
@@ -340,6 +401,9 @@ def switch_chats(
     type_into_prime(metadata, "/new")
     wait_for(lambda: notices("prime_terminal_detached") == 1, "the chat-switch notice")
     (evidence / "pane-after-new.txt").write_text(pane(metadata))
+    other = f"Other chat {uuid.uuid4().hex}. Reply with {PONG}."
+    type_into_prime(metadata, other)
+    wait_for(lambda: other in model_requests.read_text(), "the other chat's model request")
     action = {
         "type": "message",
         "data": {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
@@ -349,6 +413,8 @@ def switch_chats(
     (evidence / "pane-while-away.txt").write_text(pane(metadata))
     if prompt in model_requests.read_text() or prompt in pane(metadata):
         raise RuntimeError("A web message reached the Prime chat the web session does not mirror")
+    if other in json.dumps(items()):
+        raise RuntimeError("The other Prime chat's turn was mirrored into the web session")
     if replies() != 2 or notices("prime_terminal_detached") != 1:
         raise RuntimeError(
             "The other Prime chat changed the web session while the terminal was away"
@@ -358,8 +424,10 @@ def switch_chats(
     type_into_prime(metadata, "/resume")
     wait_for(lambda: "Search sessions" in pane(metadata), "the resume picker")
     type_into_prime(metadata, original_prompt[:24], submit=False)
-    time.sleep(1)
+    time.sleep(3)
     (evidence / "pane-resume-picker.txt").write_text(pane(metadata))
+    if notices("prime_terminal_returned") or prompt in model_requests.read_text():
+        raise RuntimeError("The open resume picker counted as a return to the original chat")
     tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
     wait_for(lambda: notices("prime_terminal_returned") == 1, "the return notice")
     wait_for(lambda: replies() == 3, "the queued message's reply")
@@ -468,6 +536,11 @@ def drive(
                 (evidence / "session.json").write_text(
                     json.dumps({"session_id": session, "url": url})
                 )
+                daemon_bridge = "--extension" not in help_text
+                if daemon_bridge:
+                    root, abandoned = new_chat_before_any_message(
+                        client, session, runtime, evidence
+                    )
                 prompt = f"Verification request {uuid.uuid4().hex}. Reply with {PONG}."
                 action = {
                     "type": "message",
@@ -501,6 +574,8 @@ def drive(
                     prompt in json.dumps(json.loads(line).get("messages")) for line in requests
                 ):
                     raise RuntimeError("The submitted prompt never reached the model endpoint")
+                if daemon_bridge:
+                    check_pin_followed(client, session, root, abandoned, prompt)
                 native_prompt = f"Terminal request {uuid.uuid4().hex}. Reply with {PONG}."
                 (evidence / "terminal-action.json").write_text(
                     json.dumps({"text": native_prompt, "key": "Enter"})
@@ -536,7 +611,7 @@ def drive(
                 )
                 resource.raise_for_status()
                 metadata = resource.json()["metadata"]
-                if "--extension" not in help_text:
+                if daemon_bridge:
                     switch_chats(client, session, metadata, evidence, runtime, prompt)
                 else:
                     print("SKIP chat switch: Prime 0.9.x runs the extension adapter")
