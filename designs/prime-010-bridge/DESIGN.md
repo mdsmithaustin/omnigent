@@ -116,8 +116,9 @@ When the TUI shows another chat, the bridge:
 - mirrors nothing from it and writes nothing into it;
 - leaves web messages in the inbox, unconsumed, and delivers them once the TUI
   is back on the pinned chat;
-- answers model, effort, compact and interrupt with a `rejected` result (409)
-  that says the terminal is on another chat;
+- answers model, effort and compact with a `rejected` result (409) that says
+  the terminal is on another chat, but still applies interrupt to the pinned
+  chat so a turn left running there can be stopped;
 - keeps the binding and its heartbeat, since the process and the daemon are
   still this session's, and a control should get that reason instead of "no
   live binding";

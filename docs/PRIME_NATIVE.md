@@ -300,8 +300,8 @@ depth 0) that the TUI shows under the conversation's session directory. One
 Omnigent session mirrors one Prime chat: the chat the bridge first attaches to,
 or on a resume launch the chat recorded as the session's UUID. When `/new` or
 `/resume` in the TUI moves to a different chat, the bridge mirrors nothing from
-it, keeps web messages queued, rejects model, effort, compact, and interrupt
-requests, and the conversation shows a notice to start a new session from the
+it, keeps web messages queued, rejects model, effort, and compact requests
+(interrupt still stops a turn running in the original chat), and the conversation shows a notice to start a new session from the
 web UI or return to the original chat in the terminal. When the TUI returns to
 the original chat, the queued messages are delivered and a second notice says
 so. When Omnigent has to relaunch Prime, `omnigent prime-native --resume`

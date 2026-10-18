@@ -502,7 +502,8 @@ class SessionBridge:
         client = self._client
         if handler is None:
             return {"status": "rejected", "detail": "Unsupported Prime control"}
-        if self._pin.away:
+        # Interrupt still targets the pinned chat, so a turn left running there stays stoppable.
+        if self._pin.away and request.get("type") != "interrupt":
             return {"status": "rejected", "detail": _AWAY_DETAIL}
         if client is None:
             return {"status": "unavailable", "detail": "Prime daemon is not attached"}
