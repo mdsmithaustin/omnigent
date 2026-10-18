@@ -53,6 +53,8 @@ _REPOST_MAX_S = 30.0
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
 _STATUS = "external_session_status"
+# The statuses that mean the server refused the id itself: invalid input, or already set.
+_VALUE_REFUSED = (400, 409)
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
@@ -291,7 +293,7 @@ class SessionBridge:
         except httpx.HTTPError as exc:
             failure = repr(exc)
         else:
-            if not _retryable(response.status_code):
+            if response.is_success or response.status_code in _VALUE_REFUSED:
                 self._recorded = True
                 if not response.is_success:
                     _logger.warning(
@@ -301,7 +303,8 @@ class SessionBridge:
                     )
                 return
             failure = str(response.status_code)
-        # Retried at every survey, so only a changed failure is logged.
+        # Any other answer, such as a stale bearer's 401, may pass later. Retried at every
+        # survey with the current headers, so only a changed failure is logged.
         if failure != self._record_failure:
             self._record_failure = failure
             _logger.warning("Could not record Prime session %s: %s", self._pin.chat, failure)
