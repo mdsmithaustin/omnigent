@@ -137,6 +137,8 @@ class SessionBridge:
         # The server keeps external_session_id write-once, and a resume launch's is already set.
         self._recorded = saved is not None
         self._record_failure = ""
+        self._record_at = 0.0
+        self._record_delay = _REPOST_FIRST_S
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -281,7 +283,7 @@ class SessionBridge:
 
     async def _record(self) -> None:
         """Store the pinned chat's id on the Omnigent session once the pin holds."""
-        if self._recorded or not self._pin.held:
+        if self._recorded or not self._pin.held or time.monotonic() < self._record_at:
             return
         try:
             # Prime resumes by this stable UUID; the runtime id changes on every resume.
@@ -303,8 +305,10 @@ class SessionBridge:
                     )
                 return
             failure = str(response.status_code)
-        # Any other answer, such as a stale bearer's 401, may pass later. Retried at every
-        # survey with the current headers, so only a changed failure is logged.
+        # Any other answer, such as a stale bearer's 401, may pass later. Retried with
+        # backoff and the current headers, so only a changed failure is logged.
+        self._record_at = time.monotonic() + self._record_delay
+        self._record_delay = min(2 * self._record_delay, _REPOST_MAX_S)
         if failure != self._record_failure:
             self._record_failure = failure
             _logger.warning("Could not record Prime session %s: %s", self._pin.chat, failure)

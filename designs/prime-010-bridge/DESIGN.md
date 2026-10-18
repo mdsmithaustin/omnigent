@@ -166,8 +166,8 @@ posts neither. The notice is a durable transcript item, so it cannot be
 withdrawn. Both are keyed by bridge incarnation and departure, so a re-post is
 idempotent.
 
-`external_session_id` is set once the pin holds and retried at each survey with
-the current auth headers until Omnigent accepts it or refuses the id itself, with
+`external_session_id` is set once the pin holds and retried with backoff (1 s
+doubling to 30 s) and the current auth headers until Omnigent accepts it or refuses the id itself, with
 400 (invalid or already set) or 409. Any other answer is retried, including a 401
 from a bearer that expired while the web was idle. A refusal is logged as a
 warning. A resume launch sends none, since the saved id is already set.
