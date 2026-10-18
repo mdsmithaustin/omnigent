@@ -707,9 +707,45 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-5-78-0d935493a57f",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.5 (#78)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "a96e64e8204121f256f9a795666c7f48158aca00",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-5-7-a96e64e82041",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.5 (#79)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "15cc5ab190c66a5efe52cd695ec94dffb5c4e8b1",
+      "name": "test-web-drain-sonner-close-timers-before-jsdom-15cc5ab190c6",
+      "reason": "test(web): drain sonner close timers before jsdom teardown (#80)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1b348043c85cfc81b3d3ba98300a730f3d4152d2",
+      "name": "test-stop-a-pytest-plugin-s-rich-log-handler-fro-1b348043c85c",
+      "reason": "test: stop a pytest plugin's rich log handler from stalling relay tests (#82)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "dd62e4561484b1483115a3c947928c7d12e6410f",
+      "name": "test-cursor-scale-the-damaged-stop-marker-hang-g-dd62e4561484",
+      "reason": "test(cursor): scale the damaged-stop-marker hang guard (#81)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "53ab5c4b0090098133e3bc139e1df6f1c734e3c7",
+      "name": "feat-prime-native-support-prime-agent-0-10-via-a-53ab5c4b0090",
+      "reason": "feat(prime-native): support prime-agent 0.10 via a daemon-socket bridge (#83)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c71622feb17e19c2318636cb87a435b4ab7f306b",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-6-84-c71622feb17e",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.6 (#84)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "0d935493a57fb8fa30d4de7467fbd56d8a8b3050",
+  "payload_commit": "c71622feb17e19c2318636cb87a435b4ab7f306b",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -718,5 +754,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.5"
+  "version": "0.18.0+mdsmithaustin.6"
 }
