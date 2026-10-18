@@ -160,17 +160,20 @@ When the TUI shows another chat, the bridge:
   another Prime chat, so it cannot show the other chat either. When the TUI
   returns, a `prime_terminal_returned` item follows.
 
-The notices follow from `away` and `shown`: a post that does not reach Omnigent
-is tried again at the next survey, and a return before the away notice lands
-posts neither. The notice is a durable transcript item, so it cannot be
-withdrawn. Both are keyed by bridge incarnation and departure, so a re-post is
-idempotent.
+The notices follow from `away` and `shown`: a post that does not land is tried
+again after a backoff (1 s doubling to 30 s), and a return before the away notice
+lands posts neither. Only a success or a refusal of the event itself (400, 413,
+422) settles a notice, so a 401 from a bearer that expired while the web was
+idle is retried, not counted as shown. The notice is a durable transcript item,
+so it cannot be withdrawn. Both are keyed by bridge incarnation and departure,
+so a re-post is idempotent.
 
 `external_session_id` is set once the pin holds and retried with backoff (1 s
-doubling to 30 s) and the current auth headers until Omnigent accepts it or refuses the id itself, with
-400 (invalid or already set) or 409. Any other answer is retried, including a 401
-from a bearer that expired while the web was idle. A refusal is logged as a
-warning. A resume launch sends none, since the saved id is already set.
+doubling to 30 s) and the current auth headers until Omnigent accepts it or
+refuses the id itself, with 400 (invalid, or different from the id already set)
+or 409. Any other answer is retried, including a 401 from a bearer that expired
+while the web was idle. A refusal is logged as a warning. A resume launch sends
+none, since the saved id is already set.
 
 Observed on 0.10.0: opening the `/resume` picker from another chat leaves the
 pinned chat with only the bridge attached, which is not a return. Not observed:
