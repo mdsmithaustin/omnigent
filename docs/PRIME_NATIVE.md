@@ -430,7 +430,7 @@ receipts, privacy limits, and the bounds of its prerequisite proof.
 
 ```sh
 uv sync --group dev
-.agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
+.agents/skills/verify-prime-native/scripts/verify.py --prime-path /absolute/path/to/prime-agent
 ```
 
 Supply the actual path to your Prime binary, 0.9.6 or 0.10. For 0.10, also run

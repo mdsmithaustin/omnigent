@@ -175,6 +175,10 @@ or 409. Any other answer is retried, including a 401 from a bearer that expired
 while the web was idle. A refusal is logged as a warning. A resume launch sends
 none, since the saved id is already set.
 
+The tracker and a reconnect both survey the listing, so the notice and chat-id
+report runs one at a time. A survey that finds a report in flight skips it, and
+the next tick's survey picks up any newer state.
+
 Observed on 0.10.0: opening the `/resume` picker from another chat leaves the
 pinned chat with only the bridge attached, which is not a return. Not observed:
 a stale count on a root after a client leaves it.
