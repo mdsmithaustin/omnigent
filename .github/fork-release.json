@@ -743,9 +743,33 @@
       "name": "chore-release-stamp-0-18-0-mdsmithaustin-6-84-c71622feb17e",
       "reason": "chore(release): stamp 0.18.0+mdsmithaustin.6 (#84)",
       "source_commit": null
+    },
+    {
+      "applied_commit": "0960979c5797f546991becff0241d9f82ca52d7e",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-6-8-0960979c5797",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.6 (#85)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "f914f0147678b24113066516232108466da63833",
+      "name": "fix-prime-native-keep-each-web-session-on-one-pr-f914f0147678",
+      "reason": "fix(prime-native): keep each web session on one Prime chat after /new (#86)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0575cb8155be4a4d260ac6dacea5aede6f9c0346",
+      "name": "fix-prime-native-post-the-chat-switch-notice-onc-0575cb8155be",
+      "reason": "fix(prime-native): post the chat-switch notice once, and cover the pin's open edge cases (#87)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "53a22fc105d490eb712c246af1efe7c160020c32",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-7-88-53a22fc105d4",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.7 (#88)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "c71622feb17e19c2318636cb87a435b4ab7f306b",
+  "payload_commit": "53a22fc105d490eb712c246af1efe7c160020c32",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "a8676d23e88df7918f4f8ef1c7c4e3186e710354",
@@ -754,5 +778,5 @@
     "repository": "omnigent-ai/omnigent",
     "tag": "v0.18.0"
   },
-  "version": "0.18.0+mdsmithaustin.6"
+  "version": "0.18.0+mdsmithaustin.7"
 }
