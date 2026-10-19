@@ -169,6 +169,7 @@ class SessionBridge:
         self._record_failure = ""
         self._record_backoff = Backoff()
         self._notice_backoff = Backoff()
+        self._reporting = False
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -276,8 +277,14 @@ class SessionBridge:
                 "Prime TUI %s the chat this session mirrors",
                 "left" if self._pin.away else "returned to",
             )
-        await self._announce()
-        await self._record()
+        if not self._reporting:
+            # A reconnect can survey while the tracker's report is still in flight.
+            self._reporting = True
+            try:
+                await self._announce()
+                await self._record()
+            finally:
+                self._reporting = False
         pinned = [root for root in roots if root["sessionId"] == self._pin.chat]
         if tui in pinned:
             return tui
