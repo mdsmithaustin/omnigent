@@ -1153,6 +1153,24 @@ async def test_a_return_seen_while_the_departure_notice_is_in_flight_still_posts
     await eventually(lambda: _notices(bridge) == [DETACHED, RETURNED])
 
 
+async def test_a_reconnect_while_the_departure_notice_is_in_flight_posts_it_once(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    bridge.gate.clear()
+    bridge.prime.tui_root = _chat(bridge)["id"]
+    await eventually(lambda: bridge.blocked)
+
+    bridge.prime.writers[-1].close()
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    bridge.gate.set()
+    await eventually(lambda: _notices(bridge) == [DETACHED])
+    await asyncio.sleep(4 * TICK_S)
+    assert len(_times(bridge, _is_notice)) == 1
+
+
 async def test_each_departure_posts_its_own_notice_pair(bridge: Bridge) -> None:
     bridge.prime.messages = [_user("in the pinned chat", 10)]
     await ready(bridge)
