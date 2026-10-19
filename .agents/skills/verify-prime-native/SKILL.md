@@ -15,10 +15,12 @@ Run the executable helper with a real Prime binary only when its
 [global process-environment discovery](#doctor) is permitted.
 
 ```sh
-.agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent
+.agents/skills/verify-prime-native/scripts/verify.py --prime-path /absolute/path/to/prime-agent
 ```
 
 The helper starts a local Omnigent API server and drives `omnigent prime-native` in a PTY. It uses a local OpenAI-compatible model endpoint for deterministic replies. That endpoint replaces only the external model service. Prime, its transcript bridge, Omnigent, the host, and the runner remain real processes. The bridge is the extension on Prime 0.9.x and the daemon session bridge on 0.10 or newer.
+
+Prime's installer keeps each release's binary at `~/.local/share/prime-agent/releases/<version>-<platform>-<hash>/prime-agent`, so pass that path to drive 0.9.6 and 0.10 side by side.
 
 Readiness requires `/health` to answer and the native CLI to print the created conversation URL. The completed message proves that the bridge delivered it and Prime reached the model endpoint. Prime 0.10 has no `--no-tools`, so the drive passes it only when `prime-agent --help` lists it. The helper bounds waits by observed state. It tears down the processes it creates in `finally`.
 
@@ -52,7 +54,7 @@ whole-descendant settlement. Doctor success proves metadata prerequisites only,
 not a native turn, provider login, daemon readiness, or package completeness.
 
 ```sh
-.agents/skills/verify-prime-native/scripts/verify.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent --doctor
+.agents/skills/verify-prime-native/scripts/verify.py --prime-path /absolute/path/to/prime-agent --doctor
 ```
 
 Require the checkout path and metadata outcomes in the fresh receipts. The helper
@@ -585,7 +587,7 @@ for the remaining matrix.
 Supply an absolute path to a Python environment containing the published `prime-agent-runtime` and its dependencies. Pass the environment's `bin/python` entry directly. Resolving that symlink to the host interpreter can lose the installed environment.
 
 ```sh
-uv run --no-sync python .agents/skills/verify-prime-native/scripts/daemon_probe.py --prime-path /tmp/omnigent-prime-runtime/application/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python
+uv run --no-sync python .agents/skills/verify-prime-native/scripts/daemon_probe.py --prime-path /absolute/path/to/prime-agent --kernel-python /absolute/path/to/kernel-venv/bin/python
 ```
 
 Require exit zero and every required scenario to say `VERIFIED` before admitting a daemon transport. Any nonzero exit, `NOT VERIFIED`, or `INCONCLUSIVE` result blocks admission. The tested unmodified Prime 0.9.6 artifact reports eight verified scenarios and three unverified scenarios, and exits 1. Replay classification and the tested worker recovery failed. Keep the extension transport until a published artifact passes the gate.

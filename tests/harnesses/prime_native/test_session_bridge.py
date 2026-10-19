@@ -621,6 +621,25 @@ async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
 
 
+async def test_reattaches_to_repost_a_lost_item_back_off(backoff: float, bridge: Bridge) -> None:
+    await ready(bridge)
+    user = _user("lost while Omnigent is down", 7)
+    bridge.prime.messages = [user]
+    bridge.outage.extend([503] * 1000)
+
+    await bridge.prime.emit(
+        _event(1, {"type": "message_end", "message": user}),
+        _event(2, {"type": "agent_end", "messages": [user]}),
+    )
+
+    def item_posts(request: httpx.Request) -> bool:
+        return request.url.path.endswith("/events") and b"lost while Omnigent" in request.content
+
+    waits = await eventually(lambda: len(w := _pauses(_times(bridge, item_posts))) >= 2 and w, 10)
+    bridge.outage.clear()
+    assert _doubles(waits, backoff)
+
+
 async def test_a_lost_idle_status_is_not_posted_over_a_newer_turn(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
@@ -1049,6 +1068,38 @@ async def test_a_failing_chat_id_record_backs_off_between_attempts(
     assert _doubles(waits, backoff)
 
 
+async def test_a_first_message_and_a_switch_seen_together_keep_the_pin(bridge: Bridge) -> None:
+    await ready(bridge)
+    other = _chat(bridge)
+
+    bridge.prime.messages = [_user("first", 1)]
+    bridge.prime.tui_root = other["id"]
+
+    await eventually(lambda: _notices(bridge) == [DETACHED])
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
+    await eventually(lambda: bridge.stored == [NATIVE_ID])
+
+
+async def test_the_terminal_on_another_runtime_of_the_pinned_chat_moves_the_mirror(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    resumed = _chat(bridge, session_id=NATIVE_ID, runtime_id="eeeeeeeeeeee")
+
+    bridge.prime.tui_root = resumed["id"]
+
+    await eventually(
+        lambda: (
+            [c["activeSessionId"] for c in bridge.prime.sent("attach")]
+            == [ROOT_ID, "eeeeeeeeeeee"]
+        )
+    )
+    await asyncio.sleep(4 * TICK_S)
+    assert len(bridge.prime.sent("attach")) == 2
+    assert bridge.errors() == []
+
+
 async def test_a_listing_without_message_counts_records_the_first_chat(
     bridge: Bridge,
 ) -> None:
@@ -1119,6 +1170,24 @@ async def test_a_return_seen_while_the_departure_notice_is_in_flight_still_posts
     bridge.gate.set()
 
     await eventually(lambda: _notices(bridge) == [DETACHED, RETURNED])
+
+
+async def test_a_reconnect_while_the_departure_notice_is_in_flight_posts_it_once(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    bridge.gate.clear()
+    bridge.prime.tui_root = _chat(bridge)["id"]
+    await eventually(lambda: bridge.blocked)
+
+    bridge.prime.writers[-1].close()
+
+    await eventually(lambda: len(bridge.prime.sent("attach")) == 2)
+    bridge.gate.set()
+    await eventually(lambda: _notices(bridge) == [DETACHED])
+    await asyncio.sleep(4 * TICK_S)
+    assert len(_times(bridge, _is_notice)) == 1
 
 
 async def test_each_departure_posts_its_own_notice_pair(bridge: Bridge) -> None:
@@ -1249,10 +1318,11 @@ async def test_a_departure_notice_refused_for_credentials_is_retried(
 async def test_a_resumed_launch_answers_controls_before_the_saved_chat_is_listed(
     bridge: Bridge,
 ) -> None:
+    bridge.prime.tui_root = None
     binding = PrimeExtensionBinding(bridge.paths.root)
     assert await binding.wait_until_ready()
 
     refused = await binding.execute(Compact())
 
-    assert refused.status == ControlStatus.REJECTED
+    assert refused.status == ControlStatus.UNAVAILABLE
     assert bridge.prime.sent("attach") == []
