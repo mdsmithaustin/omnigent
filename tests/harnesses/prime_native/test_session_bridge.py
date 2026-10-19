@@ -1049,6 +1049,38 @@ async def test_a_failing_chat_id_record_backs_off_between_attempts(
     assert _doubles(waits, backoff)
 
 
+async def test_a_first_message_and_a_switch_seen_together_keep_the_pin(bridge: Bridge) -> None:
+    await ready(bridge)
+    other = _chat(bridge)
+
+    bridge.prime.messages = [_user("first", 1)]
+    bridge.prime.tui_root = other["id"]
+
+    await eventually(lambda: _notices(bridge) == [DETACHED])
+    assert [c["activeSessionId"] for c in bridge.prime.sent("attach")] == [ROOT_ID]
+    await eventually(lambda: bridge.stored == [NATIVE_ID])
+
+
+async def test_the_terminal_on_another_runtime_of_the_pinned_chat_moves_the_mirror(
+    bridge: Bridge,
+) -> None:
+    bridge.prime.messages = [_user("in the pinned chat", 10)]
+    await ready(bridge)
+    resumed = _chat(bridge, session_id=NATIVE_ID, runtime_id="eeeeeeeeeeee")
+
+    bridge.prime.tui_root = resumed["id"]
+
+    await eventually(
+        lambda: (
+            [c["activeSessionId"] for c in bridge.prime.sent("attach")]
+            == [ROOT_ID, "eeeeeeeeeeee"]
+        )
+    )
+    await asyncio.sleep(4 * TICK_S)
+    assert len(bridge.prime.sent("attach")) == 2
+    assert bridge.errors() == []
+
+
 async def test_a_listing_without_message_counts_records_the_first_chat(
     bridge: Bridge,
 ) -> None:
@@ -1249,10 +1281,11 @@ async def test_a_departure_notice_refused_for_credentials_is_retried(
 async def test_a_resumed_launch_answers_controls_before_the_saved_chat_is_listed(
     bridge: Bridge,
 ) -> None:
+    bridge.prime.tui_root = None
     binding = PrimeExtensionBinding(bridge.paths.root)
     assert await binding.wait_until_ready()
 
     refused = await binding.execute(Compact())
 
-    assert refused.status == ControlStatus.REJECTED
+    assert refused.status == ControlStatus.UNAVAILABLE
     assert bridge.prime.sent("attach") == []
