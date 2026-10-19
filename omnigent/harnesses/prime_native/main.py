@@ -321,6 +321,11 @@ async def launch_prime_terminal(ctx: NativeLaunchContext) -> SessionResourceView
                 "primeControlsDir": str(paths.controls_dir),
                 "nativeAdmission": admission.model_dump(),
                 **({"policyNotice": notice} if notice else {}),
+                **(
+                    {"externalSessionId": config.external_session_id}
+                    if config.external_session_id
+                    else {}
+                ),
             },
         )
         from omnigent.runtime.prompt import build_instructions_nullable

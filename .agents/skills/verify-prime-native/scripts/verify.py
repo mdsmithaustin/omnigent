@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -23,6 +24,7 @@ import pexpect
 import psutil
 import yaml
 
+from omnigent.harnesses.prime_native.bridge import bridge_roots
 from omnigent.harnesses.prime_native.process import MINIMUM_VERSION, meets_minimum_version
 
 REPO = Path(__file__).resolve().parents[4]
@@ -278,6 +280,273 @@ def write_prime_config(runtime: Path, model: ThreadingHTTPServer) -> None:
     )
 
 
+def tmux(metadata: dict, *args: str) -> str:
+    return subprocess.run(
+        ["tmux", "-S", metadata["tmux_socket"], *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    ).stdout
+
+
+def pane(metadata: dict) -> str:
+    return tmux(metadata, "capture-pane", "-p", "-t", metadata["tmux_target"])
+
+
+def type_into_prime(metadata: dict, text: str, *, submit: bool = True) -> None:
+    tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "-l", text)
+    if submit:
+        tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
+
+
+def runtime_root(session: str, runtime: Path) -> Path | None:
+    """This session's Prime runtime directory, which session deletion removes."""
+    roots = [*(runtime / "data" / "prime-native").glob("*"), *bridge_roots()[1].glob("*")]
+    for root in roots:
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            if json.loads((root / "config.json").read_text())["sessionId"] == session:
+                return root
+    return None
+
+
+def keep_bridge_log(session: str, runtime: Path, evidence: Path, name: str = "bridge.log") -> None:
+    """Copy this session's bridge.log into the evidence before session deletion removes it."""
+    root = runtime_root(session, runtime)
+    if root is not None:
+        with contextlib.suppress(OSError):
+            shutil.copy(root / "bridge.log", evidence / name)
+
+
+def bridge_log(session: str, runtime: Path) -> tuple[Path | None, str]:
+    """This session's runtime directory and the bridge.log text written so far."""
+    root = runtime_root(session, runtime)
+    with contextlib.suppress(OSError):
+        return root, (root / "bridge.log").read_text() if root else ""
+    return root, ""
+
+
+def chat_notices(client: httpx.Client, session: str) -> tuple[int, int]:
+    """How many detached and returned notices the web session holds."""
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    return (
+        items.count('"code": "prime_terminal_detached"'),
+        items.count('"code": "prime_terminal_returned"'),
+    )
+
+
+def keep_switch_items(client: httpx.Client, session: str, evidence: Path) -> None:
+    """Keep the session's items, whether or not the chat switch passed."""
+    with contextlib.suppress(httpx.HTTPError, OSError, ValueError):
+        items = client.get(f"/v1/sessions/{session}/items")
+        (evidence / "switch-items.json").write_text(json.dumps(items.json(), indent=2))
+
+
+def new_chat_before_any_message(
+    client: httpx.Client, session: str, runtime: Path, evidence: Path
+) -> tuple[Path, str]:
+    """
+    Type /new in Prime before any message, once the bridge holds the first chat.
+
+    :returns: The runtime directory and the abandoned chat's session UUID.
+    """
+    root = wait_for(lambda: runtime_root(session, runtime), "the Prime runtime directory")
+    log = root / "bridge.log"
+    attached = wait_for(
+        lambda: (
+            log.is_file()
+            and re.search(r"Attached to Prime session \S+ \((\S+)\)", log.read_text())
+        ),
+        "the bridge's first attach",
+    )
+
+    def terminal() -> dict | None:
+        response = client.get(
+            f"/v1/sessions/{session}/resources/terminals/terminal_prime-native_main"
+        )
+        return response.json()["metadata"] if response.is_success else None
+
+    metadata = wait_for(terminal, "the Prime terminal resource")
+    wait_for(lambda: "fixture ·" in pane(metadata), "Prime's input box")
+    type_into_prime(metadata, "/new")
+    wait_for(lambda: "started session" in pane(metadata), "the new Prime chat")
+    (evidence / "pane-new-before-message.txt").write_text(pane(metadata))
+    return root, attached.group(1)
+
+
+def check_pin_followed(
+    client: httpx.Client, session: str, root: Path, abandoned: str, prompt: str
+) -> None:
+    """The web message landed in the chat /new opened, and that chat is the one recorded."""
+    recorded = wait_for(
+        lambda: client.get(f"/v1/sessions/{session}").json().get("external_session_id"),
+        "the recorded Prime chat",
+    )
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    if recorded == abandoned or '"code": "prime_terminal_detached"' in items:
+        raise RuntimeError("The pin did not follow /new off the empty first Prime chat")
+    chat_file = root / "sessions" / f"{recorded}.jsonl"
+    wait_for(
+        lambda: chat_file.is_file() and prompt in chat_file.read_text(),
+        "the web message in the recorded Prime chat",
+        15,
+    )
+
+
+def switch_chats(
+    client: httpx.Client,
+    session: str,
+    metadata: dict,
+    evidence: Path,
+    original_prompt: str,
+) -> None:
+    """Move the terminal to a new Prime chat and back; the web session must stay on its chat."""
+    external_id = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+    prompt = f"Queued while away {uuid.uuid4().hex}. Reply with {PONG}."
+    model_requests = evidence / "model-requests.jsonl"
+
+    def items() -> object:
+        response = client.get(f"/v1/sessions/{session}/items")
+        response.raise_for_status()
+        return response.json()
+
+    def notices(code: str) -> int:
+        return json.dumps(items()).count(f'"code": "{code}"')
+
+    def replies() -> int:
+        return assistant_text(items()).count(PONG)
+
+    def external_id_unchanged() -> None:
+        current = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+        if current != external_id:
+            raise RuntimeError(f"external_session_id changed from {external_id} to {current}")
+
+    type_into_prime(metadata, "/new")
+    wait_for(lambda: notices("prime_terminal_detached") == 1, "the chat-switch notice")
+    (evidence / "pane-after-new.txt").write_text(pane(metadata))
+    other = f"Other chat {uuid.uuid4().hex}. Reply with {PONG}."
+    type_into_prime(metadata, other)
+    wait_for(lambda: other in model_requests.read_text(), "the other chat's model request")
+    action = {
+        "type": "message",
+        "data": {"role": "user", "content": [{"type": "input_text", "text": prompt}]},
+    }
+    client.post(f"/v1/sessions/{session}/events", json=action).raise_for_status()
+    time.sleep(4)
+    (evidence / "pane-while-away.txt").write_text(pane(metadata))
+    if prompt in model_requests.read_text() or prompt in pane(metadata):
+        raise RuntimeError("A web message reached the Prime chat the web session does not mirror")
+    if other in json.dumps(items()):
+        raise RuntimeError("The other Prime chat's turn was mirrored into the web session")
+    if replies() != 2 or notices("prime_terminal_detached") != 1:
+        raise RuntimeError(
+            "The other Prime chat changed the web session while the terminal was away"
+        )
+    external_id_unchanged()
+
+    type_into_prime(metadata, "/resume")
+    wait_for(lambda: "Search sessions" in pane(metadata), "the resume picker")
+    type_into_prime(metadata, original_prompt[:24], submit=False)
+    time.sleep(3)
+    (evidence / "pane-resume-picker.txt").write_text(pane(metadata))
+    if notices("prime_terminal_returned") or prompt in model_requests.read_text():
+        raise RuntimeError("The open resume picker counted as a return to the original chat")
+    tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Enter")
+    wait_for(lambda: notices("prime_terminal_returned") == 1, "the return notice")
+    wait_for(lambda: replies() == 3, "the queued message's reply")
+    time.sleep(3)
+    if (
+        replies() != 3
+        or json.dumps(items()).count(prompt) != 1
+        or model_requests.read_text().count(prompt) != 1
+    ):
+        raise RuntimeError(
+            "The queued web message was not delivered exactly once after the return"
+        )
+    if notices("prime_terminal_detached") != 1 or notices("prime_terminal_returned") != 1:
+        raise RuntimeError("The chat-switch notices were not posted exactly once each")
+    external_id_unchanged()
+
+
+def exit_prime_from_picker(metadata: dict, runtime: Path, evidence: Path) -> None:
+    """Quit Prime 0.10 with Esc in the /resume picker, which exits with status 0."""
+    type_into_prime(metadata, "/resume")
+    try:
+        # The picker keeps its last filter, so its search hint may be absent.
+        wait_for(lambda: "↑/↓ navigate" in pane(metadata), "the resume picker", 20)
+    finally:
+        (evidence / "pane-before-exit.txt").write_text(pane(metadata))
+    for _ in range(3):
+        tmux(metadata, "send-keys", "-t", metadata["tmux_target"], "Escape")
+        with contextlib.suppress(RuntimeError):
+            wait_for(lambda: not owned_prime_processes(runtime), "Prime to exit", 8)
+            return
+    raise RuntimeError("Prime did not exit after Esc in the resume picker")
+
+
+def check_resumed_chat(
+    client: httpx.Client,
+    session: str,
+    runtime: Path,
+    evidence: Path,
+    before: dict,
+    prompts: list[str],
+) -> None:
+    """
+    A relaunch with ``--resume`` mirrors the saved chat and tells the web nothing.
+
+    :param before: What was true before the relaunch: ``log`` (bridge.log text and its runtime
+        directory), ``notices`` (the chat-switch notice counts) and ``saved`` (the chat id).
+    :param prompts: Earlier messages the next model request must carry as history.
+    """
+    root = wait_for(lambda: runtime_root(session, runtime), "the relaunched runtime directory")
+    old_root, old_text = before["log"]
+
+    def fresh() -> str:
+        text = bridge_log(session, runtime)[1]
+        return text[len(old_text) :] if root == old_root and text.startswith(old_text) else text
+
+    wait_for(
+        lambda: f"({before['saved']})" in fresh() and "Attached to Prime session" in fresh(),
+        "the bridge to attach to the saved chat after the relaunch",
+    )
+    keep_bridge_log(session, runtime, evidence, "bridge-relaunch.log")
+    time.sleep(3)
+    nonce = f"After relaunch {uuid.uuid4().hex}. Reply with {PONG}."
+    replies = assistant_text(client.get(f"/v1/sessions/{session}/items").json()).count(PONG)
+    action = {
+        "type": "message",
+        "data": {"role": "user", "content": [{"type": "input_text", "text": nonce}]},
+    }
+    client.post(f"/v1/sessions/{session}/events", json=action).raise_for_status()
+    model_requests = evidence / "model-requests.jsonl"
+    wait_for(lambda: nonce in model_requests.read_text(), "the relaunch message's model request")
+    wait_for(
+        lambda: (
+            assistant_text(client.get(f"/v1/sessions/{session}/items").json()).count(PONG)
+            == replies + 1
+        ),
+        "the relaunch message's reply",
+    )
+    time.sleep(2)
+    items = json.dumps(client.get(f"/v1/sessions/{session}/items").json())
+    (evidence / "relaunch-items.json").write_text(items)
+    last = next(
+        line for line in reversed(model_requests.read_text().splitlines()) if nonce in line
+    )
+    notices = chat_notices(client, session)
+    after = client.get(f"/v1/sessions/{session}").json()["external_session_id"]
+    (evidence / "relaunch.json").write_text(
+        json.dumps({"saved": before["saved"], "after": after, "notices": notices}, indent=2)
+    )
+    if "left the chat this session mirrors" in fresh() or notices != before["notices"]:
+        raise RuntimeError("The resume relaunch posted a chat-switch notice")
+    if after != before["saved"]:
+        raise RuntimeError(f"external_session_id changed from {before['saved']} to {after}")
+    if items.count(nonce) != 1 or not all(prompt in last for prompt in prompts):
+        raise RuntimeError("The resumed chat did not carry its earlier messages to the model")
+
+
 def drive(
     prime: str,
     evidence: Path,
@@ -367,6 +636,11 @@ def drive(
                 (evidence / "session.json").write_text(
                     json.dumps({"session_id": session, "url": url})
                 )
+                daemon_bridge = "--extension" not in help_text
+                if daemon_bridge:
+                    root, abandoned = new_chat_before_any_message(
+                        client, session, runtime, evidence
+                    )
                 prompt = f"Verification request {uuid.uuid4().hex}. Reply with {PONG}."
                 action = {
                     "type": "message",
@@ -400,6 +674,8 @@ def drive(
                     prompt in json.dumps(json.loads(line).get("messages")) for line in requests
                 ):
                     raise RuntimeError("The submitted prompt never reached the model endpoint")
+                if daemon_bridge:
+                    check_pin_followed(client, session, root, abandoned, prompt)
                 native_prompt = f"Terminal request {uuid.uuid4().hex}. Reply with {PONG}."
                 (evidence / "terminal-action.json").write_text(
                     json.dumps({"text": native_prompt, "key": "Enter"})
@@ -435,6 +711,13 @@ def drive(
                 )
                 resource.raise_for_status()
                 metadata = resource.json()["metadata"]
+                if daemon_bridge:
+                    try:
+                        switch_chats(client, session, metadata, evidence, prompt)
+                    finally:
+                        keep_switch_items(client, session, evidence)
+                else:
+                    print("SKIP chat switch: Prime 0.9.x runs the extension adapter")
                 before = sorted(process.pid for process in owned_prime_processes(runtime))
                 if not before:
                     raise RuntimeError("No owned Prime process exists before detach")
@@ -490,6 +773,36 @@ def drive(
                         indent=2,
                     )
                 )
+                if daemon_bridge:
+                    before_relaunch = {
+                        "log": bridge_log(session, runtime),
+                        "notices": chat_notices(client, session),
+                        "saved": snapshot["external_session_id"],
+                    }
+                    keep_bridge_log(session, runtime, evidence, "bridge-first.log")
+                    exit_prime_from_picker(metadata, runtime, evidence)
+                    with contextlib.suppress(pexpect.TIMEOUT, pexpect.EOF):
+                        terminal.expect(pexpect.EOF, timeout=15)
+                    terminal.close(force=True)
+                    terminal = pexpect.spawn(
+                        omni,
+                        resume_args,
+                        cwd=str(runtime / "workspace"),
+                        env=env,
+                        encoding="utf-8",
+                        timeout=90,
+                        dimensions=(32, 120),
+                    )
+                    terminal.logfile_read = terminal_log
+                    terminal.expect(r"Web UI: [^\r\n]*/c/([A-Za-z0-9_-]+)")
+                    check_resumed_chat(
+                        client,
+                        session,
+                        runtime,
+                        evidence,
+                        before_relaunch,
+                        [prompt, native_prompt],
+                    )
                 (evidence / "result.json").write_text(
                     json.dumps(
                         {
@@ -507,6 +820,8 @@ def drive(
                     time.sleep(inspect_seconds)
     finally:
         cleanup_error = None
+        if session is not None:
+            keep_bridge_log(session, runtime, evidence)
         if session is not None and process is not None and process.poll() is None:
             try:
                 response = httpx.delete(f"{url}/v1/sessions/{session}", timeout=30)

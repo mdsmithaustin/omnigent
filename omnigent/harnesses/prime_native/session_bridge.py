@@ -21,9 +21,9 @@ import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -53,9 +53,83 @@ _REPOST_MAX_S = 30.0
 _REQUEST_NAME = re.compile(r"[a-f0-9]{32}\.json")
 _SUSPENDED = "queued session input is suspended"
 _STATUS = "external_session_status"
+# The statuses that mean the server refused the id itself: 400 for an invalid id or one that
+# differs from the id already set, 409 for a conflict.
+_VALUE_REFUSED = (400, 409)
+# The statuses that mean the server refused the event itself; any other failure may pass later.
+_EVENT_REFUSED = (400, 413, 422)
 
 Event = dict[str, Any]
 Outcome = dict[str, object]
+Root = dict[str, Any]
+Notice = Literal["detached", "returned"]
+_AWAY_DETAIL = (
+    "The terminal is on a different Prime chat than this web session mirrors. "
+    "Return to the original chat in the terminal."
+)
+
+
+@dataclass
+class Pin:
+    """
+    The one Prime chat this Omnigent session mirrors, and whether the terminal shows it.
+
+    ``chat`` is Prime's stable sessionId: the saved id on a resume launch, else the first
+    chat seen. ``held`` turns true once that chat has a message; until then the pin follows
+    the terminal. ``away`` is true while the terminal shows another chat and ``shown`` while
+    the web says so; ``episodes`` counts departures so each notice has its own key.
+    """
+
+    chat: str | None = None
+    held: bool = False
+    away: bool = False
+    shown: bool = False
+    episodes: int = 0
+
+    def observe(self, roots: list[Root], tui: Root | None) -> None:
+        """Record the listed root sessions and the one the terminal shows, when known."""
+        if self.chat is None and (first := tui or next(iter(roots), None)):
+            self.chat = first["sessionId"]
+        if not self.held and tui is not None and not self._has_messages(roots):
+            # Prime's /resume picker omits empty chats, so the pin follows the terminal off one.
+            self.chat = tui["sessionId"]
+        self.held = self.held or self._has_messages(roots)
+        if tui is not None:
+            away = tui["sessionId"] != self.chat
+            if away and not self.away:
+                self.episodes += 1
+            self.away = away
+
+    def _has_messages(self, roots: list[Root]) -> bool:
+        # A listing without message counts holds the pin on the first chat.
+        return any(root.get("messageCount", 1) for root in roots if root["sessionId"] == self.chat)
+
+
+@dataclass
+class Backoff:
+    """The wait before a failed request is tried again: 1 s, doubling to 30 s."""
+
+    at: float = 0.0
+    delay: float = field(default_factory=lambda: _REPOST_FIRST_S)
+
+    def ready(self) -> bool:
+        return time.monotonic() >= self.at
+
+    def failed(self) -> None:
+        self.at = time.monotonic() + self.delay
+        self.delay = min(2 * self.delay, _REPOST_MAX_S)
+
+    def succeeded(self) -> None:
+        self.delay = _REPOST_FIRST_S
+
+
+def _retryable(status: int) -> bool:
+    return status in (408, 429) or status >= 500
+
+
+def _notice_pending(status: int) -> bool:
+    """A notice must land, so only a success or a refusal of the event settles it."""
+    return not 200 <= status < 300 and status not in _EVENT_REFUSED
 
 
 def _now_ms() -> float:
@@ -87,6 +161,14 @@ class SessionBridge:
         )
         self._inbox = Path(config["inboxDir"])
         self._policy_notice: str | None = config.get("policyNotice")
+        saved = config.get("externalSessionId")
+        saved = saved if isinstance(saved, str) and saved else None
+        self._pin = Pin(chat=saved, held=saved is not None)
+        # The server keeps external_session_id write-once, and a resume launch's is already set.
+        self._recorded = saved is not None
+        self._record_failure = ""
+        self._record_backoff = Backoff()
+        self._notice_backoff = Backoff()
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
@@ -103,7 +185,7 @@ class SessionBridge:
         # Ids of consumed inbox messages, oldest first, so a re-read file is not prompted twice.
         self._delivered: dict[str, None] = {}
         self._settings_lock = asyncio.Lock()
-        self._attached = asyncio.Event()
+        self._started = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def run(self, stop: asyncio.Event) -> None:
@@ -116,7 +198,7 @@ class SessionBridge:
                     self._heartbeat,
                     self._dispatch_controls,
                     self._deliver_inbox,
-                    self._follow_tui,
+                    self._track,
                     self._retry_reposts,
                 )
             ),
@@ -135,7 +217,7 @@ class SessionBridge:
         while True:
             try:
                 async with await DaemonClient.connect(self._socket_path) as client:
-                    root = await self._root_session(client)
+                    root = await self._pinned_root(client)
                     await self._attach(client, root, post_history=not first_attach)
                     first_attach, last_failure = False, ""
                     async for envelope in client.events():
@@ -156,47 +238,124 @@ class SessionBridge:
                 self._client = None
             await asyncio.sleep(_TICK_S)
 
-    async def _root_session(self, client: DaemonClient) -> dict[str, Any]:
+    async def _pinned_root(self, client: DaemonClient) -> Root:
+        """Wait until the pinned chat is listed, noting where the terminal is meanwhile."""
         waiting = False
-        while (root := self._tui_root(await client.command("list"))) is None:
+        while (root := await self._survey(client)) is None:
+            if self._pin.chat is not None:
+                # The pinned chat is not listed yet, as on a resume launch; controls still answer.
+                self._started.set()
             if not waiting:
                 waiting = True
                 _logger.info("Waiting for a Prime root session under %s", self._paths.session_dir)
             await asyncio.sleep(_TICK_S)
         return root
 
-    def _tui_root(self, listing: dict[str, Any]) -> dict[str, Any] | None:
+    async def _survey(self, client: DaemonClient) -> Root | None:
         """
-        The root session the TUI shows, since ``/new`` and ``/resume`` switch it.
+        Note from one daemon listing where the terminal is, and tell the web when that changed.
 
-        The bridge stays on its root while another client views it, since the daemon
-        briefly still counts the bridge on a root it left. Otherwise it is the root with
-        a client besides this bridge, else the first root under this runtime's session dir.
+        :returns: The pinned chat's root to mirror, or ``None`` while it is not listed.
         """
         session_dir = self._paths.session_dir.resolve()
         roots = [
             session
-            for session in listing.get("sessions", [])
+            for session in (await client.command("list")).get("sessions", [])
             if session.get("rlmDepth") == 0
+            and isinstance(session.get("sessionId"), str)
             and isinstance(session.get("sessionFile"), str)
             and Path(session["sessionFile"]).resolve().is_relative_to(session_dir)
         ]
-        current = next((root for root in roots if root.get("id") == self._session), None)
-        viewed = [root for root in roots if _clients(root) > (root is current)]
-        if current in viewed or (current and not viewed):
-            return current
-        return viewed[0] if viewed else (roots[0] if roots else None)
+        tui = self._tui_root(roots)
+        chat, was_away = self._pin.chat, self._pin.away
+        self._pin.observe(roots, tui)
+        if chat is not None and self._pin.chat != chat:
+            _logger.info("Prime TUI left empty chat %s; following it to %s", chat, self._pin.chat)
+        if self._pin.away != was_away:
+            _logger.info(
+                "Prime TUI %s the chat this session mirrors",
+                "left" if self._pin.away else "returned to",
+            )
+        await self._announce()
+        await self._record()
+        pinned = [root for root in roots if root["sessionId"] == self._pin.chat]
+        if tui in pinned:
+            return tui
+        return next(
+            (root for root in pinned if root["id"] == self._session), next(iter(pinned), None)
+        )
 
-    async def _follow_tui(self) -> None:
+    def _tui_root(self, roots: list[Root]) -> Root | None:
+        """
+        The root the terminal shows, or ``None`` while it shows none, as in the /resume picker.
+
+        Only positive evidence counts: a client besides this bridge. The bridge attaches only to
+        the pinned chat, so a client on another chat is the terminal.
+        """
+        client = self._client
+        attached = self._session if client is not None and not client.closed else None
+        viewed = [root for root in roots if _clients(root) > (root["id"] == attached)]
+        others = [root for root in viewed if root["sessionId"] != self._pin.chat]
+        return next(iter(others or viewed), None)
+
+    async def _announce(self) -> None:
+        """Post the notice that brings the web up to date with where the terminal is."""
+        pin = self._pin
+        if pin.away == pin.shown or not self._notice_backoff.ready():
+            return
+        notice: Notice = "detached" if pin.away else "returned"
+        # A lost post is retried with backoff; the repeat carries the same key.
+        event = _pin_notice(notice, f"{self._incarnation}:{pin.episodes}")
+        if await self._post(event, retry=_notice_pending) is None:
+            self._notice_backoff.failed()
+            return
+        self._notice_backoff.succeeded()
+        pin.shown = notice == "detached"
+
+    async def _record(self) -> None:
+        """Store the pinned chat's id on the Omnigent session once the pin holds."""
+        if self._recorded or not self._pin.held or not self._record_backoff.ready():
+            return
+        try:
+            # Prime resumes by this stable UUID; the runtime id changes on every resume.
+            response = await self._http.patch(
+                self._session_url,
+                json={"external_session_id": self._pin.chat},
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            failure = repr(exc)
+        else:
+            if response.is_success or response.status_code in _VALUE_REFUSED:
+                self._recorded = True
+                if not response.is_success:
+                    _logger.warning(
+                        "Omnigent refused external_session_id %s: %s",
+                        self._pin.chat,
+                        response.status_code,
+                    )
+                return
+            failure = str(response.status_code)
+        # Any other answer, such as a stale bearer's 401, may pass later; the retry uses the
+        # current headers. Log a failure only when it changes.
+        self._record_backoff.failed()
+        if failure != self._record_failure:
+            self._record_failure = failure
+            _logger.warning("Could not record Prime session %s: %s", self._pin.chat, failure)
+
+    async def _track(self) -> None:
+        """Survey the terminal, and re-attach when the pinned chat is on another runtime."""
         client = self._client
         if client is None:
             return
         try:
-            root = self._tui_root(await client.command("list"))
+            root = await self._survey(client)
         except DaemonClosedError:
             return
-        if root is not None and root.get("id") != self._session:
-            _logger.info("Prime TUI moved to session %s; re-attaching", root.get("id"))
+        if root is not None and root["id"] != self._session:
+            _logger.info(
+                "Prime chat %s is on session %s; re-attaching", self._pin.chat, root["id"]
+            )
             await client.close()
 
     async def _retry_reposts(self) -> None:
@@ -205,17 +364,8 @@ class SessionBridge:
         if client is not None and self._unposted and idle and time.monotonic() >= self._repost_at:
             await client.close()
 
-    async def _attach(self, client: DaemonClient, root: dict[str, Any], *, post_history: bool):
+    async def _attach(self, client: DaemonClient, root: Root, *, post_history: bool):
         session = str(root["id"])
-        native_id = root.get("sessionId")
-        if isinstance(native_id, str) and native_id:
-            # Prime resumes by this stable UUID; the runtime id changes on every resume.
-            with contextlib.suppress(httpx.HTTPError):
-                await self._http.patch(
-                    self._session_url,
-                    json={"external_session_id": native_id},
-                    headers=self._headers(),
-                )
         snapshot = (await client.command("attach", activeSessionId=session)).get("snapshot", {})
         # The first attach after launch replays history Omnigent already holds.
         self._transcript, history = reconcile(
@@ -234,8 +384,8 @@ class SessionBridge:
         else:
             self._repost_delay = _REPOST_FIRST_S
         self._client, self._session = client, session
-        self._attached.set()
-        _logger.info("Attached to Prime session %s (%s)", session, native_id)
+        self._started.set()
+        _logger.info("Attached to Prime session %s (%s)", session, root["sessionId"])
         await self._publish_settings(snapshot.get("state", {}))
         with contextlib.suppress(DaemonCommandError):
             catalog = await client.command("get_available_models", activeSessionId=session)
@@ -276,7 +426,7 @@ class SessionBridge:
         return published
 
     async def _every_tick(self, step: Callable[[], Awaitable[None]]) -> None:
-        await self._attached.wait()
+        await self._started.wait()
         last_failure = ""
         while True:
             try:
@@ -294,7 +444,7 @@ class SessionBridge:
 
     async def _deliver_inbox(self) -> None:
         client = self._client
-        if client is None or not self._owns_binding():
+        if client is None or self._pin.away or not self._owns_binding():
             return
         ready = self._paths.root / "input_ready"
         if not ready.exists():
@@ -312,8 +462,8 @@ class SessionBridge:
             ):
                 path.unlink(missing_ok=True)
                 continue
-            await self._follow_tui()
-            if client.closed:
+            await self._track()
+            if client.closed or self._pin.away:
                 return
             try:
                 # Steer joins a running turn and starts one when idle.
@@ -425,6 +575,9 @@ class SessionBridge:
         client = self._client
         if handler is None:
             return {"status": "rejected", "detail": "Unsupported Prime control"}
+        # Interrupt still targets the pinned chat, so a turn left running there stays stoppable.
+        if self._pin.away and request.get("type") != "interrupt":
+            return {"status": "rejected", "detail": _AWAY_DETAIL}
         if client is None:
             return {"status": "unavailable", "detail": "Prime daemon is not attached"}
         try:
@@ -499,9 +652,11 @@ class SessionBridge:
                 self._transcript = replace(self._transcript, posted=posted)
                 self._unposted = True
 
-    async def _post(self, event: Event) -> bool | None:
+    async def _post(
+        self, event: Event, *, retry: Callable[[int], bool] = _retryable
+    ) -> bool | None:
         """
-        POST one event, retrying while the server is unreachable.
+        POST one event, retrying while the server is unreachable or *retry* holds for its status.
 
         :returns: ``True`` once accepted, ``False`` when the server rejects it,
             ``None`` when it stayed unreachable.
@@ -515,7 +670,7 @@ class SessionBridge:
                 )
             except httpx.HTTPError:
                 response = None
-            if response is not None and not _retryable(response.status_code):
+            if response is not None and not retry(response.status_code):
                 if self._unreachable:
                     self._unreachable = False
                     _logger.info("Prime bridge reaches Omnigent again")
@@ -547,13 +702,9 @@ _CONTROLS: dict[
 }
 
 
-def _clients(root: dict[str, Any]) -> int:
+def _clients(root: Root) -> int:
     clients = root.get("attachedClients")
     return clients if isinstance(clients, int) else 0
-
-
-def _retryable(status: int) -> bool:
-    return status in (408, 429) or status >= 500
 
 
 def _policy_notice(message: str) -> Event:
@@ -569,6 +720,44 @@ def _policy_notice(message: str) -> Event:
                 "message": message,
             },
             "source_id": "prime:policy-notice",
+        },
+    }
+
+
+_PIN_NOTICES: dict[Notice, tuple[str, str, str]] = {
+    "detached": (
+        "prime_terminal_detached",
+        "Terminal moved to another Prime chat",
+        "The terminal switched to another Prime chat. This web session mirrors only its "
+        "original chat, so the other chat's messages do not appear here, and messages sent "
+        "from the web wait until the terminal returns. To continue here, return to the "
+        "original chat in the terminal, for example with /resume. A chat started with /new "
+        "in this terminal is not shown on the web.",
+    ),
+    "returned": (
+        "prime_terminal_returned",
+        "Terminal is back on this chat",
+        "The terminal returned to the Prime chat this web session mirrors. "
+        "Messages sent from the web are delivered again.",
+    ),
+}
+
+
+def _pin_notice(notice: Notice, key: str) -> Event:
+    code, title, message = _PIN_NOTICES[notice]
+    return {
+        "type": "external_conversation_item",
+        "data": {
+            "response_id": f"prime-pin-{notice}-{key}",
+            "item_type": "error",
+            "item_data": {
+                "source": "execution",
+                "code": code,
+                "level": "info",
+                "title": title,
+                "message": message,
+            },
+            "source_id": f"prime:pin:{notice}:{key}",
         },
     }
 

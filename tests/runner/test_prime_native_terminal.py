@@ -283,6 +283,7 @@ async def test_provider_launch_owns_terminal_and_reuses_only_native_saved_sessio
     config = json.loads((paths.root / "config.json").read_text())
     assert config["agentLabel"] == "Prime Native"
     assert config["sessionId"] == "conv_prime"
+    assert config["externalSessionId"] == "prime-saved"
     assert any(tool["name"] == "sys_os_read" for tool in config["tools"])
     assert published[0][1]["type"] == "session.resource.created"
 
