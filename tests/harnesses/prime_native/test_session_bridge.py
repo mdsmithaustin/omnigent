@@ -621,6 +621,25 @@ async def test_an_outage_past_the_reattach_is_recovered_while_prime_is_idle(
     assert warnings == ["Prime bridge cannot post to Omnigent; failed items wait for a re-attach"]
 
 
+async def test_reattaches_to_repost_a_lost_item_back_off(backoff: float, bridge: Bridge) -> None:
+    await ready(bridge)
+    user = _user("lost while Omnigent is down", 7)
+    bridge.prime.messages = [user]
+    bridge.outage.extend([503] * 1000)
+
+    await bridge.prime.emit(
+        _event(1, {"type": "message_end", "message": user}),
+        _event(2, {"type": "agent_end", "messages": [user]}),
+    )
+
+    def item_posts(request: httpx.Request) -> bool:
+        return request.url.path.endswith("/events") and b"lost while Omnigent" in request.content
+
+    waits = await eventually(lambda: len(w := _pauses(_times(bridge, item_posts))) >= 2 and w, 10)
+    bridge.outage.clear()
+    assert _doubles(waits, backoff)
+
+
 async def test_a_lost_idle_status_is_not_posted_over_a_newer_turn(bridge: Bridge) -> None:
     await ready(bridge)
     await bridge.prime.emit(_event(1, {"type": "agent_start"}))
