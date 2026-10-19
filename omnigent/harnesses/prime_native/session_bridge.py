@@ -169,13 +169,13 @@ class SessionBridge:
         self._record_failure = ""
         self._record_backoff = Backoff()
         self._notice_backoff = Backoff()
+        self._reporting = False
         self._incarnation = str(uuid.uuid4())
         self._transcript = TranscriptState(agent_label=config.get("agentLabel") or "Prime Native")
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
         self._lost_status: Event | None = None
-        self._repost_at = 0.0
-        self._repost_delay = _REPOST_FIRST_S
+        self._repost_backoff = Backoff()
         self._unreachable = False
         self._claimed = False
         self._client: DaemonClient | None = None
@@ -276,8 +276,14 @@ class SessionBridge:
                 "Prime TUI %s the chat this session mirrors",
                 "left" if self._pin.away else "returned to",
             )
-        await self._announce()
-        await self._record()
+        if not self._reporting:
+            # A reconnect can survey while the tracker's report is still in flight.
+            self._reporting = True
+            try:
+                await self._announce()
+                await self._record()
+            finally:
+                self._reporting = False
         pinned = [root for root in roots if root["sessionId"] == self._pin.chat]
         if tui in pinned:
             return tui
@@ -361,7 +367,7 @@ class SessionBridge:
     async def _retry_reposts(self) -> None:
         client = self._client
         idle = self._transcript.loop_response_id is None
-        if client is not None and self._unposted and idle and time.monotonic() >= self._repost_at:
+        if client is not None and self._unposted and idle and self._repost_backoff.ready():
             await client.close()
 
     async def _attach(self, client: DaemonClient, root: Root, *, post_history: bool):
@@ -379,10 +385,9 @@ class SessionBridge:
                 history.append(self._lost_status)
             await self._post_all(history)
         if self._unposted:
-            self._repost_at = time.monotonic() + self._repost_delay
-            self._repost_delay = min(2 * self._repost_delay, _REPOST_MAX_S)
+            self._repost_backoff.failed()
         else:
-            self._repost_delay = _REPOST_FIRST_S
+            self._repost_backoff.succeeded()
         self._client, self._session = client, session
         self._started.set()
         _logger.info("Attached to Prime session %s (%s)", session, root["sessionId"])
