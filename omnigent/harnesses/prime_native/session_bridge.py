@@ -175,8 +175,7 @@ class SessionBridge:
         # An item failed to post; the next attach snapshot re-posts it.
         self._unposted = False
         self._lost_status: Event | None = None
-        self._repost_at = 0.0
-        self._repost_delay = _REPOST_FIRST_S
+        self._repost_backoff = Backoff()
         self._unreachable = False
         self._claimed = False
         self._client: DaemonClient | None = None
@@ -368,7 +367,7 @@ class SessionBridge:
     async def _retry_reposts(self) -> None:
         client = self._client
         idle = self._transcript.loop_response_id is None
-        if client is not None and self._unposted and idle and time.monotonic() >= self._repost_at:
+        if client is not None and self._unposted and idle and self._repost_backoff.ready():
             await client.close()
 
     async def _attach(self, client: DaemonClient, root: Root, *, post_history: bool):
@@ -386,10 +385,9 @@ class SessionBridge:
                 history.append(self._lost_status)
             await self._post_all(history)
         if self._unposted:
-            self._repost_at = time.monotonic() + self._repost_delay
-            self._repost_delay = min(2 * self._repost_delay, _REPOST_MAX_S)
+            self._repost_backoff.failed()
         else:
-            self._repost_delay = _REPOST_FIRST_S
+            self._repost_backoff.succeeded()
         self._client, self._session = client, session
         self._started.set()
         _logger.info("Attached to Prime session %s (%s)", session, root["sessionId"])
