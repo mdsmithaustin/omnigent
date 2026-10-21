@@ -15,7 +15,7 @@ Omnigent is an open-source **meta-harness** that gives you a common orchestratio
 
 </div>
 
-This fork builds on the released upstream `v0.18.0` tag. To install and verify
+This fork builds on the released upstream `v0.19.0` tag. To install and verify
 the fork with its Prime and skill-command addons, follow the
 [fork release guide](docs/FORK_RELEASES.md).
 The certified Python fork uses [separate local defaults](docs/FORK_DEFAULTS.md)

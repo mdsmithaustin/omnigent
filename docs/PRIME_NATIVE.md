@@ -10,7 +10,7 @@ is `prime-native-ui`.
 Install Prime Agent **0.9.6 or newer** and `tmux` on macOS or Linux. Omnigent
 chooses the transcript bridge from the binary's `--help`. A release that lists
 `--extension` (0.9.x) loads the Omnigent extension. That path is deprecated and
-is removed in Omnigent 0.19.0. A release without it, such as the 0.10.0 Rust
+is removed in Omnigent 0.20.0. A release without it, such as the 0.10.0 Rust
 build, runs with a [daemon bridge](#prime-010-daemon-bridge) instead. Releases
 other than 0.9.6 and 0.10.0 are not separately qualified. Stop and the 0.10
 bridge require daemon protocol 7 and schema revision 30. Configure Prime's authentication

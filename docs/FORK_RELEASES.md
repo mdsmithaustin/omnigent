@@ -2,7 +2,9 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.18.0+mdsmithaustin.6`, upstream `0.18.0` plus fork addon revision `6`. Once published, its GitHub release tag is `mdsmithaustin/v0.18.0-r6` and its title is `Omnigent 0.18.0, mdsmithaustin revision 6`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.18.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.19.0+mdsmithaustin.1`, upstream `0.19.0` plus fork addon revision `1`. Once published, its GitHub release tag is `mdsmithaustin/v0.19.0-r1` and its title is `Omnigent 0.19.0, mdsmithaustin revision 1`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.19.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
+
+Revision `.1` replays the `0.18.0` fork line onto upstream `v0.19.0`. The Prime 0.9 `--extension` path stays, and its removal moves to Omnigent `0.20.0`.
 
 Revision `.6` runs Prime Native on Prime `0.10`, which dropped `--extension`, through a bridge over Prime's daemon socket. On `0.10`, policies cannot block Prime's own tools, and Omnigent shows a warning when an agent has such policies; see [Prime Native](PRIME_NATIVE.md). Prime `0.9.x` keeps the extension path, deprecated for removal in Omnigent `0.19.0`. Hosts that pinned `OMNIGENT_PRIME_PATH` to a `0.9.6` binary can drop the pin. It also fixes test flakes in web, cursor and relay tests. Upgrade `.5` with `omnigent-fork upgrade`.
 
@@ -130,7 +132,7 @@ Successful output includes `8 distributions; scoped integrity, not independent a
 Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork upgrade` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Each command must exit zero.
 
 ```sh
-version=0.18.0+mdsmithaustin.6
+version=0.19.0+mdsmithaustin.1
 venv="$HOME/.local/share/omnigent-fork/$version"
 uv venv --python 3.12 "$venv"
 uv pip install --python "$venv/bin/python" dist/*.whl
@@ -162,7 +164,7 @@ Use separate virtual environments for upstream and the fork. `$venv` is the fork
 
 ```sh
 uv venv --python 3.12 /tmp/omnigent-upstream-install
-(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.18.0')
+(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.19.0')
 "$venv/bin/python" -I scripts/verify_fork_coexistence.py \
     --upstream-python /tmp/omnigent-upstream-install/bin/python \
     --fork-python "$venv/bin/python" \
@@ -190,23 +192,25 @@ Cut revision `N` as two pull requests to `main`. Replace `N` with the next posit
 1. Stamp the version. This is an ordinary pending commit. Each command must exit zero.
 
    ```sh
-   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.18.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.19.0+mdsmithaustin.N
    uv lock
    python scripts/normalize_uv_lock_registry.py uv.lock
-   uv run --no-sync python scripts/update_versions.py check --expect 0.18.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py check --expect 0.19.0+mdsmithaustin.N
    ```
 
 2. After the first PR merges, inventory the pending commits on a branch from `main`.
 
    ```sh
-   python scripts/fork_release.py inventory --version 0.18.0+mdsmithaustin.N
+   python scripts/fork_release.py inventory --version 0.19.0+mdsmithaustin.N
    ```
 
    It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
 
-The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.18.0-rN` on that commit with the title `Omnigent 0.18.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.18.0+mdsmithaustin.N`.
+The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.19.0-rN` on that commit with the title `Omnigent 0.19.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.19.0+mdsmithaustin.N`.
 
 ## Sync to a new upstream tag
+
+The `v0.19.0` sync repeated the steps below, starting from `v0.18.0`, and stamped `0.19.0+mdsmithaustin.1`.
 
 Rebuild `main` on a published stable upstream tag instead of merging upstream. A merge would place upstream history after the pinned tag, which `check-line` rejects, and would hide which fork commits remain. Replay keeps the fork as a short, reviewable patch series on the new tag. For `v0.18.0`:
 
