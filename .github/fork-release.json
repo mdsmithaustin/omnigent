@@ -1,6 +1,769 @@
 {
-  "addons": [],
-  "payload_commit": "d43340fec4e7d2d767f319d715e84aa82f4d1bc8",
+  "addons": [
+    {
+      "applied_commit": "3a45b67d08aecc16cf32828c87b829363dfa09e5",
+      "name": "build-prepare-fork-certification-checks-for-v0-1-3a45b67d08ae",
+      "reason": "build: prepare fork certification checks for v0.17.0",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "de7d914d26b6dd40a1895ad87a0978dfa12da895",
+      "name": "feat-prime-native-port-existing-addon-to-release-de7d914d26b6",
+      "reason": "feat(prime-native): port existing addon to released v0.17",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "dba0a57397a3db8367aa1d213a0a7d94665479be",
+      "name": "feat-skills-port-native-command-admission-and-re-dba0a57397a3",
+      "reason": "feat(skills): port native command admission and recovery to v0.17",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3f0833b460b11d9d4f01f1a0be46dd7266790555",
+      "name": "docs-map-prime-native-verification-entry-points-3f0833b460b1",
+      "reason": "docs: map Prime native verification entry points",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "06bddc2c10342f46bd2d71fdacd3cdd63e48250d",
+      "name": "test-type-prime-preflight-collaborators-and-trim-06bddc2c1034",
+      "reason": "test: type Prime preflight collaborators and trim comments",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "75489a6993fbc8051a38b75413816a8d5f0434e3",
+      "name": "docs-direct-fork-installation-to-release-verific-75489a6993fb",
+      "reason": "docs: direct fork installation to release verification guide",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "81181e017aeb5038b3bb73ebb42de42cff8abadb",
+      "name": "docs-include-skill-recovery-replay-regressions-81181e017aeb",
+      "reason": "docs: include skill recovery replay regressions",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ba9df6201d2024ab533b38b97f0db31906ca479e",
+      "name": "build-require-the-qualified-filelock-version-for-ba9df6201d20",
+      "reason": "build: require the qualified filelock version for native ownership",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4cc39597b51b078539cc49b4e8a56d5dc7cf5296",
+      "name": "fence-native-source-forks-with-durable-owner-sto-4cc39597b51b",
+      "reason": "Fence native source forks with durable owner Stop authority",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c7b9caf4954dd90a6623005c3036a4097697bb55",
+      "name": "bind-native-startup-and-stop-to-original-source-c7b9caf4954d",
+      "reason": "Bind native startup and Stop to original source ownership",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c77db9919c72d31db836a2bb2d1d5fca26b745b6",
+      "name": "fix-refresh-native-stop-schema-and-name-launch-l-c77db9919c72",
+      "reason": "fix: refresh native Stop schema and name launch lock ownership",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7afd193a6fd7df1bb856ae63b29c238206a3f063",
+      "name": "docs-correct-prime-switch-and-lifecycle-qualific-7afd193a6fd7",
+      "reason": "docs: correct Prime switch and lifecycle qualification limits",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b2ec52f3db66d26ee19c3e6cca424910f4dfeba4",
+      "name": "fix-require-runner-proof-for-native-source-owner-b2ec52f3db66",
+      "reason": "fix: require runner proof for native source ownership",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2239895a3b76ea5766f59dc1438c4f45e4b2b6f8",
+      "name": "fix-preserve-native-skill-ingress-across-stop-2239895a3b76",
+      "reason": "fix: preserve native skill ingress across Stop",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "96f3535fc5394a400d11baeacb9a2233ad4d8ff6",
+      "name": "test-exercise-native-skill-readiness-and-deferre-96f3535fc539",
+      "reason": "test: exercise native skill readiness and deferred writer admission",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5f78072de86aa021c832b224d5ac7af74f57bb5c",
+      "name": "run-required-codex-parity-in-fork-release-certif-5f78072de86a",
+      "reason": "Run required Codex parity in fork release certification",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "57fb62c29562c51939647d4836b2b3645731a070",
+      "name": "bind-the-repaired-v0-17-fork-payload-and-release-57fb62c29562",
+      "reason": "Bind the repaired v0.17 fork payload and release decisions",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0efedc90c1cf267ba1da04cf968d84f72665b543",
+      "name": "fix-clear-native-stop-fence-when-runner-shutdown-0efedc90c1cf",
+      "reason": "fix: clear native Stop fence when runner shutdown fails",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1db5292f1d01c767ed01e4820edfedb124d41d32",
+      "name": "test-update-snapshot-store-fake-for-native-sourc-1db5292f1d01",
+      "reason": "test: update snapshot store fake for native source lookup",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4f773d6679eee23dfd38493aca9a2a8600d9c7af",
+      "name": "test-runner-align-native-session-fixtures-with-a-4f773d6679ee",
+      "reason": "test(runner): align native session fixtures with admission contracts",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "14ec6200faf3a7e5d3e4b2e526161c0d40c0dbe0",
+      "name": "repair-host-model-and-prime-admission-fixtures-14ec6200faf3",
+      "reason": "Repair host model and Prime admission fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "aaa8e7fdb234e6f957f8f82a3aed0182f2f94efe",
+      "name": "test-runner-initialize-native-admission-fixtures-aaa8e7fdb234",
+      "reason": "test(runner): initialize native admission fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "134ae3e0b85bcd5d10f199add603f70fb1e68542",
+      "name": "test-runner-align-control-fixtures-with-native-s-134ae3e0b85b",
+      "reason": "test(runner): align control fixtures with native source contracts",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "9681bb0397ca118a29340f3cec00600159704a51",
+      "name": "test-supply-native-proof-invalidation-in-resourc-9681bb0397ca",
+      "reason": "test: supply native proof invalidation in resource route fixture",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a5f1efc5bc35ab6282d3d74a59e8d44e40fdd2db",
+      "name": "test-server-qualify-native-source-fixtures-befor-a5f1efc5bc35",
+      "reason": "test(server): qualify native source fixtures before forking",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "70abe436208a002bdff6714af07901d6b8d8a0bb",
+      "name": "test-codex-supply-source-admission-to-startup-fi-70abe436208a",
+      "reason": "test(codex): supply source admission to startup fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3ec7f976f25a5b598c1ef31113acfb77f7066e99",
+      "name": "build-inventory-verified-ci-contract-repairs-for-3ec7f976f25a",
+      "reason": "build: inventory verified CI contract repairs for fork release",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "975b51429e82e22c2597872c03666ba94ad6ffca",
+      "name": "fix-verification-follow-native-restart-and-fork-975b51429e82",
+      "reason": "fix(verification): follow native restart and fork clone identities",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c44af05dcfb076b3067635c46ffdb81208f717eb",
+      "name": "test-runner-isolate-claude-catalog-subscription-c44af05dcfb0",
+      "reason": "test(runner): isolate Claude catalog subscription fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5ca752975dcdae0ed8bf92611bec785b27e077dd",
+      "name": "test-runner-refresh-prime-binding-proof-after-fi-5ca752975dcd",
+      "reason": "test(runner): refresh Prime binding proof after fixture setup",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c44f8ea0666ea3ef16ffa5ed107dcf9670be8558",
+      "name": "build-inventory-final-installed-verifier-and-run-c44f8ea0666e",
+      "reason": "build: inventory final installed verifier and runner fixture repairs",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "30e33905e115fed098f722cb5b46a542062a0270",
+      "name": "test-verify-fork-and-upstream-local-server-coexi-30e33905e115",
+      "reason": "test: verify fork and upstream local server coexistence",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8eda51a956f2b2f01954b700a95ecb0f3ac6df33",
+      "name": "isolate-default-core-and-terminal-state-for-the-8eda51a956f2",
+      "reason": "Isolate default core and terminal state for the fork",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "96b263172f0bfc53911bb3efb42ff9f897faffdf",
+      "name": "build-require-installed-fork-coexistence-accepta-96b263172f0b",
+      "reason": "build: require installed fork coexistence acceptance",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a0c47e76d68730726fae787636c106fec4819453",
+      "name": "isolate-native-runtime-defaults-for-the-fork-ins-a0c47e76d687",
+      "reason": "Isolate native runtime defaults for the fork installation",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1e2ac6e09a9e83276740aef6012c49056fe2dbbb",
+      "name": "isolate-secondary-fork-storage-and-sandbox-confi-1e2ac6e09a9e",
+      "reason": "Isolate secondary fork storage and sandbox config writers",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0fb5d12bb77a0e92148a1730546470d57dc1a527",
+      "name": "isolate-fork-instance-identities-and-recorded-sh-0fb5d12bb77a",
+      "reason": "Isolate fork instance identities and recorded shutdown",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "e6b72d993a3f951ecb0206bfdb2e02bc3424c069",
+      "name": "prepare-revision-2-with-isolated-defaults-and-co-e6b72d993a3f",
+      "reason": "Prepare revision .2 with isolated defaults and coexistence guidance",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "85cc4e723f4fbb9c2676baa02c69619a71a47f05",
+      "name": "audit-isolation-comments-and-wrap-the-default-lo-85cc4e723f4f",
+      "reason": "Audit isolation comments and wrap the default log path contract",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "247141248a89d9c2e9f4a362e6f3a13d9572360e",
+      "name": "qualify-fork-identities-and-install-released-ups-247141248a89",
+      "reason": "Qualify fork identities and install released upstream outside source",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5ff852832b37acac73d9c5c235d53840ac5f48aa",
+      "name": "inventory-the-reviewed-qualification-repairs-for-5ff852832b37",
+      "reason": "Inventory the reviewed qualification repairs for revision .2",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c180ca945cdda305a12a76187342be128261eeb2",
+      "name": "align-regression-fixtures-with-isolated-fork-def-c180ca945cdd",
+      "reason": "Align regression fixtures with isolated fork defaults",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "bd4e8bcea7e6f1e79de819e845604c2b6d2e37d2",
+      "name": "pin-revision-2-to-the-qualified-fixture-repair-bd4e8bcea7e6",
+      "reason": "Pin revision .2 to the qualified fixture repair",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3b402fd251d958052b36f554689a476f3d0a527b",
+      "name": "fix-codex-native-preserve-runner-admission-clien-3b402fd251d9",
+      "reason": "fix(codex-native): preserve runner admission client",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1b27299bc01421b9b0be7d48485caa8553782739",
+      "name": "fix-skills-check-delivery-only-when-uncertain-1b27299bc014",
+      "reason": "fix(skills): check delivery only when uncertain",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "eb36dc1a659dbb03be64e84406f0d321905c015d",
+      "name": "test-host-reproduce-stop-watcher-race-during-pen-eb36dc1a659d",
+      "reason": "test(host): reproduce stop watcher race during pending termination",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "562359fe9e918e51ac163ca2ff652915f8c318a9",
+      "name": "fix-host-honor-stop-intent-in-the-runner-exit-wa-562359fe9e91",
+      "reason": "fix(host): honor stop intent in the runner exit watcher",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "beed876fe799dc7637012b2b69a256163c09761b",
+      "name": "test-native-follow-installation-defaults-in-sess-beed876fe799",
+      "reason": "test(native): follow installation defaults in session fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ea28efe1fd8a15c984964f0af8b35ea07189b5da",
+      "name": "test-native-target-the-installed-bridge-security-ea28efe1fd8a",
+      "reason": "test(native): target the installed bridge security ancestor",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "27af18ec652d0770c5b8807bba4444cdfde0ce70",
+      "name": "test-native-provide-isolated-admission-to-native-27af18ec652d",
+      "reason": "test(native): provide isolated admission to native launch fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ecc723742eb50fdb46f7bf74f613755bc6829bc5",
+      "name": "test-use-installation-defaults-in-cli-fixtures-ecc723742eb5",
+      "reason": "test: use installation defaults in CLI fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "30383566017da04f8de5dff5a9c2e1ab2c081960",
+      "name": "fix-ui-host-identity-and-oidc-cookie-fixtures-30383566017d",
+      "reason": "Fix UI host identity and OIDC cookie fixtures",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0d3cb3b913789a03783bed4e3ac8ad7cac01b37b",
+      "name": "test-follow-fork-lifecycle-record-and-log-paths-0d3cb3b91378",
+      "reason": "test: follow fork lifecycle record and log paths",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7b6ffd2e4fbb213e31f3e7828a85b8ef941ec90a",
+      "name": "test-isolate-host-identity-fixture-config-7b6ffd2e4fbb",
+      "reason": "test: isolate host identity fixture config",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "25b5909c6328352063ce0606c72b804291d32316",
+      "name": "test-observe-completed-repl-turns-before-recover-25b5909c6328",
+      "reason": "test: observe completed REPL turns before recovery",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "23e3a168ba21f4889f79124c09f622fde135b996",
+      "name": "test-exclude-prime-native-from-direct-repl-matri-23e3a168ba21",
+      "reason": "test: exclude prime-native from direct REPL matrix",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "88602dff5c3a7de00dd679dea4e9bab6f4f55b1e",
+      "name": "test-remove-fixture-suppressions-and-close-host-88602dff5c3a",
+      "reason": "test: remove fixture suppressions and close host logs",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7db5829867ec14d266a811b6921f40e8e7216ac1",
+      "name": "fix-tests-use-installation-namespace-for-local-s-7db5829867ec",
+      "reason": "fix(tests): use installation namespace for local server pidfile",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1192be1a9f170798e0d118ab32bab31773f3263a",
+      "name": "test-pi-native-check-routing-warnings-before-ter-1192be1a9f17",
+      "reason": "test(pi-native): check routing warnings before terminal errors",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ef40661b07f32023a0e817ab65a111dd15087d44",
+      "name": "test-trim-routing-and-pidfile-fixture-narration-ef40661b07f3",
+      "reason": "test: trim routing and pidfile fixture narration",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "640276d1c5e51ba494833aee69415e6202808920",
+      "name": "build-fork-release-cut-releases-from-main-23-640276d1c5e5",
+      "reason": "build(fork-release): cut releases from main (#23)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1e8a327ffcee53daa17a5a8e742782a81b73f242",
+      "name": "chore-no-mistakes-restore-the-push-gate-config-o-1e8a327ffcee",
+      "reason": "chore(no-mistakes): restore the push gate config on the v0.17.0-based main (#22)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ca11016b70d70c11339a123e614aa74f35ac063b",
+      "name": "perf-codex-native-read-rollout-skills-incrementa-ca11016b70d7",
+      "reason": "perf(codex-native): read rollout skills incrementally off the event loop (#25)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ab4c0d06832994aeab45cd68099a667d174b7c70",
+      "name": "fix-db-retry-cockroachdb-migrations-and-isolate-ab4c0d068329",
+      "reason": "fix(db): retry CockroachDB migrations and isolate DB lifecycle tests (#26)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d3a7b8dc3632ab506c78aafae9323dcc35138d91",
+      "name": "test-stabilize-repl-clipboard-and-native-seccomp-d3a7b8dc3632",
+      "reason": "test: stabilize REPL, clipboard, and native seccomp checks (#24)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "077d17f2e60aa29d51346e437f9b47c337a43456",
+      "name": "fix-prime-native-idle-cleanup-and-finite-verific-077d17f2e60a",
+      "reason": "fix(prime-native): idle cleanup and finite verification (#28)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b3bb05d5912549656f48c31f11fda0c63fdad5f5",
+      "name": "perf-db-index-workspace-agent-name-lookups-by-id-b3bb05d59125",
+      "reason": "perf(db): index workspace agent-name lookups by ID (#27)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "fa4e8eb103a4ea522d24f7f5e2dcd9543563edcd",
+      "name": "refactor-prime-native-name-runtime-files-and-rou-fa4e8eb103a4",
+      "reason": "refactor(prime-native): name runtime files and route interrupts through the hook (#29)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "60d079ef2c45b45be50deba160531fcf3a8d0217",
+      "name": "fix-mcp-bound-connection-lifecycle-and-preserve-60d079ef2c45",
+      "reason": "fix(mcp): bound connection lifecycle and preserve native tool error context (#30)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "f5b88158a595869d6b8a821f26fe238eb1c78a85",
+      "name": "test-mcp-close-lifecycle-review-follow-ups-32-f5b88158a595",
+      "reason": "test(mcp): close lifecycle review follow-ups (#32)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d0f8a0b1c44bb3eed6c828827e90694f539ae147",
+      "name": "docs-prime-qualify-readiness-and-refusal-verific-d0f8a0b1c44b",
+      "reason": "docs(prime): qualify readiness and refusal verification (#31)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7015131dc6424dbbd34863903534d0d4e317bcc0",
+      "name": "docs-restore-accurate-upstream-comments-and-docs-7015131dc642",
+      "reason": "docs: restore accurate upstream comments and docstrings (#33)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1980727cf17ad5ba2c9e070119014aa9991ec1dd",
+      "name": "fix-isolate-prime-metadata-doctor-checks-1980727cf17a",
+      "reason": "fix: isolate Prime metadata doctor checks",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "6d152207433532a6e5b3768f9fdda7b64e29a953",
+      "name": "chore-release-inventory-0-17-0-mdsmithaustin-4-3-6d1522074335",
+      "reason": "chore(release): inventory 0.17.0+mdsmithaustin.4 (#36)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2dd91cf20dddf55f3bab6f6a45cea0874bcd4879",
+      "name": "fix-prime-native-own-unreadable-processes-only-t-2dd91cf20ddd",
+      "reason": "fix(prime-native): own unreadable processes only through verified lineage (#37)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "50485f6f80de9d2181f8984de68b5b5111ef3cf1",
+      "name": "test-prime-native-keep-controls-and-terminal-tes-50485f6f80de",
+      "reason": "test(prime-native): keep controls and terminal tests out of the shared compact root (#39)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "67b85c914b4656ab598a5185cf1d99982e6cc28d",
+      "name": "fix-prime-native-wait-for-exiting-unreadable-pro-67b85c914b46",
+      "reason": "fix(prime-native): wait for exiting unreadable processes during stop (#40)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "cb4f1afab9d29e96044952b68dc4e0d9e07e2d2f",
+      "name": "fix-prime-native-remove-runtimes-of-server-confi-cb4f1afab9d2",
+      "reason": "fix(prime-native): remove runtimes of server-confirmed deleted sessions (#41)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "e8876d013a436a7c3724b66d7661e9729949480d",
+      "name": "fix-prevent-prime-verification-stalls-and-recogn-e8876d013a43",
+      "reason": "fix: prevent Prime verification stalls and recognize maintenance cleanup (#42)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "862d52de65c787861f0ec1276726b3fe5319e285",
+      "name": "test-restart-owned-hosts-for-prime-probe-cleanup-862d52de65c7",
+      "reason": "test: restart owned hosts for Prime probe cleanup (#43)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d8065edfcf00f07ad2acc8442dce8a54c9168919",
+      "name": "fix-native-admission-make-deletion-tombstones-ro-d8065edfcf00",
+      "reason": "fix(native-admission): make deletion tombstones rollback-safe and expiring (#45)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4b1ede4f3595c2be7a516957cbbfc8115a18bc60",
+      "name": "test-prime-native-remove-marker-and-startup-race-4b1ede4f3595",
+      "reason": "test(prime-native): remove marker and startup races in launch-recovery tests (#44)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3a5b7a640ad3ed2afe8bea7849aaa4257fc64f01",
+      "name": "chore-release-stamp-0-17-0-mdsmithaustin-5-46-3a5b7a640ad3",
+      "reason": "chore(release): stamp 0.17.0+mdsmithaustin.5 (#46)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b8b16ab1d5abcde6c53df2aa8acddd9759c4f951",
+      "name": "chore-release-inventory-0-17-0-mdsmithaustin-5-4-b8b16ab1d5ab",
+      "reason": "chore(release): inventory 0.17.0+mdsmithaustin.5 (#47)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7f524d4a29a313f472f24314c1e25d9836ca74ff",
+      "name": "fix-prime-native-share-the-host-prime-login-acro-7f524d4a29a3",
+      "reason": "fix(prime-native): share the host Prime login across conversations (#48)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ced7ed7316caae810d3078822edb1a5f2c31cb70",
+      "name": "chore-release-stamp-0-17-0-mdsmithaustin-6-49-ced7ed7316ca",
+      "reason": "chore(release): stamp 0.17.0+mdsmithaustin.6 (#49)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "788ca09afa30e931c890bdc35adcd7804462edb8",
+      "name": "chore-release-inventory-0-17-0-mdsmithaustin-6-5-788ca09afa30",
+      "reason": "chore(release): inventory 0.17.0+mdsmithaustin.6 (#50)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "01a1a3a8b16cfeab6ed61ccc2efe1ef94c8f78e0",
+      "name": "fix-native-purge-orphan-tombstones-by-deletion-t-01a1a3a8b16c",
+      "reason": "fix(native): purge orphan tombstones by deletion time alone (#51)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0fb9aa820729c62d89d5c66cbb7a2da4bbd4a365",
+      "name": "test-prime-native-fail-a-stuck-fake-prime-daemon-0fb9aa820729",
+      "reason": "test(prime-native): fail a stuck fake Prime daemon in 30 s with its stderr (#52)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c01839c31071d8ba6bc10af32850fa49917f631f",
+      "name": "refactor-release-drop-release-checks-that-add-no-c01839c31071",
+      "reason": "refactor(release): drop release checks that add no guarantee (#53)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "f0e9594fc799e18f1cd6dfa1675e63ab068a0b77",
+      "name": "chore-release-adopt-owner-prefixed-fork-tags-and-f0e9594fc799",
+      "reason": "chore(release): adopt owner-prefixed fork tags and readable titles",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "f036413817cfa3f9b160595e540c4d1502e3ab56",
+      "name": "fix-prime-probe-report-a-rotated-login-and-snaps-f036413817cf",
+      "reason": "fix(prime-probe): report a rotated login and snapshot probe sources (#54)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d28c94c3894bce3c6875926c10da89e92f2efede",
+      "name": "test-prime-native-fail-wrapper-waits-loudly-and-d28c94c3894b",
+      "reason": "test(prime-native): fail wrapper waits loudly and widen control expiry (#56)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "459c0c5d09c23071f0fbc6ec609a4a73f48eb56f",
+      "name": "fix-prime-native-give-the-prime-wrapper-a-stop-c-459c0c5d09c2",
+      "reason": "fix(prime-native): give the Prime wrapper a stop contract for each launch state (#57)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2644f2b057c28996aa54171514e4fad84cb1bbcd",
+      "name": "docs-release-record-fork-releases-by-tag-only-58-2644f2b057c2",
+      "reason": "docs(release): record fork releases by tag only (#58)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "651862356489dbf79a6386822508cfd9bd5b8df9",
+      "name": "docs-point-fork-install-guidance-at-upstream-v0-651862356489",
+      "reason": "docs: point fork install guidance at upstream v0.18.0",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "78b7355a90785c48557b12dff3023c93c1ed3d8d",
+      "name": "chore-release-pin-the-fork-manifest-to-upstream-78b7355a9078",
+      "reason": "chore(release): pin the fork manifest to upstream v0.18.0",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "7dce2e03c7411c6a853c9cd9714516bdb01796f8",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-1-7dce2e03c741",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.1",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "641c6aab0eff9e9d2ac6d444dcbd0129eebf94d2",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-1-641c6aab0eff",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.1",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "194d54e6c8b059498773dc6a4533a8142d37c0f3",
+      "name": "test-e2e-read-isolated-stack-logs-from-its-pinne-194d54e6c8b0",
+      "reason": "test(e2e): read isolated-stack logs from its pinned data dir (#62)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "1cb43897c87990bc14fe74b60f8ef4a0bb05aa2e",
+      "name": "fix-sessions-refuse-native-stop-while-the-host-r-1cb43897c879",
+      "reason": "fix(sessions): refuse native Stop while the host runner is unreachable (#61)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "6ada930801ff878d91fcc6089110ee8b35df2958",
+      "name": "fix-install-ledger-record-the-running-version-in-6ada930801ff",
+      "reason": "fix(install-ledger): record the running version instead of executing omnigent from PATH (#60)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8fa3f4844dbd8439f2978ab278a610df630feb1a",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-2-63-8fa3f4844dbd",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.2 (#63)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a6e6a418aed1800cc1fea9df346f1e7c0ae9289a",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-2-6-a6e6a418aed1",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.2 (#64)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "4907d81e315ef041c4c8e15ebe6b7623bede8ecd",
+      "name": "test-guardrails-capture-the-blank-db-debug-line-4907d81e315e",
+      "reason": "test(guardrails): capture the blank-DB debug line on its own logger (#67)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "03706fd92e97db18f8a3a6daa3cacf7e40761817",
+      "name": "fix-web-show-skill-admission-only-when-delivery-03706fd92e97",
+      "reason": "fix(web): show skill admission only when delivery needs attention (#66)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2f199b35bfdf6f13ec792ae1e03c58f1cd08f348",
+      "name": "feat-update-check-track-the-fork-s-github-releas-2f199b35bfdf",
+      "reason": "feat(update-check): track the fork's GitHub Releases on fork builds (#68)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a74e24a92ad487074782afc02fb7df0d740e988c",
+      "name": "fix-prime-native-accept-newer-prime-releases-tha-a74e24a92ad4",
+      "reason": "fix(prime-native): accept newer Prime releases that still load extensions (#65)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "46d5c150e7f1b58e856700f730dacfbc3c44ed09",
+      "name": "feat-upgrade-install-newer-fork-releases-on-fork-46d5c150e7f1",
+      "reason": "feat(upgrade): install newer fork releases on fork builds (#69)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "ba7ca8e34ec7b606c4f92359d75d0934dd753cee",
+      "name": "fix-onboarding-install-only-an-extra-s-packages-ba7ca8e34ec7",
+      "reason": "fix(onboarding): install only an extra's packages on fork builds (#70)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "c43f0cf5453502b0813af974fec0fd769d8d6673",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-3-71-c43f0cf54535",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.3 (#71)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b90df238f7d1073e296e040bfe0aca4584729e8a",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-3-7-b90df238f7d1",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.3 (#72)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8876d9927b46298366bfcfc02ff86aae24e2a361",
+      "name": "fix-upgrade-accept-fork-release-assets-whose-url-8876d9927b46",
+      "reason": "fix(upgrade): accept fork release assets whose URL encodes the version's + (#73)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "47ffdf1d0f6eeaa1a6219b3e6736a50d4f72c671",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-4-74-47ffdf1d0f6e",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.4 (#74)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8520307f800ef1284827803e30a920bfd8d81a9e",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-4-7-8520307f800e",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.4 (#75)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "5b70d823c3ab4a08f5fac92cc74aedd0717d7697",
+      "name": "test-prime-wait-for-the-queued-setting-before-ti-5b70d823c3ab",
+      "reason": "test(prime): wait for the queued setting before timing its budget (#76)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "97b3ece33d4784807dad9d7bf2b5c02ad74f97f5",
+      "name": "fix-os-env-keep-the-bwrap-helper-alive-across-re-97b3ece33d47",
+      "reason": "fix(os_env): keep the bwrap helper alive across request threads (#77)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d869d23931f3d9b237afd98ec96ee486c54e966e",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-5-78-d869d23931f3",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.5 (#78)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b4415a57aea6d1603a86487ab74feb367c1a419b",
+      "name": "chore-release-inventory-0-18-0-mdsmithaustin-5-7-b4415a57aea6",
+      "reason": "chore(release): inventory 0.18.0+mdsmithaustin.5 (#79)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3aae3c6412772d24a6ad36368d91c1af9b2f6f6f",
+      "name": "test-web-drain-sonner-close-timers-before-jsdom-3aae3c641277",
+      "reason": "test(web): drain sonner close timers before jsdom teardown (#80)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "9b661f6f39c3a51373f31d6c330fdd886af04297",
+      "name": "test-stop-a-pytest-plugin-s-rich-log-handler-fro-9b661f6f39c3",
+      "reason": "test: stop a pytest plugin's rich log handler from stalling relay tests (#82)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "49e7dae364d75e55eaf9435740d5f91964f20b2f",
+      "name": "test-cursor-scale-the-damaged-stop-marker-hang-g-49e7dae364d7",
+      "reason": "test(cursor): scale the damaged-stop-marker hang guard (#81)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "d2fa7c4ac6a2582891eb69d7cd7a89bb44ae062c",
+      "name": "feat-prime-native-support-prime-agent-0-10-via-a-d2fa7c4ac6a2",
+      "reason": "feat(prime-native): support prime-agent 0.10 via a daemon-socket bridge (#83)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "47b3e90452c6ba6bf0af5a0b8ca0415a87bc6152",
+      "name": "chore-release-stamp-0-18-0-mdsmithaustin-6-84-47b3e90452c6",
+      "reason": "chore(release): stamp 0.18.0+mdsmithaustin.6 (#84)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "aa7d72457ab081ec06348b6067858d1a320918aa",
+      "name": "chore-release-pin-the-fork-manifest-to-upstream-aa7d72457ab0",
+      "reason": "chore(release): pin the fork manifest to upstream v0.19.0",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "3a21b8b71915706044da5cc46edb362940ef56e4",
+      "name": "chore-db-merge-upstream-v0-19-0-migration-heads-3a21b8b71915",
+      "reason": "chore(db): merge upstream v0.19.0 migration heads",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a7eb415d9b2aa6bcea9f60d95edf8e25ddb38618",
+      "name": "chore-release-stamp-0-19-0-mdsmithaustin-1-a7eb415d9b2a",
+      "reason": "chore(release): stamp 0.19.0+mdsmithaustin.1",
+      "source_commit": null
+    }
+  ],
+  "payload_commit": "a7eb415d9b2aa6bcea9f60d95edf8e25ddb38618",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "d43340fec4e7d2d767f319d715e84aa82f4d1bc8",
