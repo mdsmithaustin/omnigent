@@ -761,9 +761,27 @@
       "name": "chore-release-stamp-0-19-0-mdsmithaustin-1-a7eb415d9b2a",
       "reason": "chore(release): stamp 0.19.0+mdsmithaustin.1",
       "source_commit": null
+    },
+    {
+      "applied_commit": "b6fcc7ae7d0116c54148448dcc33ab41e9e5acbb",
+      "name": "chore-release-inventory-0-19-0-mdsmithaustin-1-b6fcc7ae7d01",
+      "reason": "chore(release): inventory 0.19.0+mdsmithaustin.1",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "733fce36334676efe0374f69e908f87121f1cad4",
+      "name": "docs-release-record-the-v0-19-0-sync-decision-733fce363346",
+      "reason": "docs(release): record the v0.19.0 sync decision",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "a3877c0367fe70f04374a8245b1d8d10da340d8e",
+      "name": "fix-repair-replay-shadows-in-the-runner-and-code-a3877c0367fe",
+      "reason": "fix: repair replay shadows in the runner and Codex forwarder",
+      "source_commit": null
     }
   ],
-  "payload_commit": "a7eb415d9b2aa6bcea9f60d95edf8e25ddb38618",
+  "payload_commit": "a3877c0367fe70f04374a8245b1d8d10da340d8e",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "d43340fec4e7d2d767f319d715e84aa82f4d1bc8",
