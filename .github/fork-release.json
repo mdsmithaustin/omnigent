@@ -779,9 +779,27 @@
       "name": "fix-repair-replay-shadows-in-the-runner-and-code-a3877c0367fe",
       "reason": "fix: repair replay shadows in the runner and Codex forwarder",
       "source_commit": null
+    },
+    {
+      "applied_commit": "026682a7cd3742203e95fc9a0ff01b7d89bddea5",
+      "name": "chore-release-inventory-the-replay-lint-repairs-026682a7cd37",
+      "reason": "chore(release): inventory the replay lint repairs",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "611bccfcfc9a6a061f9da6b4a2bda355fe142bd7",
+      "name": "fix-prime-native-keep-each-web-session-on-one-pr-611bccfcfc9a",
+      "reason": "fix(prime-native): keep each web session on one Prime chat after /new (#86)",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "539ae6e14a267dfd24eef40b33eeeddff5050112",
+      "name": "fix-prime-native-post-the-chat-switch-notice-onc-539ae6e14a26",
+      "reason": "fix(prime-native): post the chat-switch notice once, and cover the pin's open edge cases (#87)",
+      "source_commit": null
     }
   ],
-  "payload_commit": "a3877c0367fe70f04374a8245b1d8d10da340d8e",
+  "payload_commit": "539ae6e14a267dfd24eef40b33eeeddff5050112",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "d43340fec4e7d2d767f319d715e84aa82f4d1bc8",
