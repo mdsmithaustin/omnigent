@@ -6,7 +6,7 @@ controls. On 0.10 an Omnigent-side bridge does those jobs over Prime's daemon
 socket, the only interface that shares one live session with the visible TUI.
 
 The 0.9 extension path stays for prime-agent builds whose `--help` lists
-`--extension`. It is deprecated and is removed in Omnigent 0.19.0.
+`--extension`. It is deprecated and is removed in Omnigent 0.20.0.
 
 ## Why the daemon, and its known limit
 

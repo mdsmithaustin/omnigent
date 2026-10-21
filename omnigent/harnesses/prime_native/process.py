@@ -145,7 +145,7 @@ class _JsonlReader:
 @dataclass(frozen=True)
 class PrimeExecutable:
     path: str
-    # @deprecated, remove in 0.19.0: 0.9.x builds that host the shared Pi extension.
+    # @deprecated, remove in 0.20.0: 0.9.x builds that host the shared Pi extension.
     extension: bool
 
 
