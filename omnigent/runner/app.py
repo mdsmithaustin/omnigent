@@ -6353,9 +6353,9 @@ def create_runner_app(
                                     frame_lines[data_index] = f"data: {_json.dumps(event)}"
                                     raw_sse_bytes = ("\n".join(frame_lines) + "\n\n").encode()
                             if event.get("type") == "response.failed":
-                                _input_stable_id = body.get("input_stable_id")
-                                if isinstance(_input_stable_id, str):
-                                    event["input_stable_id"] = _input_stable_id
+                                failed_input_stable_id = body.get("input_stable_id")
+                                if isinstance(failed_input_stable_id, str):
+                                    event["input_stable_id"] = failed_input_stable_id
                             delivery_complete = (
                                 harness_name == "prime-native"
                                 and event.get("type") == "response.completed"

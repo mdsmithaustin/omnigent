@@ -7,7 +7,7 @@ Create Date: 2026-10-20 18:44:20.940541
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
 revision: str = "6925515a322b"

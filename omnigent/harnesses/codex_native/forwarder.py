@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Callable

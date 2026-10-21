@@ -46,7 +46,6 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import quote
 
-from omnigent.debug_logging import debug_event
 from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
 from omnigent.inner.os_env import OSEnvironment
 from omnigent.inner.terminal import TerminalInstance, create_terminal_instance

@@ -4973,9 +4973,7 @@ async def _auto_create_codex_terminal(
     )
     original_external_session_id = launch_config.external_session_id
     workspace = str(launch_config.workspace)
-    bridge_dir = await asyncio.to_thread(
-        prepare_bridge_dir, launch_config.bridge_id or session_id
-    )
+    bridge_dir = await asyncio.to_thread(prepare_bridge_dir, launch_config.bridge_id or session_id)
     socket_path = socket_path_for_bridge_dir(bridge_dir)
     codex_home = codex_home_for_bridge_dir(bridge_dir)
     app_server = _AUTO_CODEX_APP_SERVERS.get(session_id)
