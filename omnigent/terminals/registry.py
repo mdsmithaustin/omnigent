@@ -46,6 +46,7 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import quote
 
+from omnigent.debug_logging import debug_event
 from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
 from omnigent.inner.os_env import OSEnvironment
 from omnigent.inner.terminal import TerminalInstance, create_terminal_instance
@@ -324,29 +325,49 @@ class TerminalRegistry:
             fails. Inner code surfaces a clear error; the caller
             tool wraps in a JSON error envelope.
         """
-        async with self._serialize_launch((conversation_id, terminal_name, session_key)):
-            key = (terminal_name, session_key)
-            while True:
-                with self._lock:
-                    failed = [
-                        entry
-                        for entry in self._failed_launches.get(conversation_id, [])
-                        if (entry.terminal_name, entry.session_key) == key
-                    ]
-                    existing = self._by_conversation.get(conversation_id, {}).get(key)
-                if failed:
-                    for entry in failed:
-                        await self._close_failed_launch(
-                            conversation_id, entry, require_confirmation=False
-                        )
-                    continue
-                if existing is None:
-                    break
+        key = (terminal_name, session_key)
+        is_prime = terminal_name == "prime-native"
+        existing = None
+        if not is_prime:
+            with self._lock:
+                existing = self._by_conversation.get(conversation_id, {}).get(key)
+            if existing is not None:
                 if existing.running and await existing.is_alive():
+                    return existing
+                await self.close(conversation_id, terminal_name, session_key, expected=existing)
+
+        async with self._serialize_launch((conversation_id, *key)):
+            if is_prime:
+                while True:
                     with self._lock:
-                        if self._by_conversation.get(conversation_id, {}).get(key) is existing:
-                            return existing
-                else:
+                        failed = [
+                            entry
+                            for entry in self._failed_launches.get(conversation_id, [])
+                            if (entry.terminal_name, entry.session_key) == key
+                        ]
+                        existing = self._by_conversation.get(conversation_id, {}).get(key)
+                    if failed:
+                        for entry in failed:
+                            await self._close_failed_launch(
+                                conversation_id, entry, require_confirmation=False
+                            )
+                        continue
+                    if existing is None:
+                        break
+                    if existing.running and await existing.is_alive():
+                        with self._lock:
+                            if self._by_conversation.get(conversation_id, {}).get(key) is existing:
+                                return existing
+                    else:
+                        await self.close(
+                            conversation_id, terminal_name, session_key, expected=existing
+                        )
+            elif existing is None:
+                with self._lock:
+                    existing = self._by_conversation.get(conversation_id, {}).get(key)
+                if existing is not None:
+                    if existing.running and await existing.is_alive():
+                        return existing
                     await self.close(
                         conversation_id, terminal_name, session_key, expected=existing
                     )
@@ -383,78 +404,123 @@ class TerminalRegistry:
                 sandbox_override=sandbox_override,
                 conversation_link=self.conversation_link_for_id(conversation_id),
             )
-            created.instance.program_status_app = program_status_app
-            created.instance.lifecycle_trace.transfer_session(conversation_id)
-            launch_task = asyncio.create_task(created.instance.launch(cwd=created.cwd))
-            try:
-                await asyncio.shield(launch_task)
-                if not await created.instance.is_alive():
-                    created.instance.lifecycle_trace.note_exit()
-                    failure = TerminalExitedDuringLaunch(created.instance)
-                    try:
-                        await asyncio.wait_for(created.instance.close(), timeout=_CLOSE_TIMEOUT_S)
-                    except Exception as exc:
-                        failure.add_note(f"Terminal cleanup remains unconfirmed: {exc!r}")
-                        raise failure from exc
-                    raise failure
-
-                with self._lock:
-                    slot = self._by_conversation.setdefault(conversation_id, {})
-                    # Re-check: another concurrent launch for the same key may
-                    # have raced ours. Take the second-arrival policy: close
-                    # ours and return the racer's. Avoids two live tmux
-                    # sessions for the same key.
-                    racer = slot.get(key)
-                    if racer is not None and (racer.running or terminal_name == "prime-native"):
-                        # Close ours outside the lock; racer wins.
-                        instance_to_close: TerminalInstance | None = created.instance
-                        winning_instance = racer
-                    else:
-                        slot[key] = created.instance
-                        instance_to_close = None
-                        winning_instance = created.instance
-                        # Allocate a per-instance lock alongside the
-                        # registration. Tools fetch it via
-                        # :meth:`get_instance_lock` to serialize concurrent
-                        # tmux ops on this instance.
-                        self._instance_locks[(conversation_id, terminal_name, session_key)] = (
-                            threading.Lock()
+            if is_prime:
+                created.instance.program_status_app = program_status_app
+                created.instance.lifecycle_trace.transfer_session(conversation_id)
+                launch_task = asyncio.create_task(created.instance.launch(cwd=created.cwd))
+                try:
+                    await asyncio.shield(launch_task)
+                    if not await created.instance.is_alive():
+                        created.instance.lifecycle_trace.note_exit()
+                        failure = TerminalExitedDuringLaunch(created.instance)
+                        try:
+                            await asyncio.wait_for(
+                                created.instance.close(), timeout=_CLOSE_TIMEOUT_S
+                            )
+                        except Exception as exc:
+                            failure.add_note(f"Terminal cleanup remains unconfirmed: {exc!r}")
+                            raise failure from exc
+                        raise failure
+                except BaseException:
+                    while not launch_task.done():
+                        try:
+                            await asyncio.shield(launch_task)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - The launch task retains its exception.
+                            break
+                    if not launch_task.cancelled():
+                        launch_task.exception()
+                    with self._lock:
+                        self._retain_failed_launch(
+                            conversation_id,
+                            TerminalListEntry(terminal_name, session_key, created.instance),
                         )
+                    raise
+            else:
+                stage = "terminal_spawn"
+                try:
+                    created.instance.program_status_app = program_status_app
+                    created.instance.lifecycle_trace.transfer_session(conversation_id)
+                    await created.instance.launch(cwd=created.cwd)
+                    stage = "terminal_liveness"
+                    if not await created.instance.is_alive():
+                        created.instance.lifecycle_trace.note_exit()
+                        raise TerminalExitedDuringLaunch(created.instance)
+                except (Exception, asyncio.CancelledError) as exc:
+                    # Until registration, no shutdown sweep can discover this instance.
+                    cleanup = await _close_unregistered_instance(created.instance)
+                    cancelled = isinstance(exc, asyncio.CancelledError)
+                    logger.log(
+                        logging.INFO
+                        if cancelled and cleanup.outcome == "closed"
+                        else logging.WARNING,
+                        "Terminal launch failed during %s; cleanup=%s",
+                        stage,
+                        cleanup.outcome,
+                        extra=debug_event(
+                            "terminal_launch_failed",
+                            session_id=conversation_id,
+                            terminal_name=terminal_name,
+                            terminal_key=session_key,
+                            terminal_instance_id=created.instance.diagnostic_id,
+                            terminal_launch_id=created.instance.lifecycle_trace.launch_id,
+                            launch_stage=stage,
+                            launch_outcome="cancelled" if cancelled else "error",
+                            exception_type=type(exc).__name__,
+                            native_launch_os_errno=exc.errno if isinstance(exc, OSError) else None,
+                            launch_cleanup_outcome=cleanup.outcome,
+                            cleanup_error_type=cleanup.error_type,
+                            cancelled_during_cleanup=cleanup.caller_cancelled,
+                        ),
+                    )
+                    if cleanup.caller_cancelled and not cancelled:
+                        # The caller cancelled us while cleanup ran; cancellation wins.
+                        raise asyncio.CancelledError() from exc
+                    raise
 
-                if instance_to_close is not None:
+            with self._lock:
+                slot = self._by_conversation.setdefault(conversation_id, {})
+                # Re-check: another concurrent launch for the same key may
+                # have raced ours. Take the second-arrival policy: close
+                # ours and return the racer's. Avoids two live tmux
+                # sessions for the same key.
+                racer = slot.get(key)
+                if racer is not None and (racer.running or is_prime):
+                    # Close ours outside the lock; racer wins.
+                    instance_to_close: TerminalInstance | None = created.instance
+                    winning_instance = racer
+                else:
+                    slot[key] = created.instance
+                    instance_to_close = None
+                    winning_instance = created.instance
+                    # Allocate a per-instance lock alongside the
+                    # registration. Tools fetch it via
+                    # :meth:`get_instance_lock` to serialize concurrent
+                    # tmux ops on this instance.
+                    self._instance_locks[(conversation_id, terminal_name, session_key)] = (
+                        threading.Lock()
+                    )
+
+            if instance_to_close is not None:
+                if is_prime:
                     entry = TerminalListEntry(terminal_name, session_key, instance_to_close)
                     with self._lock:
                         self._retain_failed_launch(conversation_id, entry)
+                    await self._close_failed_launch(
+                        conversation_id, entry, require_confirmation=False
+                    )
+                else:
                     try:
-                        await self._close_failed_launch(
-                            conversation_id, entry, require_confirmation=False
-                        )
+                        await asyncio.wait_for(instance_to_close.close(), timeout=_CLOSE_TIMEOUT_S)
                     except TimeoutError:
-                        if terminal_name == "prime-native":
-                            raise
                         logger.warning(
                             "Race-loser terminal close timed out for %s:%s in conv %s",
                             terminal_name,
                             session_key,
                             conversation_id,
                         )
-                return winning_instance
-            except BaseException:
-                while not launch_task.done():
-                    try:
-                        await asyncio.shield(launch_task)
-                    except asyncio.CancelledError:
-                        continue
-                    except Exception:  # noqa: BLE001 - The launch task retains its exception.
-                        break
-                if not launch_task.cancelled():
-                    launch_task.exception()
-                with self._lock:
-                    self._retain_failed_launch(
-                        conversation_id,
-                        TerminalListEntry(terminal_name, session_key, created.instance),
-                    )
-                raise
+            return winning_instance
 
     def get_instance_lock(
         self,
