@@ -47,8 +47,8 @@ from pathlib import Path
 
 import pytest
 
-from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 from omnigent.installation_defaults import USER_DIRNAME
+from omnigent.testing.process_reaper import reap_leaked_omnigent_processes
 from tests.e2e._native_resume_helpers import (
     cli_env,
     omnigent_console_script,

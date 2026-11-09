@@ -86,8 +86,8 @@ from omnigent.native.native_coding_agents import (
     native_coding_agent_for_harness,
     native_coding_agent_for_wrapper_label,
 )
-from omnigent.onboarding.provider_config import harness_owns_its_credential
 from omnigent.native.source_owner import NativeAdmission
+from omnigent.onboarding.provider_config import harness_owns_its_credential
 from omnigent.policies.types import (
     ElicitationRequest,
     EvaluationContext,

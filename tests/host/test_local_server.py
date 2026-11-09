@@ -9,7 +9,6 @@ Covers ``omnigent.host.local_server``: reuse-vs-respawn detection
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import textwrap
 from pathlib import Path

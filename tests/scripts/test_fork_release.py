@@ -85,9 +85,10 @@ def test_parity_rows_reuse_canonical_bootstrap_and_opt_in(job):
     for name in (
         "Set up Rust toolchain",
         "Capture Rust version",
-        "Cache parity sidecar binary",
+        "Cache parity sidecar build",
         "Install codex CLI",
         "Cache virtualenv",
+        "Test parity sidecar",
         "Build parity sidecar",
     ):
         expected = next(step for step in upstream if step.get("name") == name)
@@ -250,24 +251,23 @@ def test_workflow_matrix_partitions_changed_tests_from_payload_anchor(tmp_path, 
     workflow = yaml.safe_load((checkout / ".github/workflows/fork-release.yml").read_bytes())
     step = next(step for step in workflow["jobs"]["source"]["steps"] if step.get("id") == "matrix")
     script = step["run"].split("<<'PYCODE'\n", 1)[1].rsplit("\nPYCODE", 1)[0]
-    ci = yaml.safe_load((checkout / ".github/workflows/ci.yml").read_bytes())
-    canonical = ci["jobs"]["pytest"]["strategy"]["matrix"]["include"]
-    ci = {"jobs": {"pytest": {"strategy": {"matrix": {"include": canonical}}}}}
+    matrix_path = Path(".github/scripts/ci/python-matrix.json")
+    canonical = json.loads((checkout / matrix_path).read_bytes())
     root = tmp_path / "repo"
     root.mkdir()
     command(root, "git", "init", "-q")
     command(root, "git", "config", "user.email", "fixture@example.com")
     command(root, "git", "config", "user.name", "Release matrix fixture")
-    ci_path = root / ".github/workflows/ci.yml"
-    ci_path.parent.mkdir(parents=True)
-    write_json(ci_path, ci)
+    fixture_matrix = root / matrix_path
+    fixture_matrix.parent.mkdir(parents=True)
+    write_json(fixture_matrix, canonical)
     upstream = commit(root, "upstream matrix")
     for row in canonical:
         if row["group"] == "runner-app":
             row.update(workers="3", dist="loadscope", extra="tracing", markexpr="not databricks")
         elif row["group"] == "server-rest":
             row.update(workers="2", dist="worksteal", extra="s3", markexpr="not databricks")
-    write_json(ci_path, ci)
+    write_json(fixture_matrix, canonical)
     policy = "tests/scripts/test_fork_release.py"
     changed = [
         "tests/runner/test_recovery.py",
@@ -287,10 +287,7 @@ def test_workflow_matrix_partitions_changed_tests_from_payload_anchor(tmp_path, 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture\n")
     payload = commit(root, "payload matrix and changed tests")
-    ci["jobs"]["pytest"]["strategy"]["matrix"]["include"] = [
-        {**row, "workers": "9", "dist": "loadfile"} for row in canonical
-    ]
-    write_json(ci_path, ci)
+    write_json(fixture_matrix, [{**row, "workers": "9", "dist": "loadfile"} for row in canonical])
     (root / policy).parent.mkdir(parents=True, exist_ok=True)
     (root / policy).write_text("policy tail\n")
     write_json(

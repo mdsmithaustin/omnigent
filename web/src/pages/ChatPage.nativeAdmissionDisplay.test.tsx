@@ -245,7 +245,10 @@ async function recoverOriginal() {
   await waitFor(() =>
     expect(
       queryClient.getQueriesData({ queryKey: ["skills"] }).map(([, data]) => data),
-    ).toContainEqual([{ name: "recovery-nonce", description: "Write nonce" }]),
+    ).toContainEqual({
+      skills: [{ name: "recovery-nonce", description: "Write nonce" }],
+      warnings: [],
+    }),
   );
   fireEvent.change(textarea, { target: { value: "/recovery-nonce EFFECT_edf9f79f312ae1a8" } });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));

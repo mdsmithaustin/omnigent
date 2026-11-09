@@ -289,7 +289,9 @@ const mcpRequests = [];
 let policy = "POLICY_ACTION_DENY";
 global.fetch = async (url, options) => {
   if (String(url).endsWith("/policies/evaluate")) {
-    return { ok: true, json: async () => ({ result: policy, reason: "root policy" }) };
+    return {
+      ok: true, text: async () => JSON.stringify({ result: policy, reason: "root policy" }),
+    };
   }
   if (String(url).endsWith("/mcp")) {
     mcpRequests.push(JSON.parse(options.body));

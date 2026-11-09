@@ -4,11 +4,10 @@ import json
 import os
 import re
 import threading
+import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import BinaryIO
-
-import tomllib
 
 from omnigent.errors import OmnigentError
 from omnigent.inner.codex_executor import codex_skill_sources, select_codex_skill_dirs

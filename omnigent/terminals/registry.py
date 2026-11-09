@@ -429,7 +429,7 @@ class TerminalRegistry:
                         await self._close_failed_launch(
                             conversation_id, entry, require_confirmation=False
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if terminal_name == "prime-native":
                             raise
                         logger.warning(
@@ -445,7 +445,7 @@ class TerminalRegistry:
                         await asyncio.shield(launch_task)
                     except asyncio.CancelledError:
                         continue
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - The launch task retains its exception.
                         break
                 if not launch_task.cancelled():
                     launch_task.exception()
@@ -662,7 +662,7 @@ class TerminalRegistry:
                 await self._close_failed_launch(conversation_id, entry, require_confirmation=False)
             else:
                 await asyncio.wait_for(instance.close(), timeout=_CLOSE_TIMEOUT_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if terminal_name == "prime-native":
                 raise
             logger.warning(

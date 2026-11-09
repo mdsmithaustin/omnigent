@@ -206,7 +206,10 @@ describe("native ChatPage skill submission", () => {
       await waitFor(() =>
         expect(
           queryClient.getQueriesData({ queryKey: ["skills"] }).map(([, data]) => data),
-        ).toContainEqual([{ name: "Team:Review", description: "Review source" }]),
+        ).toContainEqual({
+          skills: [{ name: "Team:Review", description: "Review source" }],
+          warnings: [],
+        }),
       );
       expect(textarea).not.toBeDisabled();
       fireEvent.change(textarea, { target: { value: text } });
@@ -252,7 +255,10 @@ describe("native ChatPage skill submission", () => {
     await waitFor(() =>
       expect(
         queryClient.getQueriesData({ queryKey: ["skills"] }).map(([, data]) => data),
-      ).toContainEqual([{ name: "Team:Review", description: "Review source" }]),
+      ).toContainEqual({
+        skills: [{ name: "Team:Review", description: "Review source" }],
+        warnings: [],
+      }),
     );
     fireEvent.change(textarea, { target: { value: "$Team:Review arg" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -281,7 +287,10 @@ describe("native ChatPage skill submission", () => {
     await waitFor(() =>
       expect(
         queryClient.getQueriesData({ queryKey: ["skills"] }).map(([, data]) => data),
-      ).toContainEqual([{ name: "Team:Review", description: "Review source" }]),
+      ).toContainEqual({
+        skills: [{ name: "Team:Review", description: "Review source" }],
+        warnings: [],
+      }),
     );
     const setItem = Storage.prototype.setItem;
     const failedWrite = vi.fn();

@@ -35,8 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from omnigent.stores.conversation_store import CREATED_BY_SESSION_LABEL_KEY
 from omnigent.installation_defaults import NATIVE_TMP_PREFIX
+from omnigent.stores.conversation_store import CREATED_BY_SESSION_LABEL_KEY
 from omnigent.util.json_serialization import json_dumps_transport_safe
 from omnigent.util.json_types import JsonObject as _JsonObject
 

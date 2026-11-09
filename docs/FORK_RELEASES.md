@@ -2,9 +2,9 @@
 
 The `python-distributions-v1` profile verifies the released upstream source, ordered fork addons, required checks, and the eight Python distribution files. It also binds the bundled UI filenames and SHA256 hashes. It covers `omnigent`, `omnigent-client`, `omnigent-ui-sdk`, and `omnigent-slack` at one version.
 
-The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.19.0+mdsmithaustin.1`, upstream `0.19.0` plus fork addon revision `1`. Once published, its GitHub release tag is `mdsmithaustin/v0.19.0-r1` and its title is `Omnigent 0.19.0, mdsmithaustin revision 1`. Future releases use `mdsmithaustin/vX.Y.Z-rN` and `Omnigent X.Y.Z, mdsmithaustin revision N`, derived from the pinned upstream tag and fork revision. The `mdsmithaustin/` prefix avoids the upstream `v*` release triggers. Python distribution versions remain `X.Y.Z+mdsmithaustin.N`, and distribution names remain compatible with existing imports. The `0.19.0` line retains the [separate local fork defaults](FORK_DEFAULTS.md) introduced in `0.17.0+mdsmithaustin.2` and reuses existing fork state.
+The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.21.0+mdsmithaustin.1`. Its GitHub release tag is `mdsmithaustin/v0.21.0-r1` and its title is `Omnigent 0.21.0, mdsmithaustin revision 1`. Fork tags use `mdsmithaustin/vX.Y.Z-rN` and Python distributions use `X.Y.Z+mdsmithaustin.N`. The fork retains the [separate local defaults](FORK_DEFAULTS.md) and reuses existing fork state.
 
-Revision `.1` replays the `0.18.0` fork line onto upstream `v0.19.0`. The Prime 0.9 `--extension` path stays, and its removal moves to Omnigent `0.20.0`.
+Revision `.1` replays the fork onto upstream `v0.21.0` and includes the Prime chat pin across `/new` and reattach. The Prime 0.9 extension path remains available in this sync. Upstream now requires OpenCode 2.0.18 or a later 2.0.x version and macOS 13 or later for its desktop app.
 
 Revision `.6` runs Prime Native on Prime `0.10`, which dropped `--extension`, through a bridge over Prime's daemon socket. On `0.10`, policies cannot block Prime's own tools, and Omnigent shows a warning when an agent has such policies; see [Prime Native](PRIME_NATIVE.md). Prime `0.9.x` keeps the extension path, deprecated for removal in Omnigent `0.19.0`. Hosts that pinned `OMNIGENT_PRIME_PATH` to a `0.9.6` binary can drop the pin. It also fixes test flakes in web, cursor and relay tests. Upgrade `.5` with `omnigent-fork upgrade`.
 
@@ -69,12 +69,12 @@ The builder installs the locked web dependencies and builds the UI from scratch.
 
 The workflow runs source validation, all-files lint and type checks, canonical upstream Python test shards, mock integration, Slack and Databricks tests, web lint, types, tests and build, every changed addon unit and server test, and the distribution builder. Every job checks out the same full SHA and records the same run ID and attempt. A missing, failed, skipped, cancelled, or mixed-source required job cannot produce a certificate.
 
-The Python gate reads the 16 shard rows from `ci.yml` at the immutable payload anchor and retains their paths, extras, marks, worker counts, and distribution modes. It adds a required `codex-parity` row with the canonical Rust and Codex setup, cached sidecar build, `CODEX_PARITY_SIDECAR_BIN`, and `--codex-parity` opt-in. The parity JUnit check rejects zero collected tests, all-skipped tests, and failures. Individual skips remain allowed when other parity tests run. Matrix fail-fast is disabled; certification requires all 17 Python shards to succeed. Collection failures and empty selections remain failures.
+The Python gate reads the shard rows from `.github/scripts/ci/python-matrix.json` at the immutable payload anchor and retains their paths, extras, marks, worker counts, and distribution modes. It adds a required `codex-parity` row with the canonical Rust and Codex setup, cached sidecar build, `CODEX_PARITY_SIDECAR_BIN`, and `--codex-parity` opt-in. The parity JUnit check rejects zero collected tests, all-skipped tests, and failures. Individual skips remain allowed when other parity tests run. Matrix fail-fast is disabled; certification requires all Python shards to succeed. Collection failures and empty selections remain failures.
 
 The addon gate reserves `tests/scripts/test_fork_release.py` for the serial `release-policy` shard, which runs the release CLI and workflow-matrix checks. It assigns every other eligible changed unit and server test file to exactly one populated canonical directory shard. Ordinary addon shards retain their worker and distribution settings and the `not databricks` marker. A parity addon shard uses the same canonical parity setup, opt-in, and JUnit check as the required parity row. The final matrix covers the union of eligible changed test files and the policy test file exactly once, even when the payload anchor already contains the policy tests. Every addon shard must succeed too.
 
 
-Check the matrix inventory from the reviewed workflow. A nonzero exit means the row count or canonical definitions differ; success prints `17 Python shards; N addon shards; no missing or duplicate files`. The addon count depends on the changed test files.
+Check the matrix inventory from the reviewed workflow. A nonzero exit means the row count or canonical definitions differ; success prints the Python and addon shard counts with no missing or duplicate files. The addon count depends on the changed test files.
 
 ```sh
 uv run --no-project --with PyYAML==6.0.3 python - <<'PY'
@@ -89,8 +89,8 @@ with tempfile.NamedTemporaryFile() as output:
     rows = json.loads(outputs["python_matrix"])["include"]
     addons = json.loads(outputs["addon_matrix"])["include"]
 pin = json.loads(Path(".github/fork-release.json").read_bytes())
-canonical = yaml.safe_load(subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"]))["jobs"]["pytest"]["strategy"]["matrix"]["include"]
-assert len(rows) == 17 and len({row["group"] for row in rows}) == 17 and rows[:16] == canonical
+canonical = json.loads(subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/scripts/ci/python-matrix.json"]))
+assert canonical and len({row["group"] for row in rows}) == len(rows) and rows[:-1] == canonical
 assert rows[-1] == {"group": "codex-parity", "paths": "tests/codex_parity"}
 changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
 expected = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
@@ -98,7 +98,7 @@ actual = [path for row in addons for path in shlex.split(row["paths"])]
 assert sorted(actual) == sorted(set(expected) | {"tests/scripts/test_fork_release.py"})
 assert len(actual) == len(set(actual)) and len(addons) == len({row["group"] for row in addons})
 assert addons[-1] == {"group": "release-policy", "paths": "tests/scripts/test_fork_release.py", "workers": "0", "dist": "loadfile"}
-print(f"17 Python shards; {len(addons)} addon shards; no missing or duplicate files")
+print(f"{len(rows)} Python shards; {len(addons)} addon shards; no missing or duplicate files")
 PY
 ```
 
@@ -192,21 +192,21 @@ Cut revision `N` as two pull requests to `main`. Replace `N` with the next posit
 1. Stamp the version. This is an ordinary pending commit. Each command must exit zero.
 
    ```sh
-   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.19.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py pre-release --new-version 0.21.0+mdsmithaustin.N
    uv lock
    python scripts/normalize_uv_lock_registry.py uv.lock
-   uv run --no-sync python scripts/update_versions.py check --expect 0.19.0+mdsmithaustin.N
+   uv run --no-sync python scripts/update_versions.py check --expect 0.21.0+mdsmithaustin.N
    ```
 
 2. After the first PR merges, inventory the pending commits on a branch from `main`.
 
    ```sh
-   python scripts/fork_release.py inventory --version 0.19.0+mdsmithaustin.N
+   python scripts/fork_release.py inventory --version 0.21.0+mdsmithaustin.N
    ```
 
    It refuses unless `pyproject.toml` and `omnigent/version.py` at committed `HEAD` already carry that version. Uncommitted version edits do not count. It appends every commit through the last pending one as an addon named from its subject and short SHA, with the subject as its reason. Policy-only commits before that point join the inventory too, because the addons must stay an exact linear prefix. It then moves `payload_commit` to the last pending commit and sets the version. Review the generated reasons and update this document and `designs/fork-release/DECISIONS.tsv`. Commit only policy paths, so `main` becomes release-ready. `check-line` must report `"release_ready": true`.
 
-The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.19.0-rN` on that commit with the title `Omnigent 0.19.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.19.0+mdsmithaustin.N`.
+The push run on `main` then certifies that exact source. After review, dispatch publication with `publish=true` as shown above. The publisher creates the tag `mdsmithaustin/v0.21.0-rN` on that commit with the title `Omnigent 0.21.0, mdsmithaustin revision N`. The Python distributions retain the stamped version `0.21.0+mdsmithaustin.N`.
 
 ## Sync to a new upstream tag
 

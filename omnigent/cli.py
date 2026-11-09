@@ -125,9 +125,9 @@ from omnigent.util.uuid import normalize_uuid
 if TYPE_CHECKING:
     import httpx
 
+    from omnigent.fork_releases import ForkRelease
     from omnigent.host.daemon_lifecycle import DaemonLifecycleLock
     from omnigent.inner.databricks_executor import _DatabricksBearerAuth
-    from omnigent.fork_releases import ForkRelease
     from omnigent.install_ledger import InstallLedger
     from omnigent.onboarding.acp_auth import AcpAgentEntry
     from omnigent.server.smart_routing import LLMRoutingClient

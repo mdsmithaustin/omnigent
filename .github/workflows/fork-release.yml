@@ -99,20 +99,20 @@ jobs:
         id: matrix
         if: steps.line.outputs.release_ready == 'true'
         run: |
-          uv run --no-project --with PyYAML==6.0.3 python - <<'PYCODE'
+          python - <<'PYCODE'
           import json
           import os
           from pathlib import Path
           import shlex
           import subprocess
-          import yaml
           pin = json.loads(Path(".github/fork-release.json").read_bytes())
-          raw = subprocess.check_output(["git", "show", pin["payload_commit"] + ":.github/workflows/ci.yml"])
-          canonical = yaml.safe_load(raw)["jobs"]["pytest"]["strategy"]["matrix"]["include"]
-          assert len(canonical) == 16 and len({row["group"] for row in canonical}) == 16
+          raw = subprocess.check_output(
+              ["git", "show", pin["payload_commit"] + ":.github/scripts/ci/python-matrix.json"]
+          )
+          canonical = json.loads(raw)
+          assert canonical, "No canonical Python shards found"
           rows = [*canonical, {"group": "codex-parity", "paths": "tests/codex_parity"}]
-          assert len(rows) == 17 and len({row["group"] for row in rows}) == 17
-          assert rows[:16] == canonical
+          assert len({row["group"] for row in rows}) == len(rows)
           changed = subprocess.check_output(["git", "diff", "--name-only", pin["upstream"]["commit"] + ".." + pin["payload_commit"], "--", "tests"], text=True).splitlines()
           paths = [path for path in changed if path.endswith(".py") and Path(path).is_file() and not path.startswith(("tests/e2e/", "tests/e2e_ui/", "tests/browser_ui/"))]
           assert paths, "No addon tests found"
@@ -223,20 +223,20 @@ jobs:
         id: rustc
         run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
         if: matrix.group == 'codex-parity'
-      - name: Cache parity sidecar binary
+      - name: Cache parity sidecar build
         id: sidecar-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .tmp-codex-parity-target/debug/codex-parity-sidecar
-          key: codex-parity-bin-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
+          path: .tmp-codex-parity-target
+          key: codex-parity-tests-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
         if: matrix.group == 'codex-parity'
       - name: Install codex CLI
-        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@aa5736c38f5c1258ee29452c6825d75033b952d7
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@c76912dd5f9cfe9e2e11572eae45ad657243232f
         with:
           harness: codex
         if: matrix.group == 'codex-parity'
       - name: Cache virtualenv
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
@@ -250,10 +250,17 @@ jobs:
           fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           uv sync --locked --extra all --group test ${{ matrix.extra && format('--extra {0}', matrix.extra) || '' }}
+      - name: Test parity sidecar
+        if: matrix.group == 'codex-parity'
+        run: |
+          cargo test --locked \
+            --manifest-path tests/codex_parity/sidecar/Cargo.toml \
+            --target-dir .tmp-codex-parity-target
+
       - name: Build parity sidecar
         if: matrix.group == 'codex-parity' && steps.sidecar-cache.outputs.cache-hit != 'true'
         run: |
-          cargo build \
+          cargo build --locked \
             --manifest-path tests/codex_parity/sidecar/Cargo.toml \
             --target-dir .tmp-codex-parity-target
       - name: Run canonical Python shard
@@ -399,20 +406,20 @@ jobs:
         id: rustc
         run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
         if: matrix.group == 'codex-parity'
-      - name: Cache parity sidecar binary
+      - name: Cache parity sidecar build
         id: sidecar-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .tmp-codex-parity-target/debug/codex-parity-sidecar
-          key: codex-parity-bin-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
+          path: .tmp-codex-parity-target
+          key: codex-parity-tests-${{ runner.os }}-${{ steps.rustc.outputs.version }}-${{ hashFiles('tests/codex_parity/sidecar/**') }}
         if: matrix.group == 'codex-parity'
       - name: Install codex CLI
-        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@aa5736c38f5c1258ee29452c6825d75033b952d7
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@c76912dd5f9cfe9e2e11572eae45ad657243232f
         with:
           harness: codex
         if: matrix.group == 'codex-parity'
       - name: Cache virtualenv
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
@@ -426,10 +433,17 @@ jobs:
           fi
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           uv sync --locked --extra all --group test
+      - name: Test parity sidecar
+        if: matrix.group == 'codex-parity'
+        run: |
+          cargo test --locked \
+            --manifest-path tests/codex_parity/sidecar/Cargo.toml \
+            --target-dir .tmp-codex-parity-target
+
       - name: Build parity sidecar
         if: matrix.group == 'codex-parity' && steps.sidecar-cache.outputs.cache-hit != 'true'
         run: |
-          cargo build \
+          cargo build --locked \
             --manifest-path tests/codex_parity/sidecar/Cargo.toml \
             --target-dir .tmp-codex-parity-target
       - name: Run changed addon shard

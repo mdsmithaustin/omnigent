@@ -74,15 +74,15 @@ from rich.text import Text
 
 from omnigent.cli_diagnostics import printable
 from omnigent.cli_invocation import cli_invocation
+from omnigent.entities.conversation import SkillCommandDelivery
 from omnigent.harness_aliases import canonicalize_harness
 from omnigent.remote_launch import (
     REMOTE_LAUNCH_MESSAGE,
     no_online_runner_message,
     resolve_remote_launch_host,
 )
-from omnigent.session_host import set_session_host
-from omnigent.entities.conversation import SkillCommandDelivery
 from omnigent.repl._skill_commands import SkillCommandJournal, admission_label
+from omnigent.session_host import set_session_host
 from omnigent.spec.types import SkillSpec
 
 if TYPE_CHECKING:

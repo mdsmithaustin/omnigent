@@ -141,7 +141,7 @@ async def test_launch_advertises_declared_mcp_schema_to_prime(
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/list",
-        "params": {},
+        "params": {"_omnigent_skip_registry": True},
     }
     prompt = terminal["args"][terminal["args"].index("--append-system-prompt") + 1]
     assert "Use the declared tools when they help." in prompt

@@ -889,9 +889,9 @@ def test_is_connection_error_unwraps_transport_exception_group() -> None:
     It is a connection error only when every leaf is one.
     """
     connect_error = httpx.ConnectError("refused")
-    outage = ExceptionGroup("outage", [connect_error])  # noqa: F821
+    outage = ExceptionGroup("outage", [connect_error])
     assert _is_connection_error(outage) is True
-    mixed = ExceptionGroup("mixed", [connect_error, ValueError("bad arguments")])  # noqa: F821
+    mixed = ExceptionGroup("mixed", [connect_error, ValueError("bad arguments")])
     assert _is_connection_error(mixed) is False
 
 

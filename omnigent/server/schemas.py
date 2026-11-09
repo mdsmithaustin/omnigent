@@ -32,8 +32,8 @@ from omnigent.entities import (
     ConversationItem,
 )
 from omnigent.inner.native_attachments import reject_authored_framework_notices
-from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 from omnigent.native.source_owner import NativeAdmission, NativeStopResult
+from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 
 # ── Shared ──────────────────────────────────────────────────────
 

@@ -2577,6 +2577,7 @@ class CodexNativeAppServer:
         effort_catalog_transport = self.listen_url or str(self.socket_path)
         _effort_catalog_cache.pop(effort_catalog_transport, None)
         _effort_catalog_misses.pop(effort_catalog_transport, None)
+
         async def spawn_admitted() -> None:
             from omnigent.native.admission import validate_native
             from omnigent.native.native_bridge_common import async_bridge_dir_preparation_lock
