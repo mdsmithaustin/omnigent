@@ -51,7 +51,7 @@ records.
 
 ## Existing state and maintenance
 
-Revision `.1` uses the upstream defaults. Revision `.2` starts with the new
+On the `0.17.0` line, revision `.1` uses the upstream defaults. Revision `.2` introduces the
 fork locations and does not copy, move, or implicitly import `.omnigent`,
 `.omnigents`, `.omniagents`, or the upstream terminal history. Configure the
 new fork environment before use. Existing settings, conversations, application

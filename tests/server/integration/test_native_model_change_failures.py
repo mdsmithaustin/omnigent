@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,18 +68,26 @@ _PERMISSION = """\
 """
 
 
-@dataclass
-class _Credentials:
-    available: bool = True
-    failures: int = 0
+class _Credentials(_RunnerDatabricksAuth):
+    def __init__(self, session_id: str) -> None:
+        super().__init__(lambda: "test-token", server_url="http://test")
+        session_path = f"/v1/sessions/{session_id}"
+        self._settings_callbacks = {
+            ("GET", f"{session_path}/labels"),
+            ("POST", f"{session_path}/events"),
+        }
+        self.fail_settings_callbacks = False
+        self.failures = 0
 
-    def token(self) -> str:
-        if not self.available:
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        if self.fail_settings_callbacks and (request.method, request.url.path) in (
+            self._settings_callbacks
+        ):
             self.failures += 1
             raise DatabricksAuthError(
                 "Host credential service could not supply workspace credentials"
             )
-        return "test-token"
+        yield from super().auth_flow(request)
 
 
 @dataclass
@@ -296,12 +304,12 @@ async def native_session(
             await response.aread()
             replies.append(response)
 
-    credentials = _Credentials()
+    credentials = _Credentials(session_id)
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://test",
-            auth=_RunnerDatabricksAuth(credentials.token, server_url="http://test"),
+            auth=credentials,
         ) as callbacks:
             runner_app = create_runner_app(
                 process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
@@ -598,7 +606,7 @@ async def test_credential_failure_mirroring_applied_codex_effort_keeps_model_cha
     client: httpx.AsyncClient, native_session: _NativeSession, caplog: pytest.LogCaptureFixture
 ) -> None:
     session = native_session
-    session.credentials.available = False
+    session.credentials.fail_settings_callbacks = True
     session.tunnel.frames.clear()
 
     response = await _pick_model(client, session)

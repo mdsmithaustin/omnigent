@@ -10,6 +10,7 @@ import httpx
 import jwt
 import pytest
 
+from omnigent.installation_defaults import AUTH_STATE_COOKIE_NAME
 from omnigent.server.device_grant_store import DeviceGrantStore
 from omnigent.server.oidc import derive_code_challenge, generate_code_verifier
 from tests.server.integration.oidc_fixtures import (
@@ -91,9 +92,9 @@ async def test_attacker_ticket_not_redeemable_after_passive_victim_signin(
         redirect = await victim_browser.get(login_url)
         assert redirect.status_code == 302
         state = parse_qs(urlparse(redirect.headers["location"]).query)["state"][0]
-        # The login redirect set ap_auth_state on the victim's client jar,
+        # The login redirect set the auth state cookie on the victim's client jar,
         # which is sent automatically on the callback below.
-        assert victim_browser.cookies.get("ap_auth_state") is not None
+        assert victim_browser.cookies.get(AUTH_STATE_COOKIE_NAME) is not None
 
         # 4. Victim returns from the IdP and signs in normally. There is no
         # explicit "approve this CLI login" step in this journey.

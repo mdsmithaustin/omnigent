@@ -105,7 +105,7 @@ the old session's `runner_id`, unlike codex (`forwarder.py:2517`). The gate refu
 
 It has the same gap. `session_start` (`omnigent_pi_native_extension.js:2320`) calls `patchExternalSessionId`
 (`:2388`), which PATCHes `config.sessionId`, read once at load, and drops every outcome (`:903-918`). Leave it. The
-Prime 0.9 path is removed in 0.19.0 (`process.py:148`, `main.py:334`). Plain pi-native shares the JS and needs its
+Prime 0.9 path is scheduled for removal in 0.22.0 (`process.py:148`, `main.py:334`). Plain pi-native shares the JS and needs its
 own rotation through the `pi_native` runner paths, so track it as a pi-native follow-up.
 
 ## Test plan

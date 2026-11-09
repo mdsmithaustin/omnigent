@@ -8112,7 +8112,14 @@ async def _read_skill_command_claim(
     invocation_id, item_id, fingerprint = _skill_command_identity(session_id, body)
     existing = await asyncio.to_thread(conversation_store.get_item, session_id, item_id)
     if existing is None:
-        return None
+        existing = await asyncio.to_thread(conversation_store.get_item, session_id, invocation_id)
+        if (
+            existing is None
+            or not isinstance(existing.data, SlashCommandData)
+            or existing.data.delivery is None
+            or existing.data.delivery.invocation_id != invocation_id
+        ):
+            return None
     _validate_skill_command_claim(existing, invocation_id, fingerprint, created_by)
     return _skill_command_result(existing)
 
@@ -8185,6 +8192,8 @@ async def _dispatch_skill_slash_command_to_runner(
     if startup_input is not None and not await startup_input.claim(conversation_store, session_id):
         return {"queued": True, "item_id": startup_input.input_id}
     startup_input_id = startup_input.input_id if startup_input is not None else None
+    if startup_input_id is not None:
+        item_id = startup_input_id
 
     response_id = f"turn_{uuid.uuid4().hex}"
     context_id = uuid.uuid5(

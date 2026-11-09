@@ -6,7 +6,7 @@ The stamped version in [`pyproject.toml`](../pyproject.toml) is `0.21.0+mdsmitha
 
 Revision `.1` replays the fork onto upstream `v0.21.0` and includes the Prime chat pin across `/new` and reattach. The Prime 0.9 extension path remains available in this sync. Upstream now requires OpenCode 2.0.18 or a later 2.0.x version and macOS 13 or later for its desktop app.
 
-Revision `.6` runs Prime Native on Prime `0.10`, which dropped `--extension`, through a bridge over Prime's daemon socket. On `0.10`, policies cannot block Prime's own tools, and Omnigent shows a warning when an agent has such policies; see [Prime Native](PRIME_NATIVE.md). Prime `0.9.x` keeps the extension path, deprecated for removal in Omnigent `0.19.0`. Hosts that pinned `OMNIGENT_PRIME_PATH` to a `0.9.6` binary can drop the pin. It also fixes test flakes in web, cursor and relay tests. Upgrade `.5` with `omnigent-fork upgrade`.
+Fork release `0.18.0+mdsmithaustin.6` added support for Prime `0.10`, which dropped `--extension`, through a bridge over Prime's daemon socket. On `0.10`, policies cannot block Prime's own tools, and Omnigent shows a warning when an agent has such policies; see [Prime Native](PRIME_NATIVE.md). See the Prime Native guide for the extension removal schedule. Hosts that pinned `OMNIGENT_PRIME_PATH` to a `0.9.6` binary can drop the pin. It also fixes test flakes in web, cursor and relay tests. Upgrade `.5` with `omnigent-fork upgrade`.
 
 Revision `.5` supersedes `.4`, which was not published. It fixes `omnigent-fork upgrade` in `.3`, which refused the fork's published assets because GitHub percent-encodes the `+` of a fork version in download URLs. Move `.3` or earlier installs to `.5` with the manual install steps below; from `.5` on, `omnigent-fork upgrade` installs later fork releases. On Linux with the `linux_bwrap` sandbox, the file and shell tool helper no longer restarts after nearly every call, so an edit is no longer replayed and rejected with `Could not find oldText`.
 
@@ -38,7 +38,7 @@ Releases are cut from `main` and recorded by `mdsmithaustin/vX.Y.Z-rN` tags. Exi
 
 ## Check the source
 
-Use a clean checkout of a release-ready `main` commit or a `mdsmithaustin/vX.Y.Z-rN` tag with its full Git history. For an existing `fork/v*` release, use its historical source and verifier. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md). `gh` must be authenticated and able to read the public upstream release and tag APIs.
+Use a clean checkout of a release-ready `main` commit or a `mdsmithaustin/vX.Y.Z-rN` tag with its full Git history. For an existing `fork/v*` release, use its historical source and verifier. Install the repository prerequisites from [CONTRIBUTING.md](../CONTRIBUTING.md), including uv 0.13.4 or later. `gh` must be authenticated and able to read the public upstream release and tag APIs.
 
 Run these commands from the repository root. Any nonzero exit means the check failed.
 
@@ -132,7 +132,7 @@ Successful output includes `8 distributions; scoped integrity, not independent a
 Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork upgrade` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Each command must exit zero.
 
 ```sh
-version=0.19.0+mdsmithaustin.1
+version=0.21.0+mdsmithaustin.1
 venv="$HOME/.local/share/omnigent-fork/$version"
 uv venv --python 3.12 "$venv"
 uv pip install --python "$venv/bin/python" dist/*.whl
@@ -154,6 +154,8 @@ The fork's `upgrade` command takes this path on any fork install that is neither
 
 Only then does it switch. It drains and stops the local server. If the fork host service (`com.mdsmithaustin.omni.host` or `omni-mdsmithaustin-host.service`) runs the current install in local mode, it runs the current `omnigent host disable`, then the new venv's `omnigent host enable --server '' --non-interactive` with the service's recorded environment, such as `OMNIGENT_FEATURES`. The empty `--server` keeps local mode even when the fork config names a `server:`. Disabling first avoids launchd's bootstrap error 5 for a loaded label. If the new enable fails, the upgrade re-enables the previous service and stops. If that re-enable also fails, the service is left disabled and its definition removed, and the error prints the exact command to re-enable it from the previous venv. Run that command yourself: a rerun of `omnigent-fork upgrade` finds no service and does not restore it. A service that is absent, unreadable, remote, runs another install, or already runs the new release is left unchanged and reported. Finally the upgrade atomically points `~/.local/bin/omnigent-fork` at the new venv's `omnigent`. It never touches `~/.local/bin/omni` or `~/.local/bin/omnigent`, which belong to an upstream install.
 
+Back up the fork database before upgrading to `0.21.0`. Startup advances the database to a new Alembic revision. To roll back after that migration, stop the new release and restore the backup before starting the previous version.
+
 The previous venv is kept, and the upgrade prints the rollback commands. When it re-pointed a local-mode service, they start with the new venv's `omnigent host disable` and the previous venv's `omnigent host enable --server '' --non-interactive` with the service's non-secret `OMNIGENT_*` variables. They always end with an `ln -sfn` that points `omnigent-fork` back at the previous `omnigent`. Export any provider credentials the service needs before running the enable command. The upgrade installs the four wheels without extras. Running `omnigent-fork upgrade` again after a failure resumes from what is already in place. A fork installed from a `git+` URL re-pulls its own ref on a plain upgrade and refuses `--nightly` and `--target-version`. A build without the fork's local version segment keeps the upstream package-index and nightly behaviour.
 
 When setup installs a harness extra into a fork build, it installs only the packages that extra adds, never `omnigent` itself, and the executors' install hints show the same command. Fork builds are not on any package index, so reinstalling `omnigent[<extra>]` can replace the fork with upstream omnigent from PyPI; a `uv tool` install that did not come from git does exactly that.
@@ -164,7 +166,7 @@ Use separate virtual environments for upstream and the fork. `$venv` is the fork
 
 ```sh
 uv venv --python 3.12 /tmp/omnigent-upstream-install
-(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.19.0')
+(cd /tmp && uv pip install --python /tmp/omnigent-upstream-install/bin/python 'omnigent==0.21.0')
 "$venv/bin/python" -I scripts/verify_fork_coexistence.py \
     --upstream-python /tmp/omnigent-upstream-install/bin/python \
     --fork-python "$venv/bin/python" \

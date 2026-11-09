@@ -637,6 +637,20 @@ async def test_saved_sdk_skill_resolves_after_launch_and_replaces_pending_bubble
         startup = env.app.state.startup_inputs
         await startup._deliver(env.app, session_id, saved)
         await startup._deliver(env.app, session_id, saved)
+        retry = await env.client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "slash_command",
+                "data": {
+                    "kind": "skill",
+                    "name": "review",
+                    "arguments": "the startup flow",
+                    "stable_id": saved.id,
+                },
+            },
+        )
+        assert retry.status_code == 202, retry.text
+        assert retry.json()["item_id"] == saved.id
 
     assert len([path for path, _ in calls if path.endswith("/skills/resolve")]) == 1
     [turn] = [body for path, body in calls if path.endswith("/events")]
