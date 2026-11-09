@@ -100,7 +100,7 @@ def upgrade_command(*, home: Path, prefix: Path) -> str:
     launcher = fork_launcher(home)
     runs_here = launcher.exists() and launcher.resolve().parent.parent == prefix.resolve()
     entry = launcher.name if runs_here else str(prefix / "bin/omnigent")
-    return f"{cli_invocation(name=entry)} upgrade"
+    return f"{cli_invocation(name=entry)} update"
 
 
 def _venv_root(program: str) -> Path:
@@ -324,6 +324,7 @@ def describe_plan(plan: ForkUpgradePlan) -> list[str]:
         f"Install v{plan.version} from {plan.release.html_url}",
         f"  venv:     {plan.venv}",
         f"  launcher: {plan.launcher} -> {plan.venv / 'bin/omnigent'}",
+        f"  alias:    {plan.launcher.with_name('omni-fork')} -> {plan.launcher.name}",
         f"  service:  {service.state.value}; {action}",
         f"  kept for rollback: {plan.previous_venv}",
     ]
@@ -348,6 +349,16 @@ def switch_to_fork_venv(
     """Stop the server, re-point a managed host service, then move the launcher."""
     plan = prepared.plan
     old, new = plan.previous_venv / "bin/omnigent", plan.venv / "bin/omnigent"
+    alias = plan.launcher.with_name("omni-fork")
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        alias.symlink_to(plan.launcher.name)
+    except FileExistsError:
+        if not alias.is_symlink() or alias.readlink() not in (
+            Path(plan.launcher.name),
+            plan.launcher,
+        ):
+            raise ForkUpgradeError(f"Move {alias} aside before updating the fork.") from None
     stop_server()
     service = plan.service
     if service.state is ServiceState.CURRENT_LOCAL:
@@ -373,3 +384,4 @@ def switch_to_fork_venv(
         echo(f"Left the host service unchanged: {service.state.value}.")
     _move_launcher(plan.launcher, new)
     echo(f"{plan.launcher} -> {new}")
+    echo(f"{alias} -> {plan.launcher.name}")

@@ -2249,9 +2249,11 @@ def test_background_commands_report_reuse_when_the_spawned_daemon_yields(
 # ── omnigent start ────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("launcher", ["omnigent", "omni-fork", "omnigent-fork"])
 def test_start_spawns_background_host_and_suggests_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    launcher: str,
 ) -> None:
     """
     ``start`` is the friendly spelling of ``host --background``.
@@ -2260,6 +2262,8 @@ def test_start_spawns_background_host_and_suggests_stop(
     brings up the local server too) and suggest the matching off switch —
     ``omnigent stop``, not the host-specific teardown.
     """
+    monkeypatch.setattr(sys, "argv", [launcher])
+    monkeypatch.delenv("OMNIGENT_WRAPPER_COMMAND", raising=False)
     spawned_args, _ = _patch_background_host_spawn(monkeypatch, tmp_path)
     foreground_runs: list[str] = []
 
@@ -2273,7 +2277,7 @@ def test_start_spawns_background_host_and_suggests_stop(
     assert foreground_runs == []
     assert "pid 4242" in result.output
     assert "server: http://127.0.0.1:6767" in result.output
-    assert "omnigent stop" in result.output
+    assert f"  {launcher} stop" in result.output
     assert "host stop" not in result.output
     assert spawned_args and "--local" in spawned_args[0]
 
