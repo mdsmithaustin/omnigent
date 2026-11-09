@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import sys
 from collections.abc import Mapping
 
@@ -35,11 +36,13 @@ def cli_invocation(*, name: str = DEFAULT_CLI_NAME, env: Mapping[str, str] | Non
         launcher = sys.argv[0]
         basename = os.path.basename(launcher)
         if basename in {"omni-fork", "omnigent-fork"}:
+            if os.path.dirname(launcher) and shutil.which(basename) != os.path.abspath(launcher):
+                return shlex.quote(os.path.abspath(launcher))
             return basename
         if (
             basename in {"omni", "omnigent"}
-            and os.path.isabs(launcher)
+            and os.path.dirname(launcher)
             and is_fork_version(VERSION)
         ):
-            return shlex.quote(launcher)
+            return shlex.quote(os.path.abspath(launcher))
     return name

@@ -7,7 +7,9 @@ otherwise so default output is unchanged.
 
 from __future__ import annotations
 
+import shlex
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -54,7 +56,9 @@ def test_rendered_hint_names_the_wrapper() -> None:
 
 @pytest.mark.parametrize("launcher", ["omni-fork", "omnigent-fork"])
 def test_fork_hint_uses_invoked_alias(monkeypatch: pytest.MonkeyPatch, launcher: str) -> None:
-    monkeypatch.setattr(sys, "argv", [f"/home/user/.local/bin/{launcher}"])
+    path = f"/home/user/.local/bin/{launcher}"
+    monkeypatch.setattr(sys, "argv", [path])
+    monkeypatch.setattr("omnigent.cli_invocation.shutil.which", lambda _name: path)
     assert cli_invocation(env={}) == launcher
     assert cli_invocation(name="omni", env={}) == launcher
     assert cli_invocation(name="/other/venv/bin/omnigent", env={}) == "/other/venv/bin/omnigent"
@@ -74,3 +78,13 @@ def test_generic_launcher_uses_absolute_path_for_fork_builds(
     monkeypatch.setattr(sys, "argv", ["/path with spaces/bin/omnigent"])
     monkeypatch.setattr("omnigent.cli_invocation.VERSION", version)
     assert cli_invocation(env={}) == expected
+
+
+@pytest.mark.parametrize("launcher", ["omnigent", "omni-fork"])
+def test_relative_fork_launcher_outside_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, launcher: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [f"./private bin/{launcher}"])
+    monkeypatch.setattr("omnigent.cli_invocation.shutil.which", lambda _name: None)
+    assert cli_invocation(env={}) == shlex.quote(str(tmp_path / "private bin" / launcher))

@@ -129,7 +129,7 @@ python scripts/fork_release.py verify --certificate evidence/certificate.json --
 
 Successful output includes `8 distributions; scoped integrity, not independent approval`. Checksums alone do not authenticate the publisher. Trust the reviewed source and workflow identity, then verify the downloaded bytes.
 
-Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork update` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Skip the last command if `~/.local/bin/omni-fork` already links to `omnigent-fork`. Each command you run must exit zero.
+Install all four local wheels into their own environment in a durable location, then link the fork launcher. `omnigent-fork update` keeps this environment for rollback, so do not put it under `/tmp`. Set `version` to the certified version. Run the last command only when `~/.local/bin/omni-fork` is free. Skip it if the path already links to `omnigent-fork`. If another file, link, or directory occupies the path, choose a different location for it before creating the alias. Each command you run must exit zero.
 
 ```sh
 version=0.21.0+mdsmithaustin.1
