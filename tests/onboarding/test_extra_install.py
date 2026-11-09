@@ -230,6 +230,7 @@ def test_fork_build_without_uv_uses_pip_for_the_extra_requirements(
 
     assert extra_install.extra_install_command("slack") == [
         "/fork/venv/bin/python",
+        "-P",
         "-m",
         "pip",
         "install",

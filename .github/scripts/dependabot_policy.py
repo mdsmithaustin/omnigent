@@ -14,6 +14,14 @@ from urllib.request import Request, urlopen
 import yaml
 from maintainer_approval import gh_json, paginated
 
+_FORK_PUBLISH_CONDITION = (
+    "${{ github.event_name == 'workflow_dispatch' && inputs.publish == true "
+    "&& github.repository == 'mdsmithaustin/omnigent' && needs.source.result == 'success' "
+    "&& needs.lint.result == 'success' && needs.python.result == 'success' "
+    "&& needs.web.result == 'success' && needs.addons.result == 'success' "
+    "&& needs.build.result == 'success' && needs.certificate.result == 'success' }}"
+)
+
 
 class NeedsReview(ValueError):
     """The update needs human review."""
@@ -159,6 +167,10 @@ def require_refresh_permissions(workflows: dict[str, str], paths: set[str], head
                 if (path, name) == (".github/workflows/trivy.yml", "scan")
                 else set()
             )
+            if (path, name) == (".github/workflows/fork-release.yml", "publish") and job.get(
+                "if"
+            ) == _FORK_PUBLISH_CONDITION:
+                writes = {"contents"}
             permissions(job.get("permissions", workflow.get("permissions")), location, writes)
             if "uses" in job:
                 reusable = job["uses"]

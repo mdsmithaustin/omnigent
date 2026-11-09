@@ -4983,6 +4983,15 @@ describe("chatStore — sending during a model switch", () => {
 });
 
 describe("chatStore — sendSlashCommand", () => {
+  beforeEach(() => {
+    vi.mocked(getCurrentUserId).mockReturnValue("local");
+  });
+
+  afterEach(() => {
+    vi.mocked(getCurrentUserId).mockReturnValue(null);
+    localStorage.clear();
+  });
+
   /** Parse the JSON body of the single POST /events call. */
   function lastEventBody(): { type: string; data: Record<string, unknown> } {
     const post = fetchMock.mock.calls.find(
@@ -5016,7 +5025,6 @@ describe("chatStore — sendSlashCommand", () => {
   });
 
   it("checks the saved identity without another command post after a lost response", async () => {
-    localStorage.clear();
     useChatStore.setState({
       conversationId: "conv_existing",
       abortController: new AbortController(),
@@ -5061,7 +5069,6 @@ describe("chatStore — sendSlashCommand", () => {
   });
 
   it("retains the submitted identity outside the optimistic bubble after a lost reply and stream receipt", async () => {
-    localStorage.clear();
     useChatStore.setState({
       conversationId: "conv_existing",
       abortController: new AbortController(),

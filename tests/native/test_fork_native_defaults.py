@@ -74,7 +74,7 @@ print(json.dumps(paths))
     persistent = home / ".omnigent-mdsmithaustin"
     data = tmp_path / "selected-data" if data_override else persistent
     for name in ("codex", "pi", "opencode", "antigravity"):
-        expected = persistent / f"{name}-native" / digest
+        expected = data / f"{name}-native" / digest
         assert actual[name] == str(expected)
         assert expected != home / ".omnigent" / f"{name}-native" / digest
     for name in ("claude", "cursor", "devin", "goose", "hermes", "kimi", "kiro", "qwen"):

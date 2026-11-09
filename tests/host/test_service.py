@@ -386,6 +386,6 @@ def test_read_user_host_service_round_trips_enabled_definition(
     service.enable_user_host_service(None, environment=environment)
 
     assert service.read_user_host_service() == service.InstalledHostService(
-        command=("/opt/fork $1/bin/python", "-m", "omnigent.host.service_entry", "--local"),
+        command=("/opt/fork $1/bin/python", "-P", "-m", "omnigent.host.service_entry", "--local"),
         environment=environment,
     )

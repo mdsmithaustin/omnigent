@@ -180,6 +180,27 @@ def test_app_refresh_permissions_cover_optional_and_reusable_workflows(monkeypat
         assert path in str(raised.value)
 
 
+@pytest.mark.parametrize("fault", ["missing_condition", "alternate_trigger", "extra_write"])
+def test_fork_publish_permissions_require_exact_dispatch_gate(monkeypatch, fault):
+    monkeypatch.syspath_prepend(str(REPO_ROOT / ".github/scripts"))
+    from dependabot_policy import NeedsReview, require_refresh_permissions
+
+    path = ".github/workflows/fork-release.yml"
+    workflow = yaml.safe_load((REPO_ROOT / path).read_text())
+    publish = workflow["jobs"]["publish"]
+    if fault == "missing_condition":
+        del publish["if"]
+    elif fault == "alternate_trigger":
+        publish["if"] = publish["if"].replace(" }}", " || github.event_name == 'push' }}")
+    else:
+        publish["permissions"]["id-token"] = "write"
+
+    with pytest.raises(NeedsReview, match=r"fork-release\.yml:publish: privileged"):
+        require_refresh_permissions(
+            {path: yaml.safe_dump(workflow)}, {"uv.lock"}, "dependabot/uv/ruff"
+        )
+
+
 @pytest.mark.parametrize("name", ["oss-regen-on-comment.yml", "oss-regenerate-and-smoke.yml"])
 def test_regeneration_preserves_pins_and_skips_install_scripts(name):
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows" / name).read_text())

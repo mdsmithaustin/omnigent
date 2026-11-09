@@ -678,7 +678,7 @@ def test_build_codex_native_server_owns_add_dir_roots(tmp_path: Path) -> None:
 
 
 async def test_start_writes_add_dir_roots_for_remote_threads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
     Startup appends ``--add-dir`` roots to the private workspace-write roots.
@@ -698,6 +698,8 @@ async def test_start_writes_add_dir_roots_for_remote_threads(
 
     server = _test_app_server(tmp_path, codex_home, tmp_path / "bridge", workspace)
     server.writable_roots = (str(tmp_path / "attachments"), "/configured")
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
 

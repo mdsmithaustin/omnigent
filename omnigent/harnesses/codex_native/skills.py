@@ -58,6 +58,7 @@ def discover_native_skills(ctx: SkillSourceContext) -> list[SkillSpec]:
             ctx.codex_home or ctx.home / ".codex",
             ctx.skills_filter,
             cwd=ctx.roots[0] if ctx.roots else None,
+            warnings=ctx.warnings,
         )
     )
     return skills

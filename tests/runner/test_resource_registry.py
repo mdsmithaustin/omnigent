@@ -116,6 +116,7 @@ async def test_claude_program_status_real_launch_and_fallback(
     caplog: pytest.LogCaptureFixture,
     protocol: str,
     sandbox_type: str,
+    native_source_server,
 ) -> None:
     """Exercise startup negotiation, raw PTY transport, status arbitration and cleanup."""
     caplog.set_level(logging.INFO)
@@ -129,6 +130,10 @@ async def test_claude_program_status_real_launch_and_fallback(
     peer = _claude_osc_peer(tmp_path / "peer.py")
     terminals = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminals)
+    registry.native_server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond),
+        base_url="http://omnigent.test",
+    )
     statuses: list[tuple[str, str | None]] = []
     registry.set_session_status_publisher(
         lambda _, state, reason: statuses.append((state, reason))
@@ -246,6 +251,7 @@ async def test_claude_program_status_real_launch_and_fallback(
                 await asyncio.sleep(0.05)
     finally:
         await terminals.shutdown()
+        await registry.native_server_client.aclose()
     assert reader.status is None
     assert not reader.path.exists()
 
@@ -253,13 +259,17 @@ async def test_claude_program_status_real_launch_and_fallback(
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
 @pytest.mark.asyncio
 async def test_claude_osc_error_without_a_hook_fails_the_turn_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_source_server
 ) -> None:
     """A turn whose StopFailure hook never reaches the runner still ends, failed once."""
     monkeypatch.delenv("OMNIGENT_FEATURES", raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     terminals = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminals)
+    registry.native_server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond),
+        base_url="http://omnigent.test",
+    )
     statuses: list[tuple[str, str | None]] = []
     registry.set_session_status_publisher(
         lambda _, state, reason: statuses.append((state, reason))
@@ -286,18 +296,23 @@ async def test_claude_osc_error_without_a_hook_fails_the_turn_once(
         assert raw_status.call_args_list.count(call("failed", None)) == 1
     finally:
         await terminals.shutdown()
+        await registry.native_server_client.aclose()
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
 @pytest.mark.asyncio
 async def test_claude_osc_error_is_not_failed_again_once_the_hook_lands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_source_server
 ) -> None:
     """A forwarded StopFailure edge ends the turn, so the grace period adds no second failure."""
     monkeypatch.delenv("OMNIGENT_FEATURES", raising=False)
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
     terminals = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminals)
+    registry.native_server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(native_source_server.respond),
+        base_url="http://omnigent.test",
+    )
     statuses: list[tuple[str, str | None]] = []
     registry.set_session_status_publisher(
         lambda _, state, reason: statuses.append((state, reason))
@@ -330,6 +345,7 @@ async def test_claude_osc_error_is_not_failed_again_once_the_hook_lands(
         assert call("failed", None) not in raw_status.call_args_list
     finally:
         await terminals.shutdown()
+        await registry.native_server_client.aclose()
 
 
 async def _wait_for_status_edge(
@@ -2781,9 +2797,9 @@ async def test_claude_native_billing_acknowledgement_uses_original_launch_bridge
 
         def replace_after_read() -> None:
             original_tick()
-            registry.terminal_registry._by_conversation["target" if transfer else "source"][
-                ("claude", "main")
-            ] = make_test_terminal_instance("claude", "main", tmp_path / "replacement")
+            registry.terminal_registry._by_conversation["source"][("claude", "main")] = (
+                make_test_terminal_instance("claude", "main", tmp_path / "replacement")
+            )
 
         monkeypatch.setattr(poller, "tick", replace_after_read)
     instance._remember_pane_snapshot(_AUTO_MODE_BILLING_NOTICE_PANE)

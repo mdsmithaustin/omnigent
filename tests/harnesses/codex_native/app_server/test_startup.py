@@ -121,6 +121,8 @@ def _respawn_harness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     readiness: Callable[[CodexNativeAppServer], Awaitable[_FakeStartupClient]],
+    *,
+    admission_url: str,
 ) -> _RespawnHarness:
     """
     Build the mocked server shared by the silent-start respawn tests.
@@ -128,6 +130,7 @@ def _respawn_harness(
     :param tmp_path: Test temp directory.
     :param monkeypatch: Pytest monkeypatch fixture.
     :param readiness: Replacement for ``_wait_until_ready`` scripting each attempt.
+    :param admission_url: Native source admission endpoint for the test session.
     :returns: The server plus the spawn and termination calls it made.
     """
     source_home = tmp_path / "source-codex-home"
@@ -141,6 +144,9 @@ def _respawn_harness(
     harness = _RespawnHarness(
         _test_app_server(tmp_path, tmp_path / "codex-home", tmp_path / "bridge", workspace)
     )
+
+    harness.server.session_id = tmp_path.name
+    harness.server.ap_server_url = admission_url
 
     async def _spawn_spy(self: CodexNativeAppServer, resolved_listen: str) -> None:
         harness.spawn_calls.append(resolved_listen)
@@ -174,6 +180,7 @@ def _respawn_harness(
     ids=["ws-capture-on", "unix-capture-off"],
 )
 async def test_start_respawns_on_silent_startup_timeout(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -198,7 +205,9 @@ async def test_start_respawns_on_silent_startup_timeout(
         _self.socket_path.write_text("stale")
         raise timeout
 
-    harness = _respawn_harness(tmp_path, monkeypatch, _ready_with_respawn)
+    harness = _respawn_harness(
+        tmp_path, monkeypatch, _ready_with_respawn, admission_url=native_source_server.url
+    )
     server = harness.server
     server.listen_url = listen_url
     resolved_listen = listen_url or f"unix://{server.socket_path}"
@@ -243,14 +252,16 @@ async def test_start_respawns_on_silent_startup_timeout(
 
 
 async def test_start_fails_on_second_silent_timeout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A second silent timeout fails start() with a plain RuntimeError and no third spawn."""
 
     async def _always_timeout(_self: CodexNativeAppServer) -> _FakeStartupClient:
         raise _silent_timeout(_self)
 
-    harness = _respawn_harness(tmp_path, monkeypatch, _always_timeout)
+    harness = _respawn_harness(
+        tmp_path, monkeypatch, _always_timeout, admission_url=native_source_server.url
+    )
 
     with pytest.raises(RuntimeError) as excinfo:
         await harness.server.start()
@@ -331,7 +342,10 @@ def _free_port_outside_the_ephemeral_range() -> int:
 
 @pytest.mark.parametrize("first_mode", ["no_listener", "no_initialize"])
 async def test_start_respawns_a_silent_app_server_on_the_same_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_mode: str
+    native_source_server: NativeSourceServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    first_mode: str,
 ) -> None:
     """An app-server that never initializes is replaced on the URL callers already hold."""
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
@@ -366,6 +380,8 @@ async def test_start_respawns_a_silent_app_server_on_the_same_transport(
     )
     server.codex_path = str(codex)
     server.listen_url = listen_url
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     await asyncio.wait_for(server.start(), timeout=15)
     try:
@@ -448,7 +464,7 @@ async def test_start_cancellation_closes_reused_client_and_app_server(
 
 @pytest.fixture
 def startup_failure_server(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[CodexNativeAppServer, Path]:
     """Use an owned sleeping child so failure cleanup has live process state."""
     from omnigent.harnesses.codex_native import app_server as module
@@ -473,6 +489,7 @@ def startup_failure_server(
     )
     server = _test_app_server(tmp_path, tmp_path / "private", tmp_path / "bridge", tmp_path)
     server.session_id = "startup-snapshot-session"
+    server.ap_server_url = native_source_server.url
     server.reconcile_process_registry = False
     return server, source
 
@@ -1102,7 +1119,10 @@ esac
 
 
 async def test_readiness_failure_records_app_server_state_before_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    native_source_server: NativeSourceServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A child that never becomes ready is reaped, but its state is logged first."""
     from omnigent.harnesses.codex_native import app_server as codex_native_app_server
@@ -1118,6 +1138,8 @@ async def test_readiness_failure_records_app_server_state_before_cleanup(
     monkeypatch.setattr(codex_native_app_server, "_APP_SERVER_READY_TIMEOUT_SECONDS", 1.0)
     server = _test_app_server(tmp_path, tmp_path / "codex-home", tmp_path / "bridge", workspace)
     server.codex_path = str(codex)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     with (
         caplog.at_level(logging.INFO),
@@ -1284,6 +1306,7 @@ class _ConfigReadStartupClient(_FakeStartupClient):
     ],
 )
 async def test_start_pins_the_terminal_to_codex_effective_model_provider(
+    native_source_server: NativeSourceServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1317,6 +1340,8 @@ async def test_start_pins_the_terminal_to_codex_effective_model_provider(
     monkeypatch.setattr(CodexNativeAppServer, "_trust_policy_hooks", _fake_trust_policy_hooks)
     server = _test_app_server(tmp_path, tmp_path / "codex-home", tmp_path / "bridge", workspace)
     server.config_overrides = list(overrides)
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
 
     with caplog.at_level(logging.WARNING, logger="omnigent.harnesses.codex_native.app_server"):
         await server.start()

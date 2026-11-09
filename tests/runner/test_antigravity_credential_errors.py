@@ -16,13 +16,14 @@ from omnigent.runner.native.orchestration import (
     _ensure_native_terminal,
     _launch_native_terminal,
 )
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ensure", [False, True], ids=["startup", "reattach"])
 @pytest.mark.parametrize("failure", ["missing-secret", "incompatible-url", "malformed-profile"])
 async def test_saved_credentials_reach_runner_error_response(
-    monkeypatch, tmp_path, caplog, ensure, failure
+    monkeypatch, tmp_path, caplog, ensure, failure, native_source_server
 ):
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("OMNIGENT_DISABLE_KEYRING", "1")
@@ -64,7 +65,7 @@ async def test_saved_credentials_reach_runner_error_response(
     events = []
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, json={"workspace": str(tmp_path)})
+            lambda request: native_source_server.respond(request, {"workspace": str(tmp_path)})
         ),
         base_url="http://server",
     ) as client:

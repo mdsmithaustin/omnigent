@@ -46,7 +46,13 @@ class _FakeConnection:
         self.calls: list[dict[str, Any]] = []
 
     async def call_tool_with_elicitation(
-        self, bare_tool: str, arguments: Any, *, input_responses: Any, request_state: Any
+        self,
+        bare_tool: str,
+        arguments: Any,
+        *,
+        input_responses: Any,
+        request_state: Any,
+        session_id: str,
     ) -> Any:
         self.calls.append(
             {
@@ -54,6 +60,7 @@ class _FakeConnection:
                 "arguments": arguments,
                 "input_responses": input_responses,
                 "request_state": request_state,
+                "session_id": session_id,
             }
         )
         return self.output
@@ -354,6 +361,7 @@ async def test_elicitation_reply_resumes_the_tool_with_the_user_input() -> None:
             "arguments": {"q": 1},
             "input_responses": {"r1": "yes"},
             "request_state": "s",
+            "session_id": SESSION,
         }
     ]
 

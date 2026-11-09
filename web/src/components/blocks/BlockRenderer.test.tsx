@@ -637,7 +637,7 @@ describe("BlockRenderer dispatch", () => {
       ["legacy command", "command", undefined],
       ["accepted skill", "skill", accepted(false)],
       ["historical accepted skill", "skill", accepted(true)],
-    ] as const)("keeps %s inside Worked", (_case, slashKind, delivery) => {
+    ] as const)("places the %s receipt in the correct segment", (_case, slashKind, delivery) => {
       const items: RenderItem[] = [
         {
           kind: "slash_command",
@@ -654,7 +654,11 @@ describe("BlockRenderer dispatch", () => {
       render(<BlockRenderer items={items} sessionStatus="idle" />);
       const fold = screen.getByRole("button", { name: "Worked" });
       expect(fold).toHaveAttribute("aria-expanded", "false");
-      expect(screen.queryByTestId("slash-command-card")).toBeNull();
+      if (slashKind === "command") {
+        expect(screen.getByTestId("slash-command-card")).toBeVisible();
+      } else {
+        expect(screen.queryByTestId("slash-command-card")).toBeNull();
+      }
       expect(screen.getByText("Legacy answer.")).toBeVisible();
       fireEvent.click(fold);
       expect(screen.getByText("legacy-command")).toBeVisible();
@@ -1343,12 +1347,10 @@ describe("BlockRenderer dispatch", () => {
       name,
       arguments: "",
       output: null,
+      delivery: { ...accepted(false), status: "unknown" },
     });
 
-    it("keeps a slash-command receipt visible after the turn settles", () => {
-      // A skill invocation's receipt is a durable record of what the
-      // user ran. When the agent's reply lands in the same bubble it
-      // must stay visible, not fold behind the Worked row with it.
+    it("keeps a skill receipt awaiting admission visible after the turn settles", () => {
       const items: RenderItem[] = [
         slashReceipt(),
         { kind: "text", itemId: "m1", text: "Acknowledged.", final: true },
@@ -1364,7 +1366,7 @@ describe("BlockRenderer dispatch", () => {
       expect(screen.getByText("Acknowledged.")).toBeDefined();
     });
 
-    it("keeps a slash-command receipt visible outside a folded work run", () => {
+    it("keeps a skill receipt awaiting admission visible outside a folded work run", () => {
       const items: RenderItem[] = [
         slashReceipt(),
         tool(1),

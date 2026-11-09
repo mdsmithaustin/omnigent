@@ -176,7 +176,7 @@ def test_development_line_fork1_stamp_is_refused_then_recovers(tmp_path: Path) -
             config.attributes["connection"] = conn
             command.stamp(config, "mm1a2b3c4d5e", purge=True)
             command.upgrade(config, "head")
-            assert _revision(conn) == "fork2a3b4c5d"
+            assert _revision(conn) == _get_head_db_revision("sqlite://")
             assert "conversation_native_sources" in sa.inspect(conn).get_table_names()
             indexes = _agent_indexes(conn)
         assert indexes["ix_agents_id_name"] == _NAME_INDEX

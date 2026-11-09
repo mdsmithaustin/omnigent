@@ -590,11 +590,6 @@ function isPendingElicitation(item: RenderItem): boolean {
   return item.kind === "elicitation" && item.status === "pending";
 }
 
-/** A slash-command receipt is a durable record of the user's invocation. */
-function isSlashCommandCard(item: RenderItem): boolean {
-  return item.kind === "slash_command";
-}
-
 /**
  * Whether a bubble is made ONLY of streaming artifacts: reasoning
  * chunks (no item id until their item is finalized) and `live:` text

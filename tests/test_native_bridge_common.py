@@ -416,16 +416,15 @@ def test_bridge_root_follows_the_configured_data_dir(
 
 
 @_NATIVE_BRIDGE_HARNESSES
-def test_bridge_root_defaults_to_the_home_omnigent_dir(
+def test_bridge_root_defaults_to_the_fork_user_dir(
     tmp_path: Path, harness: str, dirname: str
 ) -> None:
-    """With no data dir override, a single instance keeps ``~/.omnigent/<harness>-native``."""
     home = tmp_path / "home"
     home.mkdir()
 
     root = _run_python(_bridge_root_code(harness), cwd=None, data_dir=None, home=home)
 
-    assert Path(root) == home / ".omnigent" / dirname
+    assert Path(root) == home / ".omnigent-mdsmithaustin" / dirname
 
 
 @_NATIVE_BRIDGE_HARNESSES

@@ -2251,7 +2251,9 @@ const source = fs.readFileSync(0, "utf8");
 const consumer = process.argv[1];
 assert.ok(["prime-0.9.6", "pi-0.84.2"].includes(consumer));
 const plain = value => JSON.parse(JSON.stringify(value));
-const jsonResponse = json => ({ ok: true, status: 200, json: async () => json });
+const jsonResponse = json => ({
+  ok: true, status: 200, json: async () => json, text: async () => JSON.stringify(json),
+});
 const unavailable = "Omnigent tools require a live Prime root binding";
 const nonJson = "Omnigent tool call failed: the server answered 2xx with a non-JSON " +
   "body, which usually means an authenticating proxy or sign-in page " +

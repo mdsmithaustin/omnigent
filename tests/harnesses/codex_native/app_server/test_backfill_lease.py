@@ -15,6 +15,8 @@ from tests.harnesses.codex_native.app_server._support import (
     _disable_codex_startup_rpc,
     _test_app_server,
 )
+from tests.native_source_helpers import NativeSourceServer
+from tests.native_source_helpers import native_source_server as native_source_server
 
 
 def _seed_codex_state_db(codex_home: Path, *, status: str, updated_at: int) -> Path:
@@ -125,7 +127,7 @@ def test_recover_orphaned_backfill_lease_survives_unreadable_state_db(
 
 
 async def test_start_expires_orphaned_backfill_lease_before_spawn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    native_source_server: NativeSourceServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Startup recovers a dead-owner backfill lease so codex can reclaim it at launch."""
     from omnigent.harnesses.codex_native import app_server
@@ -151,6 +153,8 @@ async def test_start_expires_orphaned_backfill_lease_before_spawn(
 
     server = _test_app_server(tmp_path, codex_home, tmp_path / "bridge", workspace)
     server.reconcile_process_registry = False
+    server.session_id = tmp_path.name
+    server.ap_server_url = native_source_server.url
     await server.start()
     await server.close()
 

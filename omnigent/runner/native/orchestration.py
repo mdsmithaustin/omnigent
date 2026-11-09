@@ -10809,9 +10809,7 @@ async def _launch_native_terminal(
                 )
                 return True
             except Exception as exc:
-                if not (
-                    isinstance(exc, OmnigentError) and exc.code == ErrorCode.HARNESS_NOT_CONFIGURED
-                ):
+                if _native_terminal_configuration_message(exc) is None:
                     _logger.exception(
                         "Failed to auto-create %s terminal for %s",
                         agent.terminal_name,
@@ -10982,9 +10980,7 @@ async def _ensure_native_terminal(
                         exc,
                         extra={"session_id": ctx.session_id},
                     )
-                elif not (
-                    isinstance(exc, OmnigentError) and exc.code == ErrorCode.HARNESS_NOT_CONFIGURED
-                ):
+                elif _native_terminal_configuration_message(exc) is None:
                     _logger.exception(
                         "%s terminal ensure failed for session=%s",
                         agent.display_name,

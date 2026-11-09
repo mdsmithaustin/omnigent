@@ -15,7 +15,7 @@ install command depends on *how* omnigent itself was installed:
   Homebrew/pipx/system install that merely has ``uv`` on ``PATH`` ("No virtual
   environment found") and can silently target an unrelated venv when one is
   active.
-* **``pip`` / fallback** — ``<sys.executable> -m pip install "omnigent[extra]"``
+* **``pip`` / fallback** — ``<sys.executable> -P -m pip install "omnigent[extra]"``
   pins to the running interpreter.
 """
 
@@ -101,7 +101,7 @@ def extra_install_command(extra: str) -> list[str]:
        omnigent --force``
     3. ``uv`` on PATH (non-tool) → ``uv pip install --python <sys.executable>
        "omnigent[extra]"``
-    4. fallback → ``<sys.executable> -m pip install "omnigent[extra]"``
+    4. fallback → ``<sys.executable> -P -m pip install "omnigent[extra]"``
 
     A fork build instead installs only the extra's own requirements, with uv
     when available, so the fork is never reinstalled from a package index.
@@ -115,7 +115,7 @@ def extra_install_command(extra: str) -> list[str]:
         requirements = _extra_requirements(extra)
         if shutil.which("uv") is not None:
             return ["uv", "pip", "install", "--python", sys.executable, *requirements]
-        return [sys.executable, "-m", "pip", "install", *requirements]
+        return [sys.executable, "-P", "-m", "pip", "install", *requirements]
 
     target = f"omnigent[{extra}]"
 

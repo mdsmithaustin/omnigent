@@ -6189,9 +6189,9 @@ def test_config_list_ignores_project_harness_launch_overrides(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text("harness: claude-sdk\n")
-    (project / ".omnigent" / "config.yaml").write_text(
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         "harness:\n  default: codex\n  pi:\n    command: project-pi\n    args: [--project-arg]\n"
     )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))

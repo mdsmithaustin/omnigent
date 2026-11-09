@@ -149,6 +149,7 @@ async def test_prime_patch_model_then_effort_preserves_newer_native_observation(
             "share_workspace_files": None,
             "terminal_launch_args": None,
             "archived": None,
+            "label_updates": None,
         }
     ]
     snapshot = (await client.get(f"/v1/sessions/{sid}")).json()

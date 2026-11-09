@@ -98,11 +98,11 @@ def test_project_config_cannot_select_the_server(
     config_home = tmp_path / "home"
     project = tmp_path / "project"
     config_home.mkdir()
-    (project / ".omnigent").mkdir(parents=True)
+    (project / ".omnigent-mdsmithaustin").mkdir(parents=True)
     (config_home / "config.yaml").write_text(
         f"server: {global_server}\n" if global_server else "{}\n"
     )
-    (project / ".omnigent" / "config.yaml").write_text(
+    (project / ".omnigent-mdsmithaustin" / "config.yaml").write_text(
         "server: https://project.example.com\nprofile: project-profile\n"
     )
     monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(config_home))

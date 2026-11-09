@@ -1356,15 +1356,19 @@ async def test_native_relay_discovers_session_mcp_tools_through_gateway(
     class GatewayClient(_SwitchableServerClient):
         """Return per-service schemas for registry tools and session schemas otherwise."""
 
-        async def post(self, url: str, **kwargs: Any) -> _SwitchableServerClient._Response:
+        async def post(
+            self, url: str, **kwargs: Any
+        ) -> NullServerClient._Response | httpx.Response:
             """Simulate discovery success or a temporary gateway outage."""
             if kwargs.get("json", {}).get("method") != "tools/list":
-                return self._Response({})
+                return await super().post(url, **kwargs)
             requests.append(url)
             if fail_once and len(requests) == 1:
                 raise httpx.ConnectError("gateway unavailable")
-            return self._Response(
-                {
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", f"http://source{url}"),
+                json={
                     "result": {
                         "tools": [
                             {
@@ -1374,7 +1378,7 @@ async def test_native_relay_discovers_session_mcp_tools_through_gateway(
                             }
                         ]
                     }
-                }
+                },
             )
 
     server_client = GatewayClient("with-mcp")
@@ -1471,12 +1475,20 @@ async def test_native_revision_refreshes_relay_before_turn_without_reset(
     tools_at_delivery: list[set[str]] = []
 
     class GatewayClient(_SwitchableServerClient):
-        async def post(self, url: str, **kwargs: Any) -> _SwitchableServerClient._Response:
+        async def post(
+            self, url: str, **kwargs: Any
+        ) -> NullServerClient._Response | httpx.Response:
             if kwargs.get("json", {}).get("method") == "tools/list":
-                return self._Response(
-                    {"result": {"tools": [{"name": "status", "inputSchema": {"type": "object"}}]}}
+                return httpx.Response(
+                    200,
+                    request=httpx.Request("POST", f"http://source{url}"),
+                    json={
+                        "result": {
+                            "tools": [{"name": "status", "inputSchema": {"type": "object"}}]
+                        }
+                    },
                 )
-            return self._Response({})
+            return await super().post(url, **kwargs)
 
     class RecordingHarness(_ScriptedHarnessClient):
         def stream(self, method: str, url: str, *, json: dict[str, Any], timeout: Any) -> Any:

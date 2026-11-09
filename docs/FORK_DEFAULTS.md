@@ -31,8 +31,8 @@ their existing selection rules.
 Explicit configuration, data, history, native-state, workspace, model, server
 URL, and foreground port selections retain their existing behavior.
 `OMNIGENT_DATA_DIR` and `OMNIGENT_CONFIG_HOME` remain separate settings.
-Owners that previously ignored `OMNIGENT_DATA_DIR`, such as the stable runner
-ID and several native bridge roots, continue to ignore it.
+The Codex, Pi, OpenCode, Antigravity, and Prime bridge roots follow
+`OMNIGENT_DATA_DIR`. The stable runner ID uses the fork user directory.
 
 Explicit overrides can select shared resources. Use different values in the two
 environments to retain isolation. The fork does not implicitly load the

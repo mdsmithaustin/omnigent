@@ -36,6 +36,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
+from omnigent.installation_defaults import SESSION_COOKIE_NAME
 from omnigent.server.admin_list import AdminList
 from omnigent.server.auth import UnifiedAuthProvider
 from omnigent.server.device_grant_store import DeviceGrantStore
@@ -286,7 +287,7 @@ def test_callback_verified_email_mints_session(
 
     # 302 redirect (not 400) means the email was accepted as identity.
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
+    session_cookie = resp.cookies.get(SESSION_COOKIE_NAME)
     # The session cookie must be set on success; absence would mean the
     # callback bailed before minting (the bug we're guarding against,
     # inverted).
@@ -328,7 +329,7 @@ def test_callback_unverified_email_rejected(
     assert resp.status_code == 400, resp.text
     assert "Could not determine user email" in resp.json()["error"]
     # No session was minted for the spoofable email.
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 @pytest.mark.parametrize("callback_client", [True], indirect=True)
@@ -356,7 +357,7 @@ def test_callback_skip_verification_flag_admits_unverified(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
+    session_cookie = resp.cookies.get(SESSION_COOKIE_NAME)
     assert session_cookie is not None
     decoded = jwt.decode(session_cookie, _TEST_SECRET, algorithms=["HS256"])
     assert decoded["sub"] == "carol@example.com"
@@ -386,7 +387,7 @@ def test_callback_custom_email_claim_admits_upn(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    session_cookie = resp.cookies.get("mdsmithaustin_ap_session")
+    session_cookie = resp.cookies.get(SESSION_COOKIE_NAME)
     assert session_cookie is not None
     decoded = jwt.decode(session_cookie, _TEST_SECRET, algorithms=["HS256"])
     # The UPN flowed into the session sub, normalized like an email.
@@ -417,7 +418,7 @@ def test_callback_custom_email_claim_rejects_invalid_value(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 @pytest.mark.parametrize(
@@ -457,7 +458,7 @@ def test_callback_custom_email_claim_still_requires_verification_optout(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 @pytest.mark.parametrize(
@@ -480,7 +481,7 @@ def test_callback_custom_email_claim_absent_rejected(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 400, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 @pytest.mark.parametrize("verified_value", [True, "true", "True", "TRUE"])
@@ -501,7 +502,7 @@ def test_callback_accepts_boolean_and_string_true(
 
     # Accepted as a verified identity → redirect + session.
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
 # ── Forced re-auth: callback verifies id_token auth_time ───────────
@@ -552,7 +553,7 @@ def test_reauth_callback_accepts_fresh_auth_time(
     resp = _do_callback_reauth(client, token, reauth_at=reauth_at)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
 def test_reauth_callback_rejects_stale_auth_time(
@@ -575,7 +576,7 @@ def test_reauth_callback_rejects_stale_auth_time(
 
     assert resp.status_code == 403, resp.text
     assert "did not re-authenticate" in resp.json()["error"]
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 def test_reauth_callback_rejects_missing_auth_time(
@@ -595,7 +596,7 @@ def test_reauth_callback_rejects_missing_auth_time(
 
     assert resp.status_code == 403, resp.text
     assert "did not confirm re-authentication" in resp.json()["error"]
-    assert resp.cookies.get("mdsmithaustin_ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 def test_reauth_callback_accepts_entra_token_expiring_on_arrival(
@@ -624,7 +625,7 @@ def test_reauth_callback_accepts_entra_token_expiring_on_arrival(
     resp = _do_callback_reauth(client, token, reauth_at=reauth_at)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("ap_session") is not None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
 def test_reauth_callback_rejects_token_expired_beyond_leeway(
@@ -648,7 +649,7 @@ def test_reauth_callback_rejects_token_expired_beyond_leeway(
 
     assert resp.status_code == 400, resp.text
     assert "IdP id_token failed validation" in resp.json()["error"]
-    assert resp.cookies.get("ap_session") is None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is None
 
 
 @pytest.mark.parametrize("callback_client", [{"require_reauth": False}], indirect=True)
@@ -669,7 +670,7 @@ def test_reauth_callback_opt_out_skips_auth_time_check(
     resp = _do_callback_reauth(client, keys.sign_id_token(claims), reauth_at=reauth_at)
 
     assert resp.status_code == 302, resp.text
-    decoded = jwt.decode(resp.cookies["ap_session"], _TEST_SECRET, algorithms=["HS256"])
+    decoded = jwt.decode(resp.cookies[SESSION_COOKIE_NAME], _TEST_SECRET, algorithms=["HS256"])
     assert decoded["sub"] == "alice@example.com"
 
 
@@ -688,7 +689,7 @@ def test_non_reauth_callback_ignores_auth_time(
     resp = _do_callback(client, token)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("mdsmithaustin_ap_session") is not None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
 # ── CLI login tickets + login-issued refresh grants ───────────────
@@ -849,7 +850,7 @@ def test_device_approval_reauthenticates_before_consent(
     assert _do_callback(client, keys.sign_id_token(claims)).status_code == 302
     client.cookies.delete(_AUTH_STATE_COOKIE_PLAIN)
     for cookie in client.cookies.jar:
-        if cookie.name == "ap_session":
+        if cookie.name == SESSION_COOKIE_NAME:
             session = jwt.decode(cookie.value, _TEST_SECRET, algorithms=["HS256"])
             session["iat"] -= 3600
             cookie.value = jwt.encode(session, _TEST_SECRET, algorithm="HS256")
@@ -1123,7 +1124,7 @@ def test_reauth_login_sends_a_max_age_an_entra_token_survives(
     resp = _do_callback_reauth(client, token, reauth_at=reauth_at)
 
     assert resp.status_code == 302, resp.text
-    assert resp.cookies.get("ap_session") is not None
+    assert resp.cookies.get(SESSION_COOKIE_NAME) is not None
 
 
 @pytest.mark.parametrize(

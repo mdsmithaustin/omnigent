@@ -4210,7 +4210,7 @@ async def test_auto_create_claude_terminal_rebinds_a_moved_bridge(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("materialized_bundle", [False, True])
-async def test_claude_skill_bundle_survives_retries_and_transfer_until_bridge_cleanup(
+async def test_claude_skill_bundle_survives_retries_until_bridge_cleanup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     materialized_bundle: bool,
@@ -4307,11 +4307,15 @@ async def test_claude_skill_bundle_survives_retries_and_transfer_until_bridge_cl
 
     instance = make_test_terminal_instance("claude", "main", tmp_path)
     terminal_registry._by_conversation[session_id] = {("claude", "main"): instance}
-    moved = await resource_registry.transfer_terminal(
-        session_id, "skill-lifetime-target", "terminal_claude_main"
-    )
-    assert moved is not None
-    await resource_registry.cleanup_session(session_id)
+    with pytest.raises(
+        OmnigentError, match="Stop requires their original source owner"
+    ) as rejected:
+        await resource_registry.transfer_terminal(
+            session_id, "skill-lifetime-target", "terminal_claude_main"
+        )
+    assert rejected.value.code == ErrorCode.CONFLICT
+    assert terminal_registry.get(session_id, "claude", "main") is instance
+    assert terminal_registry.get("skill-lifetime-target", "claude", "main") is None
     assert claude_native_bridge.prune_orphaned_bridge_dirs() == 0
     assert (bundle / "skills" / "build-omnigent" / "SKILL.md").is_file()
 

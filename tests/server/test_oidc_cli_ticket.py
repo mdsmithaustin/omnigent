@@ -13,6 +13,7 @@ import httpx
 import jwt
 import pytest
 
+from omnigent.installation_defaults import AUTH_STATE_COOKIE_NAME, SESSION_COOKIE_NAME
 from omnigent.server.auth import UnifiedAuthProvider
 from omnigent.server.device_grant_store import DeviceGrantStore
 from omnigent.server.oidc import mint_session_cookie
@@ -44,7 +45,11 @@ async def _complete_callback(
     client: httpx.AsyncClient, ticket: str, *, state: str = "state", base_path: str = ""
 ) -> httpx.Response:
     state_cookie = _mint_state_cookie(state, ticket=ticket)
-    cookie_name = "__Host-ap_auth_state" if client.base_url.scheme == "https" else "ap_auth_state"
+    cookie_name = (
+        f"__Host-{AUTH_STATE_COOKIE_NAME}"
+        if client.base_url.scheme == "https"
+        else AUTH_STATE_COOKIE_NAME
+    )
     mock_cm = _mock_httpx_client_for_github()
     with patch("omnigent.server.routes.auth.httpx.AsyncClient", return_value=mock_cm):
         return await client.get(
@@ -64,9 +69,9 @@ async def test_cli_ticket_requires_browser_consent_and_issues_grant(tmp_path: Pa
         callback = await _complete_callback(client, ticket)
         assert callback.status_code == 302
         assert callback.headers["location"] == f"/auth/cli-consent?ticket={ticket}"
-        assert "ap_session" in callback.cookies
+        assert SESSION_COOKIE_NAME in callback.cookies
         browser_claims = jwt.decode(
-            callback.cookies["ap_session"], TEST_SIGNING_KEY, algorithms=["HS256"]
+            callback.cookies[SESSION_COOKIE_NAME], TEST_SIGNING_KEY, algorithms=["HS256"]
         )
         assert browser_claims["cli_login_ticket"] == ticket
 
@@ -262,7 +267,7 @@ async def test_cli_approve_requires_origin_and_session() -> None:
         )
         assert no_origin.status_code == 403
 
-        client.cookies.delete("ap_session")
+        client.cookies.delete(SESSION_COOKIE_NAME)
         no_session = await client.post(
             "/auth/cli-approve",
             data={"ticket": ticket},
@@ -389,7 +394,7 @@ async def test_cli_decision_rejects_stale_session(decision: str) -> None:
             stale = mint_session_cookie(
                 "alice@example.com", TEST_SIGNING_KEY, 8, "github", cli_login_ticket=ticket
             )
-        client.cookies.set("ap_session", stale)
+        client.cookies.set(SESSION_COOKIE_NAME, stale)
         approved = await client.post(
             f"/auth/cli-{decision}",
             data={"ticket": ticket},
@@ -419,7 +424,7 @@ async def test_cli_decision_requires_ticket_login_provenance(
             assert token is not None
         else:
             token = mint_session_cookie("alice@example.com", TEST_SIGNING_KEY, 8, "github")
-        client.cookies.set("ap_session", token)
+        client.cookies.set(SESSION_COOKIE_NAME, token)
         with patch("omnigent.server.routes.auth.issue_login_grant") as issue_grant:
             approval = await client.post(
                 f"/auth/cli-{decision}", data={"ticket": ticket}, headers={"Origin": "http://test"}

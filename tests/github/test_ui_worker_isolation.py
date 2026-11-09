@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from omnigent.installation_defaults import USER_DIRNAME
+
 pytest_plugins = ["pytester"]
 _ROOT = Path(__file__).resolve().parents[2]
 _USER_CONFIG = "user: real\n"
@@ -44,9 +46,9 @@ def test_{name}():
 def _configure(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Run nested pytest with a synthetic user HOME and the UI config hooks."""
     home = pytester.path / "home"
-    (home / ".omnigent").mkdir(parents=True)
-    (home / ".omnigent" / "config.yaml").write_text(_USER_CONFIG)
-    (home / ".omnigent" / "secrets.json").write_text(_USER_SECRETS)
+    (home / USER_DIRNAME).mkdir(parents=True)
+    (home / USER_DIRNAME / "config.yaml").write_text(_USER_CONFIG)
+    (home / USER_DIRNAME / "secrets.json").write_text(_USER_SECRETS)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv(
         "PYTHONPATH", os.pathsep.join([str(_ROOT), os.environ.get("PYTHONPATH", "")])
@@ -74,7 +76,7 @@ def pytest_addoption(parser):
 
 
 def _assert_user_files_untouched(home: Path) -> None:
-    user_dir = home / ".omnigent"
+    user_dir = home / USER_DIRNAME
     assert sorted(path.name for path in user_dir.iterdir()) == ["config.yaml", "secrets.json"]
     assert (user_dir / "config.yaml").read_text() == _USER_CONFIG
     assert (user_dir / "secrets.json").read_text() == _USER_SECRETS

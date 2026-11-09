@@ -197,6 +197,7 @@ class _BrokenStreamHarness(_TurnScriptHarness):
 
 class _RecordingServerClient(NullServerClient):
     def __init__(self) -> None:
+        super().__init__()
         self.posts: list[tuple[str, Any]] = []
         # Awaited inside each POST, e.g. to keep a notice in flight for a while.
         self.while_posting: Callable[[Any], Awaitable[None]] | None = None

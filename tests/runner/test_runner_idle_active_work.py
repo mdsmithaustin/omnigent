@@ -25,6 +25,7 @@ from omnigent.runner.app import (
     register_timer,
     unregister_timer,
 )
+from tests.native_source_helpers import NativeSourceServer
 from tests.runner.helpers import NullServerClient
 
 
@@ -453,8 +454,9 @@ async def test_terminal_only_native_work_idle_accounting(
         )
 
     monkeypatch.setattr("omnigent.runner.native._launch_claude", launch)
+    native_sources = NativeSourceServer(tmp_path)
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, json={"id": conv_id, "agent_id": "ag"})
+        lambda request: native_sources.respond(request, {"id": conv_id, "agent_id": "ag"})
     )
     async with httpx.AsyncClient(transport=transport, base_url="http://ap") as server_client:
         app = create_runner_app(
@@ -685,8 +687,9 @@ async def test_native_pane_with_live_work_holds_watchdog_despite_idle_edge(
         )
 
     monkeypatch.setattr("omnigent.runner.native._launch_claude", launch)
+    native_sources = NativeSourceServer(tmp_path)
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, json={"id": conv_id, "agent_id": "ag"})
+        lambda request: native_sources.respond(request, {"id": conv_id, "agent_id": "ag"})
     )
     async with httpx.AsyncClient(transport=transport, base_url="http://ap") as server_client:
         app = create_runner_app(

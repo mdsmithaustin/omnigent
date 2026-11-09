@@ -27,6 +27,8 @@ from omnigent_slack.setup import (
 )
 from omnigent_slack.store import SQLiteStore
 
+from tests._helpers.polling import poll_until_async
+
 _SERVER = "http://omnigent.test"
 
 
@@ -347,8 +349,6 @@ async def test_setup_shows_login_in_modal_and_advances_on_approval(tmp_path: Pat
 
     No DM and no re-running /omnigent — login and config are one flow.
     """
-    import asyncio
-
     respx.get(_SERVER + "/health").mock(return_value=httpx.Response(200, json={"status": "ok"}))
     # /v1/me → accounts mode, so login uses the device-grant flow.
     respx.get(_SERVER + "/v1/me").mock(
@@ -415,11 +415,9 @@ async def test_setup_shows_login_in_modal_and_advances_on_approval(tmp_path: Pat
         assert authorize_body["client_id"] == "Slack-Omnigent-Acme Corp"
 
         # The background poll approves and advances the SAME modal (views_update).
-        for _ in range(50):
-            if len(client.updated_views) >= 2:
-                break
-            await asyncio.sleep(0.05)
+        await poll_until_async(lambda: len(client.updated_views) >= 2)
     finally:
+        await auth.shutdown()
         await pool.aclose_all()
 
     advanced = client.updated_views[-1]
