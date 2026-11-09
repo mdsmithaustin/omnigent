@@ -785,9 +785,21 @@
       "name": "qualify-native-initialization-and-certification-2e4ff3655073",
       "reason": "Qualify native initialization and certification lint on v0.21.0",
       "source_commit": null
+    },
+    {
+      "applied_commit": "019c416c7c8a33e1c9f7c22e29fd7242b23a4bd6",
+      "name": "inventory-v0-21-0-qualification-repairs-019c416c7c8a",
+      "reason": "Inventory v0.21.0 qualification repairs",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "b677c007ec88ce5013418c44ed342bfad5f71c4d",
+      "name": "resolve-v0-21-0-certification-regressions-b677c007ec88",
+      "reason": "Resolve v0.21.0 certification regressions",
+      "source_commit": null
     }
   ],
-  "payload_commit": "2e4ff3655073c90758dce17f703edf1b093b0183",
+  "payload_commit": "b677c007ec88ce5013418c44ed342bfad5f71c4d",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "2f636330cc6e28bfe1d22f741eda6db34a192d39",
