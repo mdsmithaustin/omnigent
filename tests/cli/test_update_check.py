@@ -2546,7 +2546,7 @@ def test_fork_wheel_check_names_fork_release_and_install_steps(
         "https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r10" in err
     )
     assert "docs/FORK_RELEASES.md" in err
-    assert f"Upgrade: {sys.prefix}/bin/omnigent upgrade" in err
+    assert f"Upgrade: {sys.prefix}/bin/omnigent update" in err
     assert "Run omni upgrade" not in err
     refreshed = _read_cache()
     assert refreshed is not None
@@ -2569,7 +2569,7 @@ def test_fork_notice_names_the_fork_launcher_once_it_runs_this_install(
     _print_fork_notice("0.18.0+mdsmithaustin.2", "0.18.0+mdsmithaustin.3")
 
     err = _strip_rich_panel(capsys.readouterr().err)
-    assert "Upgrade: omnigent-fork upgrade" in err
+    assert "Upgrade: omnigent-fork update" in err
     assert (
         "Release: https://github.com/mdsmithaustin/omnigent/releases/tag/mdsmithaustin/v0.18.0-r3"
         in err

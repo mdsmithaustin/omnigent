@@ -414,12 +414,18 @@ def _prepared(tmp_path: Path, service: ServicePlan) -> object:
     return _prepare(_plan(home, service), _Machine(tmp_path / "release"))
 
 
-def test_switch_repoints_current_local_service_then_launcher(tmp_path: Path) -> None:
+@pytest.mark.parametrize("alias_exists", [False, True])
+def test_switch_repoints_current_local_service_then_launcher(
+    tmp_path: Path, alias_exists: bool
+) -> None:
     home = tmp_path / "home"
     prepared = _prepared(tmp_path, _current_service(home))
     plan = prepared.plan
     plan.launcher.parent.mkdir(parents=True)
     plan.launcher.symlink_to(plan.previous_venv / "bin/omnigent")
+    alias = plan.launcher.with_name("omni-fork")
+    if alias_exists:
+        alias.symlink_to(plan.launcher.name)
     events: list[str] = []
     machine = _Machine(tmp_path / "release")
 
@@ -439,6 +445,21 @@ def test_switch_repoints_current_local_service_then_launcher(tmp_path: Path) -> 
     ]
     assert machine.envs[1] == {"HOME": str(home), **_SERVICE_ENV}
     assert plan.launcher.readlink() == new
+    assert alias.resolve() == new
+
+
+def test_switch_refuses_an_unrelated_short_launcher_before_stopping(tmp_path: Path) -> None:
+    prepared = _prepared(tmp_path, ServicePlan(ServiceState.ABSENT))
+    launcher = prepared.plan.launcher
+    launcher.parent.mkdir(parents=True)
+    alias = launcher.with_name("omni-fork")
+    alias.write_text("existing command")
+
+    with pytest.raises(ForkUpgradeError, match=r"Move .*omni-fork aside"):
+        switch_to_fork_venv(prepared, stop_server=lambda: pytest.fail("server stopped"))
+
+    assert alias.read_text() == "existing command"
+    assert not launcher.exists()
 
 
 @pytest.mark.parametrize(

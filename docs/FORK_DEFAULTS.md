@@ -43,8 +43,10 @@ port. Clients discover the actual URL from the fork's own server record. Use
 the URL printed by the CLI. The existing background `--port` behavior remains
 unchanged; exact port selection applies to foreground server startup.
 
-Both `omnigent server stop` and `omnigent stop` use the selected fork process
-records. They do not stop an unrecorded listener merely because its health
+Use `omni-fork server stop` to stop the fork server and its local host daemon,
+or `omni-fork stop` to stop all fork host daemons and the fork server. The
+`omnigent-fork` launcher accepts the same commands. These commands use fork
+process records. They do not stop an unrecorded listener merely because its health
 endpoint responds successfully. Stop an unrecorded server through its owner.
 This does not establish safe ownership for copied, corrupt, or reused PID
 records.

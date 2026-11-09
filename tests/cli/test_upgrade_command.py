@@ -933,6 +933,11 @@ def _fork_install(monkeypatch: pytest.MonkeyPatch, _wheel_install: None) -> None
 @pytest.mark.parametrize(
     ("revision", "exit_code", "expected"),
     [
+        (
+            1,
+            0,
+            "Installed fork v0.18.0+mdsmithaustin.2 is newer than the latest published release",
+        ),
         (2, 0, "omnigent is up to date (v0.18.0+mdsmithaustin.2)"),
         (
             3,
@@ -1070,7 +1075,7 @@ def test_fork_refusal_names_this_install_not_the_path_omni(
     output = " ".join(result.output.split())
     assert result.exit_code == 1, result.output
     assert "omni upgrade" not in output
-    assert "bin/omnigent upgrade" in output or "omnigent-fork upgrade" in output
+    assert "bin/omnigent update" in output or "omnigent-fork update" in output
 
 
 def test_fork_git_install_refuses_target_version_instead_of_ignoring_it(

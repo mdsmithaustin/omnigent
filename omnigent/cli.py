@@ -6065,7 +6065,14 @@ def _upgrade_fork_build(
             f"Couldn't reach GitHub to check for a newer fork release. {tracks} "
             "Check your connection and try again."
         )
-    if release.version <= Version(current):
+    installed_version = Version(current)
+    if release.version < installed_version:
+        click.echo(
+            f"Installed fork v{current} is newer than the latest published release, "
+            f"v{release.version}."
+        )
+        return
+    if release.version == installed_version:
         click.echo(f"omnigent is up to date (v{current}).")
         return
     click.echo(
@@ -6186,11 +6193,13 @@ def upgrade(
 ) -> None:
     """Upgrade Omnigent to the latest release.
 
-    Detects how omnigent was installed (uv tool / pipx), checks the
-    configured index for a newer release and — unless ``--check`` — drains
-    and stops the local background server and host daemon, then runs the
-    matching upgrade command. The next ``omni`` invocation starts a fresh
-    server on the new code automatically, so no explicit restart is needed.
+    The ``update`` alias runs the same command. Fork builds use published
+    fork releases from GitHub.
+
+    For upstream builds, the command detects the installer (uv tool or
+    pipx) and checks the configured package index. Unless ``--check`` is
+    set, the upgrade drains and stops the local server before switching
+    versions. The next CLI invocation starts a server on the new version.
 
     In-flight agent sessions are waited on by default; pass ``--force`` to
     stop them immediately. Pass ``--pre`` to consider pre-releases (rc /
@@ -6202,11 +6211,10 @@ def upgrade(
     ``--dry-run``, and ``--check`` compose with it; ``--pre`` and
     ``--target-version`` do not apply).
 
-    Requires the install to have come from a tool that records extras:
-    ``uv tool install`` or ``pipx install``. ``pip`` does not record
-    extras, so ``omni upgrade`` refuses to auto-upgrade it and prints the
-    manual command instead. Source checkouts / editable installs are not
-    upgraded here — update those with ``git pull``.
+    Upstream package-index upgrades require ``uv tool install`` or
+    ``pipx install`` to record extras. Fork release upgrades also support
+    standalone virtual environments. Update editable source checkouts with
+    ``git pull``.
 
     :param check_only: Only report availability; do not upgrade. Exits
         with status 1 when a newer release exists.
