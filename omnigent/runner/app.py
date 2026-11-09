@@ -8868,7 +8868,10 @@ def create_runner_app(
                 process_manager is not None and process_manager.has_active_turn(conv_id)
             ):
                 return True
-            if _native_pane_status.get(conv_id) == "waiting":
+            pane_status = _native_pane_status.get(conv_id)
+            if pane_status == "waiting" or (
+                pane.terminal_name == "prime-native" and pane_status == "running"
+            ):
                 return True
             # A pane parked on a permission prompt emits nothing and reports no
             # active turn, so every signal above reads idle. Reaping it kills the
