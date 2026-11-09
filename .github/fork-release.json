@@ -821,9 +821,21 @@
       "name": "preserve-terminal-cleanup-and-idle-reconciliatio-97ee4d35204a",
       "reason": "Preserve terminal cleanup and idle reconciliation on v0.21.0",
       "source_commit": null
+    },
+    {
+      "applied_commit": "9a2147acf51d722509d148c276cdf677fc5ac44d",
+      "name": "inventory-v0-21-0-terminal-lifecycle-fixes-9a2147acf51d",
+      "reason": "Inventory v0.21.0 terminal lifecycle fixes",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "8a1a3ad6d990faf34aa6b2bbb8ed2b3f9255ee8c",
+      "name": "keep-active-prime-panes-available-for-steering-8a1a3ad6d990",
+      "reason": "Keep active Prime panes available for steering",
+      "source_commit": null
     }
   ],
-  "payload_commit": "97ee4d35204a999097f5f27e577f838b94a2e653",
+  "payload_commit": "8a1a3ad6d990faf34aa6b2bbb8ed2b3f9255ee8c",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "2f636330cc6e28bfe1d22f741eda6db34a192d39",
