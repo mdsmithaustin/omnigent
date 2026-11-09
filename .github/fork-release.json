@@ -797,9 +797,21 @@
       "name": "resolve-v0-21-0-certification-regressions-b677c007ec88",
       "reason": "Resolve v0.21.0 certification regressions",
       "source_commit": null
+    },
+    {
+      "applied_commit": "d630b9f4dca84715951e4f846c818efea0ce954c",
+      "name": "inventory-v0-21-0-certification-fixes-d630b9f4dca8",
+      "reason": "Inventory v0.21.0 certification fixes",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "0a203643860b5693177cbb65824ff176ba49455d",
+      "name": "preserve-startup-skill-identity-and-finish-v0-21-0a203643860b",
+      "reason": "Preserve startup skill identity and finish v0.21.0 qualification",
+      "source_commit": null
     }
   ],
-  "payload_commit": "b677c007ec88ce5013418c44ed342bfad5f71c4d",
+  "payload_commit": "0a203643860b5693177cbb65824ff176ba49455d",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "2f636330cc6e28bfe1d22f741eda6db34a192d39",
