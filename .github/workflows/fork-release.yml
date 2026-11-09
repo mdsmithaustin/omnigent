@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   source:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       release_ready: ${{ steps.line.outputs.release_ready }}
@@ -145,7 +145,7 @@ jobs:
   lint:
     needs: source
     if: needs.source.outputs.release_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
@@ -192,7 +192,7 @@ jobs:
     name: Fork Python (${{ matrix.group }})
     needs: source
     if: needs.source.outputs.release_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -338,7 +338,7 @@ jobs:
   web:
     needs: source
     if: needs.source.outputs.release_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
@@ -375,7 +375,7 @@ jobs:
     name: Fork addons (${{ matrix.group }})
     needs: source
     if: needs.source.outputs.release_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -521,7 +521,7 @@ jobs:
   build:
     needs: source
     if: needs.source.outputs.release_ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
@@ -563,7 +563,7 @@ jobs:
   certificate:
     needs: [source, lint, python, web, addons, build]
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.source.result == 'success' && needs.lint.result == 'success' && needs.python.result == 'success' && needs.web.result == 'success' && needs.addons.result == 'success' && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -607,7 +607,7 @@ jobs:
   publish:
     needs: [source, lint, python, web, addons, build, certificate]
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true && github.repository == 'mdsmithaustin/omnigent' && needs.source.result == 'success' && needs.lint.result == 'success' && needs.python.result == 'success' && needs.web.result == 'success' && needs.addons.result == 'success' && needs.build.result == 'success' && needs.certificate.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

@@ -3539,13 +3539,20 @@ def register_events_routes(
         initializer = getattr(request.app.state, "runner_session_initializer", None)
         # Codex child turns run on a thread in the parent's app-server, not their own session.
         codex_child_turn = body.type == "message" and _codex_side_chat_thread_id(conv) is not None
+        native_admission = (
+            NativeAdmission.model_validate(body.data["native_admission"])
+            if "native_admission" in body.data
+            else None
+        )
         if not codex_child_turn and (
             _runner_needs_session_init
             or (
                 conv.runner_id is not None
                 and _is_native_terminal_session(conv)
                 and initializer is not None
-                and not initializer.is_initialized(conv, runner_client)
+                and not initializer.is_initialized(
+                    conv, runner_client, native_admission=native_admission
+                )
             )
         ):
             # Idle reconnects defer initialization until the next interaction.
@@ -3557,9 +3564,7 @@ def register_events_routes(
                 runner_client,
                 conversation_store,
                 initializer=initializer,
-                native_admission=NativeAdmission.model_validate(body.data["native_admission"])
-                if "native_admission" in body.data
-                else None,
+                native_admission=native_admission,
                 suppress_recovery_turn=True,
                 trigger="web_message",
             )

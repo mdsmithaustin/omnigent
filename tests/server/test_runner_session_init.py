@@ -15,6 +15,7 @@ from omnigent.db.utils import generate_agent_id
 from omnigent.entities import Conversation, MessageData, NewConversationItem
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inner.native_attachments import CAP_FILESYSTEM_ATTACHMENTS
+from omnigent.native.source_owner import NativeAdmission, NativeOwner
 from omnigent.runner.session_init_protocol import (
     build_runner_session_init_payload,
     parse_runner_session_init_envelope,
@@ -68,6 +69,25 @@ def _conversation() -> Conversation:
         workspace="/tmp/workspace",
         labels={"example": "value"},
     )
+
+
+@pytest.mark.asyncio
+async def test_initialized_runner_requires_the_same_native_admission_epoch() -> None:
+    initializer = RunnerSessionInitializer(_Registry(), server_version="0.21.0")  # type: ignore[arg-type]
+    client = _Client()
+    client.release.set()
+    conversation = _conversation()
+    admission = NativeAdmission(
+        source_id=conversation.id,
+        epoch="original",
+        owner=NativeOwner(provider="prime-native", environment="test", runtime="/tmp/prime"),
+    )
+    await initializer.initialize(conversation, client, timeout=10, native_admission=admission)  # type: ignore[arg-type]
+
+    assert initializer.is_initialized(conversation, client, native_admission=admission)  # type: ignore[arg-type]
+    assert not initializer.is_initialized(conversation, client)  # type: ignore[arg-type]
+    successor = admission.model_copy(update={"epoch": "successor"})
+    assert not initializer.is_initialized(conversation, client, native_admission=successor)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
