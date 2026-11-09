@@ -773,9 +773,21 @@
       "name": "prepare-v0-21-0-fork-release-certification-db4881f3ffba",
       "reason": "Prepare v0.21.0 fork release certification",
       "source_commit": null
+    },
+    {
+      "applied_commit": "53df94e8fc5bde2015593f8bbfab2aa28597ec2a",
+      "name": "inventory-the-v0-21-0-fork-release-payload-53df94e8fc5b",
+      "reason": "Inventory the v0.21.0 fork release payload",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "2e4ff3655073c90758dce17f703edf1b093b0183",
+      "name": "qualify-native-initialization-and-certification-2e4ff3655073",
+      "reason": "Qualify native initialization and certification lint on v0.21.0",
+      "source_commit": null
     }
   ],
-  "payload_commit": "db4881f3ffbae5fcac08ba2ba120508eb798f519",
+  "payload_commit": "2e4ff3655073c90758dce17f703edf1b093b0183",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "2f636330cc6e28bfe1d22f741eda6db34a192d39",
