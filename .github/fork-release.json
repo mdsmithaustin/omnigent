@@ -809,9 +809,21 @@
       "name": "preserve-startup-skill-identity-and-finish-v0-21-0a203643860b",
       "reason": "Preserve startup skill identity and finish v0.21.0 qualification",
       "source_commit": null
+    },
+    {
+      "applied_commit": "1604c54d5c540d4386e519c9898073a00647e03f",
+      "name": "inventory-the-final-v0-21-0-qualification-change-1604c54d5c54",
+      "reason": "Inventory the final v0.21.0 qualification changes",
+      "source_commit": null
+    },
+    {
+      "applied_commit": "97ee4d35204a999097f5f27e577f838b94a2e653",
+      "name": "preserve-terminal-cleanup-and-idle-reconciliatio-97ee4d35204a",
+      "reason": "Preserve terminal cleanup and idle reconciliation on v0.21.0",
+      "source_commit": null
     }
   ],
-  "payload_commit": "0a203643860b5693177cbb65824ff176ba49455d",
+  "payload_commit": "97ee4d35204a999097f5f27e577f838b94a2e653",
   "profile": "python-distributions-v1",
   "upstream": {
     "commit": "2f636330cc6e28bfe1d22f741eda6db34a192d39",
